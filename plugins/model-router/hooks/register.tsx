@@ -658,8 +658,8 @@ export const register: Register = on => {
 
   // Typed prompts carry the Always-plan reminder and any pending router notes, unseen by the person.
   // Each main-loop turn starts with a hidden note the model reads (a meta row in the
-  // conversation): the rules when the system prompt cannot carry them (the desktop
-  // app's sessions) and none are in the chat, the plan again after a summarization,
+  // conversation): the rules when none are in the chat (the system prompt cannot be
+  // relied on: the desktop app supplies its own), the plan again after a summarization,
   // the Always-plan reminder and router notes. Written straight into the chat, it
   // does not depend on how the prompt arrived.
   on('turn.start', async ($, e, next) => {
@@ -667,7 +667,7 @@ export const register: Register = on => {
     diag.turns += 1
     const extra: string[] = []
     const how = await read($, delivery)
-    if (how.via !== 'system' && !how.inChat) extra.push(policy(await read($, settings)))
+    if (!how.inChat) extra.push(policy(await read($, settings)))
     const list = await read($, steps)
     if (how.planDue && list.length > 0) {
       extra.push(
@@ -682,7 +682,7 @@ export const register: Register = on => {
       try {
         await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: extra.join('\n\n') }] } })
         diag.appends += 1
-        await update($, delivery, d => ({ ...d, inChat: d.inChat || d.via !== 'system', planDue: false }))
+        await update($, delivery, d => ({ ...d, inChat: true, planDue: false }))
         await update($, notes, () => [])
       } catch (err) {
         diag.lastError = `append: ${String(err).slice(0, 200)}`
@@ -711,7 +711,9 @@ export const register: Register = on => {
     // message, which an open chat sent long ago: the rules go with a typed message instead.
     const isSystem = !e.traits.includes('sdk-preset')
     await update($, delivery, d => ({ ...d, via: isSystem ? 'system' : 'message' }))
-    const hasRules = isSystem || (await read($, delivery)).inChat
+    // A host with its own system prompt drops added sections without a trace, so only
+    // rules written into the chat count as delivered.
+    const hasRules = (await read($, delivery)).inChat
     const model = hasRules ? modelOf(e.model) : undefined
     if ((await read($, policySent)).model !== model) {
       await update($, policySent, () => ({ model, sentAt: new Date().toISOString() }))

@@ -26,8 +26,7 @@ All settings and the history are remembered across chats.
 
 ## Keeping the rules in front of the model
 
-- **Terminal sessions** carry the routing rules in the system prompt on every request.
-- **Desktop-app sessions** (the SDK preset) put such sections into the chat's first message, which a long-running chat sent long ago. There the mod writes the rules into the conversation as a hidden note at the start of the next turn, once.
+- **In every chat** the mod writes the rules into the conversation as a hidden note at the start of the first turn after it loads. It also adds them to the system prompt, but some hosts (the desktop app among them) supply their own system prompt and drop added sections without a trace, so only the note counts as delivered.
 - **After a summarization** of the chat, the next turn gets the rules again (where needed) and the current plan with each step's status, from the router's own record.
 - **Always plan** and router notes use the same hidden note, at the start of each turn.
 - **Check it**: ask the model to call the plan tool with `status: true`. It reports the version, how the rules are delivered, whether they are in the chat, and counters.
@@ -37,7 +36,7 @@ All settings and the history are remembered across chats.
 
 Always shown under the prompt, so you can see the router is on:
 
-- With no plan: `⇄ Router on · rules sent to opus · /router for the pane`. "Rules sent" appears once a request to that model carried the routing rules; until then (a fresh load, or right after a summary in the desktop app) it says they go out with your next message.
+- With no plan: `⇄ Router on · rules sent to opus · /router for the pane`. "Rules sent" appears once the rules are written into the chat; until then (a fresh load, or right after a summary) it says they go out with your next message.
 - With a plan: progress dots, the running step and its model, subagent cost and savings.
 
 Limits: the main chat's own model never changes; the pane suggests switching it to Sonnet when a plan has no deep step.

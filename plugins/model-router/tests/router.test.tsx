@@ -62,6 +62,10 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   const prompt = await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [PLAN, 'Agent'], outputStyle: null, traits: [] } as never)
   composed.push(prompt.sections.map(x => x.id))
   expect(composed.at(-1)).toContain('model-router:policy')
+  expect(statuses.at(-1)).toContain('next message')
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('# Model routing')
+  await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [PLAN, 'Agent'], outputStyle: null, traits: [] } as never)
   expect(statuses.at(-1)).toContain('rules sent to opus')
 
   // Settings: open them, turn on auto-approve and Always plan from the pane.
@@ -135,7 +139,7 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   // Always plan adds a hidden reminder at the start of each main turn.
   await $.turn.start({ text: 'do the thing', turnId: 'tA' })
   expect(lastRow(rows)).toContain('Always plan')
-  expect(lastRow(rows)).not.toContain('# Model routing')
+  expect(lastRow(rows)).not.toContain('# Model routing')  // already in the chat
 
   // Mobile has no pickers: the tier is a button that cycles.
   const phone = await $.ui.mount({ ...PANE, surface: 'mobile' })
