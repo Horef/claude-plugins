@@ -1,0 +1,12 @@
+{
+  "name": "horef-claude-plugins",
+  "owner": { "name": "Sergiy Horef" },
+  "description": "Sergiy Horef's mods and skills for Claude Code",
+  "plugins": [
+    {
+      "name": "model-router",
+      "source": "./plugins/model-router",
+      "description": "Routes each step of a task to a model tier (light, standard, deep), with plan approval, a band above the prompt and a plan pane"
+    }
+  ]
+}
