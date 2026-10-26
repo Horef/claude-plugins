@@ -12,6 +12,8 @@ export type Settings = {
   tiers: Record<Tier, TierSetting>
   /** Skills that run in a subagent on a tier instead of in the main chat. */
   skills: Record<string, Tier>
+  /** Open the router pane when a chat starts. */
+  openPane: boolean
 }
 
 export type Step = {
@@ -62,6 +64,8 @@ declare module 'claude-code' {
       seenSkills: string[]
       showSettings: boolean
       notes: string[]
+      /** The model the routing rules were last sent to, in this chat. */
+      policy: { model?: Model; sentAt?: string }
     }
   }
 }

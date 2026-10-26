@@ -20,8 +20,16 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
   - Each tier's model and thinking level.
   - An optional scope note per tier. It adds one line to that tier's briefs: stay on the task, don't start sessions or load extra tools. Off by default.
   - Skills that should run in a subagent on a tier. A skill you've used shows up here; you can also add one by name.
+  - Open pane on start: opens the pane in every new chat.
 
-All settings and the history are remembered across chats. The status line under the prompt shows progress, the running step and the money.
+All settings and the history are remembered across chats.
+
+## The status line
+
+Always shown under the prompt, so you can see the router is on:
+
+- With no plan: `⇄ Router on · rules sent to opus · /router for the pane`. "Rules sent" appears once the routing rules have gone out with a request to that model; before the first message it says they go out with your next one.
+- With a plan: progress dots, the running step and its model, subagent cost and savings.
 
 Limits: the main chat's own model never changes; the pane suggests switching it to Sonnet when a plan has no deep step.
 
@@ -30,3 +38,5 @@ Limits: the main chat's own model never changes; the pane suggests switching it 
 ```
 /plugin install model-router --marketplace Horef/claude-plugins
 ```
+
+Chats that were already open load it after `/reload-plugins`, typed in that chat; new chats load it by themselves.

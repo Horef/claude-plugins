@@ -42,21 +42,33 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   })
   on('agent.list', () => ({ value: [{ id: 'a1', description: '[u1] list files', type: 'Explore', status: 'completed' }] }))
   on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
+  const composed: string[][] = []
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
   on('tool.call', (_, e) => {
     calls.push(e as Call)
     return { result: { agentId: 'a1' } }
   })
 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  expect(statuses.at(-1)).toContain('Router on')
+  expect(statuses.at(-1)).toContain('next message')
+
+  // The rules reach the main model's system prompt, and the status line says so.
+  const prompt = await $.prompt.compose({ model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [PLAN, 'Agent'], outputStyle: null, traits: [] } as never)
+  composed.push(prompt.sections.map(x => x.id))
+  expect(composed.at(-1)).toContain('model-router:policy')
+  expect(statuses.at(-1)).toContain('rules sent to opus')
 
   // Settings: open them, turn on auto-approve and Always plan from the pane.
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await pane.press({ key: 'settings' })
   await pane.press({ key: 'auto' })
   await pane.press({ key: 'always' })
+  await pane.press({ key: 'open-pane' })
   await pane.unmount()
   expect(store.get('autoApprove')).toBe(true)
   expect(store.get('alwaysPlan')).toBe(true)
+  expect((store.get('settings') as { openPane: boolean }).openPane).toBe(true)
 
   const planned = await $.tool.call({
     tool: PLAN,

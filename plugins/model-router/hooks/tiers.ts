@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS: Settings = {
     deep: { model: 'opus', effort: 'high', scopeNote: false },
   },
   skills: {},
+  openPane: false,
 }
 
 export const TIER_USE: Record<Tier, string> = {

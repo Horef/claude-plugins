@@ -40,6 +40,7 @@ const history = atom({ plugin: 'model-router', key: 'history' } as const, [])
 const seenSkills = atom({ plugin: 'model-router', key: 'seenSkills' } as const, [])
 const showSettings = atom({ plugin: 'model-router', key: 'showSettings' } as const, false)
 const notes = atom({ plugin: 'model-router', key: 'notes' } as const, [])
+const policySent = atom({ plugin: 'model-router', key: 'policy' } as const, {})
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history' }
 const HISTORY_CAP = 500
@@ -49,6 +50,7 @@ async function loadRemembered($: EngineInterface) {
   await update($, settings, () => ({
     tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
     skills: { ...(stored?.skills ?? {}) },
+    openPane: stored?.openPane ?? DEFAULT_SETTINGS.openPane,
   }))
   await update($, autoApprove, () => false)
   if ((await $.store.get(STORE.auto)) === true) await update($, autoApprove, () => true)
@@ -82,8 +84,16 @@ async function editHistory($: EngineInterface, fn: (h: HistoryEntry[]) => Histor
 
 async function summary($: EngineInterface) {
   const list = await read($, steps)
-  if (list.length === 0) return undefined
   const set = await read($, settings)
+  const sent = await read($, policySent)
+  const always = await read($, alwaysPlan)
+
+  // No plan: say the router is on and whether the active model has its rules.
+  if (list.length === 0) {
+    const rules = sent.model ? `rules sent to ${sent.model}` : 'rules go out with your next message'
+    return `⇄ Router on · ${rules}${always ? ' · always plan' : ''} · /router for the pane`
+  }
+
   const status = await read($, planStatus)
   const done = list.filter(s => s.status === 'done').length
   const running = list.find(s => s.status === 'running')
@@ -94,7 +104,7 @@ async function summary($: EngineInterface) {
   const now = running ? ` · ${running.id} on ${rungLabel(runsOn(running, set))}` : ''
   const money = cost > 0 ? ` · agents ≈${fmtUsd(cost)}${saved > 0 ? `, saved ≈${fmtUsd(saved)}` : ''}` : ''
 
-  return `⇄ Router ${dots} ${head}${now}${money}`
+  return `⇄ Router ${dots} ${head}${now}${money} · /router`
 }
 
 async function refreshStatus($: EngineInterface) {
@@ -372,6 +382,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
           {toggle('always', 'Always plan', always, () => void setAlways($, !always))}
           {toggle('auto', 'Auto-approve', auto, () => void setAuto($, !auto))}
+          {toggle('open-pane', 'Open pane on start', set.openPane, () => void editSettings($, s => ({ ...s, openPane: !s.openPane })))}
         </Box>
       )}
       {isSettingsOpen &&
@@ -470,6 +481,7 @@ export const register: Register = on => {
       isDeferred: false,
     })
     await refreshStatus($)
+    if ((await read($, settings)).openPane) void $.ui.open({ id: PANE, title: 'Model router' })
 
     return next(e)
   })
@@ -643,6 +655,11 @@ export const register: Register = on => {
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!e.tools.includes(PLAN_TOOL) || !e.tools.includes('Agent')) return composed
+    const model = modelOf(e.model)
+    if ((await read($, policySent)).model !== model) {
+      await update($, policySent, () => ({ model, sentAt: new Date().toISOString() }))
+      await refreshStatus($)
+    }
 
     // Only the settings shape this text, so it stays stable and the prompt cache holds.
     return {
