@@ -27,6 +27,11 @@ test('auto-approved plan routes a step to its tier; pane pickers override', asyn
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  const sent: (readonly string[] | undefined)[] = []
+  on('prompt.submit', (_, e) => {
+    sent.push((e as { context?: readonly string[] }).context)
+    return { text: (e as { text: string }).text }
+  })
   const statuses: (string | undefined)[] = []
   on('ui.status', (_, e) => {
     statuses.push((e as { text?: string }).text)
@@ -75,6 +80,14 @@ test('auto-approved plan routes a step to its tier; pane pickers override', asyn
   await phone.unmount()
   await $.tool.call({ tool: 'Agent', description: '[s1] check docs', prompt: 'go' })
   expect(seen.at(-1)?.effort).toBe('medium')
+
+  // "Always plan" adds a hidden reminder to typed prompts, and only when on.
+  const prompts = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await prompts.press({ key: 'always' })
+  await prompts.unmount()
+  expect(store.get('alwaysPlan')).toBe(true)
+  await $.prompt.submit({ text: 'do the thing' } as never)
+  expect(sent.at(-1)?.join(' ')).toContain('Always plan')
 
   // The summary is pinned as the mod's status line under the prompt.
   expect(statuses.at(-1)).toContain('⇄ Router')

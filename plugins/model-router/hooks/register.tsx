@@ -8,11 +8,13 @@ const PANE = 'model-router'
 const PLAN_TOOL = 'mcp__model-router__plan'
 const STEP_TAG = /^\s*\[([^\]]+)\]/
 const AUTO_KEY = 'autoApprove'
+const ALWAYS_KEY = 'alwaysPlan'
 
 const steps = atom({ plugin: 'model-router', key: 'steps' } as const, [])
 const main = atom({ plugin: 'model-router', key: 'main' } as const, { tokens: 0, cached: 0 })
 const planStatus = atom({ plugin: 'model-router', key: 'planStatus' } as const, 'none')
 const autoApprove = atom({ plugin: 'model-router', key: 'autoApprove' } as const, false)
+const alwaysPlan = atom({ plugin: 'model-router', key: 'alwaysPlan' } as const, false)
 
 const TIER_COLOR: Record<Tier, string> = { light: 'success', standard: 'suggestion', deep: 'claude' }
 const STATUS_GLYPH: Record<Step['status'], string> = { planned: '○', running: '◐', done: '●' }
@@ -80,6 +82,13 @@ const clearPlan = async ($: EngineInterface) => {
   await refreshStatus($)
 }
 
+const setAlways = async ($: EngineInterface, on: boolean) => {
+  await update($, alwaysPlan, () => on)
+  await $.store.set(ALWAYS_KEY, on)
+}
+
+const REMINDER = `Model router: "Always plan" is on. Before any tool call for this message, call ${PLAN_TOOL} with the steps (one step is fine), unless the current approved plan already covers it. Answer without a plan only if no tools are needed.`
+
 type PlanInput = {
   steps?: { id: string; title: string; tier: Tier; where?: 'agent' | 'here' }[]
   done?: string[]
@@ -93,6 +102,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await update($, autoApprove, () => false)
     if ((await $.store.get(AUTO_KEY)) === true) await update($, autoApprove, () => true)
+    await update($, alwaysPlan, () => false)
+    if ((await $.store.get(ALWAYS_KEY)) === true) await update($, alwaysPlan, () => true)
     await $.command.register({
       name: 'router',
       description: 'Show the model-router plan pane',
@@ -234,6 +245,13 @@ export const register: Register = on => {
     return ran
   })
 
+  // With "Always plan" on, every typed prompt carries a reminder the person never sees.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command || e.isMeta || !(await read($, alwaysPlan))) return next(e)
+
+    return next({ ...e, context: [...(e.context ?? []), REMINDER] })
+  })
+
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!e.tools.includes(PLAN_TOOL) || !e.tools.includes('Agent')) return composed
@@ -251,6 +269,7 @@ export const register: Register = on => {
     const m = await read($, main)
     const status = await read($, planStatus)
     const auto = await read($, autoApprove)
+    const always = await read($, alwaysPlan)
     const agentTokens = list.reduce((n, s) => n + s.tokens, 0)
     const done = list.filter(s => s.status === 'done').length
 
@@ -274,9 +293,14 @@ export const register: Register = on => {
               {status === 'pending' ? ' · awaiting your approval' : ''}
             </Text>
           </Box>
-          <Button key="auto" variant={auto ? 'primary' : 'secondary'} onPress={() => void setAuto($, !auto)}>
-            {auto ? 'Auto-approve on' : 'Auto-approve off'}
-          </Button>
+          <Box flexDirection="row" columnGap="xs">
+            <Button key="always" variant={always ? 'primary' : 'secondary'} onPress={() => void setAlways($, !always)}>
+              {always ? 'Always plan on' : 'Always plan off'}
+            </Button>
+            <Button key="auto" variant={auto ? 'primary' : 'secondary'} onPress={() => void setAuto($, !auto)}>
+              {auto ? 'Auto-approve on' : 'Auto-approve off'}
+            </Button>
+          </Box>
         </Box>
 
         {status === 'pending' && (

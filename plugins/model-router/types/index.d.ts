@@ -27,6 +27,7 @@ declare module 'claude-code' {
       main: { tokens: number; cached: number }
       planStatus: PlanStatus
       autoApprove: boolean
+      alwaysPlan: boolean
     }
   }
 }
