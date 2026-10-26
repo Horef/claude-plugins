@@ -10,85 +10,125 @@ const PANE = {
     isFocused: false,
     bodyColumns: 60,
     placement: 'dock',
-    scroll: { offset: 0, bodyRows: 40 },
+    scroll: { offset: 0, bodyRows: 80 },
     view: {},
   },
 } as const
 
-test('auto-approved plan routes a step to its tier; pane pickers override', async ($, on) => {
-  const seen: { model?: string; effort?: string }[] = []
+type Call = { tool: string; model?: string; effort?: string; prompt?: string }
+
+test('plans, routes, prices, reruns and routes skills', async ($, on) => {
+  const calls: Call[] = []
+  const prompts: { text: string; context?: readonly string[] }[] = []
+  const statuses: (string | undefined)[] = []
+  const store = new Map<string, unknown>([['settings', { skills: { 'scientific-figures': 'standard' } }]])
+
   on('command.register', () => ({ value: { command: 'router' } }))
   on('tool.register', () => ({ value: { tool: PLAN } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  const store = new Map<string, unknown>()
   on('store.get', (_, e) => ({ value: store.get((e as { key: string }).key) }))
   on('store.set', (_, e) => {
     store.set((e as { key: string }).key, (e as { value: unknown }).value)
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  const sent: (readonly string[] | undefined)[] = []
   on('prompt.submit', (_, e) => {
-    sent.push((e as { context?: readonly string[] }).context)
+    prompts.push(e as { text: string; context?: readonly string[] })
     return { text: (e as { text: string }).text }
   })
-  const statuses: (string | undefined)[] = []
   on('ui.status', (_, e) => {
     statuses.push((e as { text?: string }).text)
     return { value: undefined }
   })
+  on('agent.list', () => ({ value: [{ id: 'a1', description: '[u1] list files', type: 'Explore', status: 'completed' }] }))
+  on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
   on('tool.call', (_, e) => {
-    seen.push(e as { model?: string; effort?: string })
+    calls.push(e as Call)
     return { result: { agentId: 'a1' } }
   })
 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
-  // Turn auto-approve on from the pane, so the plan call does not ask.
+  // Settings: open them, turn on auto-approve and Always plan from the pane.
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await pane.press({ key: 'settings' })
   await pane.press({ key: 'auto' })
+  await pane.press({ key: 'always' })
   await pane.unmount()
+  expect(store.get('autoApprove')).toBe(true)
+  expect(store.get('alwaysPlan')).toBe(true)
 
   const planned = await $.tool.call({
     tool: PLAN,
     steps: [
-      { id: 's1', title: 'Check docs agree', tier: 'light', where: 'agent' },
-      { id: 's2', title: 'Decide training plan', tier: 'deep', where: 'here' },
+      { id: 'u1', title: 'List files', tier: 'light', where: 'agent' },
+      { id: 'u2', title: 'Check marketplace', tier: 'standard', where: 'here' },
     ],
   } as never)
   expect(String(planned.result)).toContain('auto-approved')
 
-  await $.tool.call({ tool: 'Agent', description: '[s1] check docs', prompt: 'go' })
-  expect(seen.at(-1)?.model).toBe('haiku')
-  expect(seen.at(-1)?.effort).toBe('low')
-
+  // A tagged delegation runs on its tier; an untagged one passes untouched.
+  await $.tool.call({ tool: 'Agent', description: '[u1] list files', prompt: 'go' })
+  expect(calls.at(-1)?.model).toBe('haiku')
+  expect(calls.at(-1)?.effort).toBe('low')
+  expect(calls.at(-1)?.prompt).toBe('go')
   await $.tool.call({ tool: 'Agent', description: 'other', prompt: 'go' })
-  expect(seen.at(-1)?.model).toBe(undefined)
+  expect(calls.at(-1)?.model).toBe(undefined)
 
-  // Desktop draws pickers; the model picker overrides the tier.
+  // The main chat runs on Opus; the subagent's turn is priced at Haiku and compared.
+  await $.turn.complete({
+    answer: 'ok', durationMs: 1, isAborted: false, turnId: 't0', reason: 'answer',
+    usage: { model: 'claude-opus-5-5', input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: 50000, output_tokens: 500 },
+  } as never)
+  await $.turn.complete({
+    answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'a1',
+    usage: { model: 'claude-haiku-5-5', input_tokens: 2, cache_creation_input_tokens: 4000, cache_read_input_tokens: 37000, output_tokens: 1000 },
+  } as never)
+  expect(statuses.at(-1)).toContain('1/2 done')
+  expect(statuses.at(-1)).toContain('saved')
+  expect((store.get('history') as unknown[]).length).toBe(1)
+
+  // The start-up-heavy note reaches the model with the next plan call.
+  const after = await $.tool.call({ tool: PLAN, done: ['u2'] } as never)
+  expect(String(after.result)).toContain('mostly subagent start-up cost')
+
+  // The card shows cost and savings, and offers the next rung.
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /Check docs agree/ }))?.text).toBe('Check docs agree')
-  await ui.select({ key: 'model:s1', value: 'opus' })
+  expect((await ui.find({ type: 'Text', text: /saved ≈/ }))?.text).toContain('saved')
+  await ui.press({ key: 'rerun:u1' })
   await ui.unmount()
-  await $.tool.call({ tool: 'Agent', description: '[s1] check docs', prompt: 'go' })
-  expect(seen.at(-1)?.model).toBe('opus')
-  expect(seen.at(-1)?.effort).toBe('low')
+  expect(prompts.at(-1)?.text).toContain('haiku/medium')
+  await $.tool.call({ tool: 'Agent', description: '[u1] list files', prompt: 'go' })
+  expect(calls.at(-1)?.effort).toBe('medium')
+  expect((store.get('history') as { rerun: boolean }[])[0]?.rerun).toBe(true)
 
-  // Mobile has no Select: the tier is a button that cycles.
+  // A mapped skill is sent to a subagent on its tier.
+  const skill = await $.tool.call({ tool: 'Skill', skill: 'scientific-figures' })
+  expect(String(skill.deny ?? '')).toContain('[skill:scientific-figures]')
+  await $.tool.call({ tool: 'Agent', description: '[skill:scientific-figures] draw', prompt: 'use the skill' })
+  expect(calls.at(-1)?.model).toBe('sonnet')
+
+  // The scope note joins briefs only for a tier that has it on.
+  const set = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await set.press({ key: 'set-scope:light' })
+  await set.unmount()
+  await $.tool.call({ tool: 'Agent', description: '[u1] list files', prompt: 'go' })
+  expect(calls.at(-1)?.prompt).toContain('Scope:')
+
+  // Always plan adds a hidden reminder to typed prompts.
+  await $.prompt.submit({ text: 'do the thing' })
+  expect(prompts.at(-1)?.context?.join(' ')).toContain('Always plan')
+
+  // Mobile has no pickers: the tier is a button that cycles.
   const phone = await $.ui.mount({ ...PANE, surface: 'mobile' })
-  await phone.press({ key: 'tier:s1' })
+  await phone.press({ key: 'tier:u1' })
   await phone.unmount()
-  await $.tool.call({ tool: 'Agent', description: '[s1] check docs', prompt: 'go' })
-  expect(seen.at(-1)?.effort).toBe('medium')
 
-  // "Always plan" adds a hidden reminder to typed prompts, and only when on.
-  const prompts = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await prompts.press({ key: 'always' })
-  await prompts.unmount()
-  expect(store.get('alwaysPlan')).toBe(true)
-  await $.prompt.submit({ text: 'do the thing' } as never)
-  expect(sent.at(-1)?.join(' ')).toContain('Always plan')
-
-  // The summary is pinned as the mod's status line under the prompt.
-  expect(statuses.at(-1)).toContain('⇄ Router')
+  // The whole pane, settings open, draws on every surface.
+  for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
+    const any = await $.ui.mount({ ...PANE, surface })
+    expect((await any.find({ type: 'Text', text: /^Model router$/ }))?.text).toBe('Model router')
+    expect((await any.find({ type: 'Text', text: /runs ·/ }))?.text).toContain('reruns')
+    await any.unmount()
+  }
 })
