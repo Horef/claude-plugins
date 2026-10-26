@@ -20,6 +20,7 @@ import {
   newStep,
   nextRung,
   planText,
+  VERSION,
   rungLabel,
   rungStats,
   runsOn,
@@ -45,6 +46,9 @@ const delivery = atom({ plugin: 'model-router', key: 'delivery' } as const, { in
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history' }
 const HISTORY_CAP = 500
+
+// What the router saw in this load, for the plan tool's status check.
+const diag = { turns: 0, appends: 0, composes: 0, lastError: '' }
 
 async function loadRemembered($: EngineInterface) {
   const stored = (await $.store.get(STORE.settings)) as Partial<Settings> | undefined
@@ -173,6 +177,7 @@ const usageOf = (u: ModelUsage): Usage => ({
 })
 
 type PlanInput = {
+  status?: boolean
   steps?: { id: string; title: string; tier: Tier; where?: 'agent' | 'here' }[]
   done?: string[]
 }
@@ -477,6 +482,7 @@ export const register: Register = on => {
             },
           },
           done: { type: 'array', items: { type: 'string' }, description: 'Step ids now done' },
+          status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
         },
       },
       isDeferred: false,
@@ -502,6 +508,18 @@ export const register: Register = on => {
       return { result: pending.length ? `${text}\n\nRouter notes:\n${pending.map(n => `- ${n}`).join('\n')}` : text }
     }
 
+    if (input.status) {
+      const report = {
+        version: VERSION,
+        delivery: await read($, delivery),
+        rulesSentTo: (await read($, policySent)).model ?? null,
+        alwaysPlan: await read($, alwaysPlan),
+        autoApprove: await read($, autoApprove),
+        steps: (await read($, steps)).length,
+        ...diag,
+      }
+      return { result: `model-router status: ${JSON.stringify(report)}` }
+    }
     if (input.done) {
       await update($, steps, list => list.map(s => (input.done!.includes(s.id) ? { ...s, status: 'done' } : s)))
     }
@@ -639,34 +657,39 @@ export const register: Register = on => {
   })
 
   // Typed prompts carry the Always-plan reminder and any pending router notes, unseen by the person.
-  // Typed prompts carry, unseen by the person: the rules when the system prompt
-  // cannot hold them (the desktop app's sessions) and none are in the chat yet,
-  // the plan again after a summarization, the Always-plan reminder, router notes.
-  on('prompt.submit', async ($, e, next) => {
-    if (e.command || e.isMeta) return next(e)
+  // Each main-loop turn starts with a hidden note the model reads (a meta row in the
+  // conversation): the rules when the system prompt cannot carry them (the desktop
+  // app's sessions) and none are in the chat, the plan again after a summarization,
+  // the Always-plan reminder and router notes. Written straight into the chat, it
+  // does not depend on how the prompt arrived.
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId) return next(e)
+    diag.turns += 1
     const extra: string[] = []
     const how = await read($, delivery)
-    if (how.via !== 'system' && !how.inChat) {
-      extra.push(policy(await read($, settings)))
-      await update($, delivery, d => ({ ...d, inChat: true }))
-    }
+    if (how.via !== 'system' && !how.inChat) extra.push(policy(await read($, settings)))
     const list = await read($, steps)
     if (how.planDue && list.length > 0) {
-      const set = await read($, settings)
       extra.push(
-        `Model router: the conversation was summarized. The current plan (${await read($, planStatus)}), from the router's own record:\n${planText(list, set)}`,
+        `Model router: the conversation was summarized. The current plan (${await read($, planStatus)}), from the router's own record:\n${planText(list, await read($, settings))}`,
       )
     }
-    if (how.planDue) await update($, delivery, d => ({ ...d, planDue: false }))
     if (await read($, alwaysPlan)) extra.push(REMINDER)
     const pending = await read($, notes)
-    if (pending.length) {
-      extra.push(`Model router notes:\n${pending.map(n => `- ${n}`).join('\n')}`)
-      await update($, notes, () => [])
-    }
-    if (extra.length === 0) return next(e)
+    if (pending.length) extra.push(`Model router notes:\n${pending.map(n => `- ${n}`).join('\n')}`)
 
-    return next({ ...e, context: [...(e.context ?? []), ...extra] })
+    if (extra.length > 0) {
+      try {
+        await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: extra.join('\n\n') }] } })
+        diag.appends += 1
+        await update($, delivery, d => ({ ...d, inChat: d.inChat || d.via !== 'system', planDue: false }))
+        await update($, notes, () => [])
+      } catch (err) {
+        diag.lastError = `append: ${String(err).slice(0, 200)}`
+      }
+    }
+
+    return next(e)
   })
 
   // A summarization of the main chat drops the rules and the plan from the
@@ -683,6 +706,7 @@ export const register: Register = on => {
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!e.tools.includes(PLAN_TOOL) || !e.tools.includes('Agent')) return composed
+    diag.composes += 1
     // Under the SDK's preset (the desktop app) session sections ride the chat's first
     // message, which an open chat sent long ago: the rules go with a typed message instead.
     const isSystem = !e.traits.includes('sdk-preset')

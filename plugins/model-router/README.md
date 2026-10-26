@@ -27,8 +27,10 @@ All settings and the history are remembered across chats.
 ## Keeping the rules in front of the model
 
 - **Terminal sessions** carry the routing rules in the system prompt on every request.
-- **Desktop-app sessions** (the SDK preset) put such sections into the chat's first message, which a long-running chat sent long ago. There the rules ride, unseen, on your next typed message, once.
-- **After a summarization** of the chat, the next typed message carries the rules again (where needed) and the current plan with each step's status, from the router's own record.
+- **Desktop-app sessions** (the SDK preset) put such sections into the chat's first message, which a long-running chat sent long ago. There the mod writes the rules into the conversation as a hidden note at the start of the next turn, once.
+- **After a summarization** of the chat, the next turn gets the rules again (where needed) and the current plan with each step's status, from the router's own record.
+- **Always plan** and router notes use the same hidden note, at the start of each turn.
+- **Check it**: ask the model to call the plan tool with `status: true`. It reports the version, how the rules are delivered, whether they are in the chat, and counters.
 - The plan, costs, history and settings live in the mod, not in the conversation, so a summary never loses them.
 
 ## The status line

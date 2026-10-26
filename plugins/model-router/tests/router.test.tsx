@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 const PLAN = 'mcp__model-router__plan'
 const PANE = {
@@ -14,6 +14,9 @@ const PANE = {
     view: {},
   },
 } as const
+
+const lastRow = (rows: { appended: () => readonly unknown[] }) =>
+  JSON.stringify(rows.appended().at(-1) ?? '')
 
 type Call = { tool: string; model?: string; effort?: string; prompt?: string }
 
@@ -43,6 +46,8 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   on('agent.list', () => ({ value: [{ id: 'a1', description: '[u1] list files', type: 'Explore', status: 'completed' }] }))
   on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
   const composed: string[][] = []
+  const rows = mock.session(on)
+  on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }))
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
   on('tool.call', (_, e) => {
     calls.push(e as Call)
@@ -127,9 +132,10 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   await $.tool.call({ tool: 'Agent', description: '[u1] list files', prompt: 'go' })
   expect(calls.at(-1)?.prompt).toContain('Scope:')
 
-  // Always plan adds a hidden reminder to typed prompts.
-  await $.prompt.submit({ text: 'do the thing' })
-  expect(prompts.at(-1)?.context?.join(' ')).toContain('Always plan')
+  // Always plan adds a hidden reminder at the start of each main turn.
+  await $.turn.start({ text: 'do the thing', turnId: 'tA' })
+  expect(lastRow(rows)).toContain('Always plan')
+  expect(lastRow(rows)).not.toContain('# Model routing')
 
   // Mobile has no pickers: the tier is a button that cycles.
   const phone = await $.ui.mount({ ...PANE, surface: 'mobile' })
@@ -145,11 +151,11 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   }
 })
 
-test('in the desktop app the rules ride a message, and return with the plan after a summary', async ($, on) => {
-  const prompts: { text: string; context?: readonly string[] }[] = []
+test('in the desktop app the rules are written into the chat, and return with the plan after a summary', async ($, on) => {
   const statuses: (string | undefined)[] = []
   const store = new Map<string, unknown>([['autoApprove', true]])
   const SDK = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [PLAN, 'Agent'], outputStyle: null, traits: ['sdk-preset'] }
+  const summaryMsg = { role: 'user' as const, text: 'summary', toolUses: [] }
 
   on('command.register', () => ({ value: { command: 'router' } }))
   on('tool.register', () => ({ value: { tool: PLAN } }))
@@ -160,16 +166,13 @@ test('in the desktop app the rules ride a message, and return with the plan afte
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => {
-    prompts.push(e as { text: string; context?: readonly string[] })
-    return { text: (e as { text: string }).text }
-  })
   on('ui.status', (_, e) => {
     statuses.push((e as { text?: string }).text)
     return { value: undefined }
   })
+  const rows = mock.session(on)
+  on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }))
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
-  const summaryMsg = { role: 'user' as const, text: 'summary', toolUses: [] }
   on('session.compact', () => ({ messages: [summaryMsg] }))
 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
@@ -179,22 +182,33 @@ test('in the desktop app the rules ride a message, and return with the plan afte
   expect(first.sections.map(x => x.id)).not.toContain('model-router:policy')
   expect(statuses.at(-1)).toContain('next message')
 
-  // The next typed message carries them once; then the status line says so.
-  await $.prompt.submit({ text: 'hello' })
-  expect(prompts.at(-1)?.context?.join(' ')).toContain('# Model routing')
+  // The next main turn writes them into the chat once; then the status line says so.
+  await $.turn.start({ text: 'hello', turnId: 't1' })
+  expect(lastRow(rows)).toContain('# Model routing')
   await $.prompt.compose(SDK as never)
   expect(statuses.at(-1)).toContain('rules sent to opus')
-  await $.prompt.submit({ text: 'again' })
-  expect(prompts.at(-1)?.context ?? []).toHaveLength(0)
+  const count = rows.appended().length
+  await $.turn.start({ text: 'again', turnId: 't2' })
+  expect(rows.appended().length).toBe(count)
+
+  // A subagent's turn gets nothing.
+  await $.turn.start({ text: 'sub', turnId: 't3', agentId: 'a9' })
+  expect(rows.appended().length).toBe(count)
 
   // After a summary of the main chat, the rules and the plan come back together.
   await $.tool.call({ tool: PLAN, steps: [{ id: 'p1', title: 'Read papers', tier: 'light', where: 'agent' }] } as never)
   await $.session.compact({ trigger: 'manual', messages: [summaryMsg, { ...summaryMsg, text: 'old' }] } as never)
-  await $.prompt.submit({ text: 'continue' })
-  const ctx = prompts.at(-1)?.context?.join(' ') ?? ''
-  expect(ctx).toContain('# Model routing')
-  expect(ctx).toContain('conversation was summarized')
-  expect(ctx).toContain('[p1] Read papers')
-  await $.prompt.submit({ text: 'and on' })
-  expect(prompts.at(-1)?.context ?? []).toHaveLength(0)
+  await $.turn.start({ text: 'continue', turnId: 't4' })
+  const row = lastRow(rows)
+  expect(row).toContain('# Model routing')
+  expect(row).toContain('conversation was summarized')
+  expect(row).toContain('[p1] Read papers')
+  const after = rows.appended().length
+  await $.turn.start({ text: 'and on', turnId: 't5' })
+  expect(rows.appended().length).toBe(after)
+
+  // The status check reports what the router sees.
+  const status = await $.tool.call({ tool: PLAN, status: true } as never)
+  expect(String(status.result)).toContain('"via":"message"')
+  expect(String(status.result)).toContain('"inChat":true')
 })
