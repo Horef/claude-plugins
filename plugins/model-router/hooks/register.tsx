@@ -43,8 +43,25 @@ const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 :
 const cycle = <T,>(list: readonly T[], one: T | undefined) =>
   list[(list.indexOf(one as T) + 1) % list.length]!
 
-const editStep = ($: EngineInterface, id: string, fn: (s: Step) => Step) =>
-  update($, steps, list => list.map(s => (s.id === id ? fn(s) : s)))
+const summary = async ($: EngineInterface) => {
+  const list = await read($, steps)
+  if (list.length === 0) return undefined
+  const status = await read($, planStatus)
+  const done = list.filter(s => s.status === 'done').length
+  const running = list.find(s => s.status === 'running')
+  const tokens = list.reduce((n, s) => n + s.tokens, 0)
+  const dots = list.map(s => STATUS_GLYPH[s.status]).join('')
+  const head = status === 'pending' ? 'plan awaiting approval' : `${done}/${list.length} done`
+  const now = running ? ` · ${running.id} on ${runsOn(running)}` : ''
+  return `⇄ Router ${dots} ${head}${now}${tokens > 0 ? ` · agents ${fmt(tokens)} tok` : ''}`
+}
+
+const refreshStatus = async ($: EngineInterface) => $.ui.status(await summary($))
+
+const editStep = async ($: EngineInterface, id: string, fn: (s: Step) => Step) => {
+  await update($, steps, list => list.map(s => (s.id === id ? fn(s) : s)))
+  await refreshStatus($)
+}
 
 const runsOn = (s: Step) =>
   s.where === 'here' ? 'here' : `${s.model ?? TIERS[s.tier].model}/${s.effort ?? TIERS[s.tier].effort}`
@@ -60,6 +77,7 @@ const setAuto = async ($: EngineInterface, on: boolean) => {
 const clearPlan = async ($: EngineInterface) => {
   await update($, steps, () => [])
   await update($, planStatus, () => 'none')
+  await refreshStatus($)
 }
 
 type PlanInput = {
@@ -105,6 +123,8 @@ export const register: Register = on => {
       isDeferred: false,
     })
 
+    await refreshStatus($)
+
     return next(e)
   })
 
@@ -121,6 +141,7 @@ export const register: Register = on => {
         list.map(s => (input.done!.includes(s.id) ? { ...s, status: 'done' } : s)),
       )
     }
+    await refreshStatus($)
     if (!input.steps) return { result: planText(await read($, steps)) }
 
     const old = await read($, steps)
@@ -145,10 +166,12 @@ export const register: Register = on => {
 
     if (await read($, autoApprove)) {
       await update($, planStatus, () => 'approved')
+      await refreshStatus($)
       return { result: `Plan auto-approved:\n${planText(await read($, steps))}` }
     }
 
     await update($, planStatus, () => 'pending')
+    await refreshStatus($)
     let answer: string
     try {
       answer = await $.ui.ask('Run this plan? You can change tiers and models in the Model router pane first.', {
@@ -163,6 +186,7 @@ export const register: Register = on => {
     if (answer === APPROVE || answer === APPROVE_AUTO) {
       if (answer === APPROVE_AUTO) await setAuto($, true)
       await update($, planStatus, () => 'approved')
+      await refreshStatus($)
       return { result: `Plan approved by the user (follow these tiers; they may differ from what you proposed):\n${planText(await read($, steps))}` }
     }
     await update($, planStatus, () => 'none')
@@ -205,6 +229,7 @@ export const register: Register = on => {
         resolvedModel: s.resolvedModel ?? e.usage!.model,
       }))
     }
+    await refreshStatus($)
 
     return ran
   })
@@ -216,55 +241,6 @@ export const register: Register = on => {
     return {
       sections: [...composed.sections, { id: 'model-router:policy', text: POLICY, scope: 'session' as const }],
     }
-  })
-
-  // The band above the prompt: one line in the main window while a plan exists.
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const list = await read($, steps)
-    if (e.props.hasSurvey || list.length === 0) return next(e)
-
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const status = await read($, planStatus)
-    const auto = await read($, autoApprove)
-    const done = list.filter(s => s.status === 'done').length
-    const running = list.find(s => s.status === 'running')
-    const tokens = list.reduce((n, s) => n + s.tokens, 0)
-    const below = await next(e)
-
-    return (
-      <Box flexDirection="column">
-      {below}
-      <Box flexDirection="row" alignItems="center" columnGap="sm">
-        <Text color="claude" weight="semibold">⇄ Router</Text>
-        {status === 'pending' ? (
-          <Text color="warning">plan awaiting your approval</Text>
-        ) : (
-          <Text dimColor tabular>
-            {done}/{list.length} done
-          </Text>
-        )}
-        <Box flexDirection="row" columnGap="xs">
-          {list.map(s => (
-            <Text color={s.status === 'done' ? STATUS_COLOR.done : TIER_COLOR[s.tier]}>
-              {STATUS_GLYPH[s.status]}
-            </Text>
-          ))}
-        </Box>
-        {running && (
-          <Text dimColor wrap="truncate">
-            [{running.id}] {runsOn(running)}
-          </Text>
-        )}
-        {tokens > 0 && <Text dimColor tabular>· agents {fmt(tokens)} tok</Text>}
-        <Button key="band:open" plain dimColor onPress={() => void $.ui.open({ id: PANE, title: 'Model router' })}>
-          Plan
-        </Button>
-        <Button key="band:auto" plain dimColor onPress={() => void setAuto($, !auto)}>
-          {auto ? 'auto-approve on' : 'auto-approve off'}
-        </Button>
-      </Box>
-      </Box>
-    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -323,7 +299,7 @@ export const register: Register = on => {
             <Box key={`card:${s.id}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={s.status === 'running' ? 'warning' : 'subtle'} paddingX="sm" paddingY="xs">
               <Box flexDirection="row" columnGap="sm" alignItems="center">
                 <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-                <Text dimColor mono size="footnote">{s.id}</Text>
+                <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
                 <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
               </Box>
               <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">

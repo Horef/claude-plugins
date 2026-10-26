@@ -27,9 +27,10 @@ test('auto-approved plan routes a step to its tier; pane pickers override', asyn
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
-    const { Box } = $.ui.resolve(e)
-    return <Box />
+  const statuses: (string | undefined)[] = []
+  on('ui.status', (_, e) => {
+    statuses.push((e as { text?: string }).text)
+    return { value: undefined }
   })
   on('tool.call', (_, e) => {
     seen.push(e as { model?: string; effort?: string })
@@ -75,15 +76,6 @@ test('auto-approved plan routes a step to its tier; pane pickers override', asyn
   await $.tool.call({ tool: 'Agent', description: '[s1] check docs', prompt: 'go' })
   expect(seen.at(-1)?.effort).toBe('medium')
 
-  // The band above the prompt shows the plan; the engine draws nothing beneath it here.
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const band = await $.ui.mount({
-      plugin: 'model-router',
-      component: 'AbovePrompt',
-      surface,
-      props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 } },
-    } as never)
-    expect((await band.find({ type: 'Text', text: /Router/ }))?.text).toContain('Router')
-    await band.unmount()
-  }
+  // The summary is pinned as the mod's status line under the prompt.
+  expect(statuses.at(-1)).toContain('⇄ Router')
 })
