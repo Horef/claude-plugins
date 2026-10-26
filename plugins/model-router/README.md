@@ -24,11 +24,18 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
 
 All settings and the history are remembered across chats.
 
+## Keeping the rules in front of the model
+
+- **Terminal sessions** carry the routing rules in the system prompt on every request.
+- **Desktop-app sessions** (the SDK preset) put such sections into the chat's first message, which a long-running chat sent long ago. There the rules ride, unseen, on your next typed message, once.
+- **After a summarization** of the chat, the next typed message carries the rules again (where needed) and the current plan with each step's status, from the router's own record.
+- The plan, costs, history and settings live in the mod, not in the conversation, so a summary never loses them.
+
 ## The status line
 
 Always shown under the prompt, so you can see the router is on:
 
-- With no plan: `⇄ Router on · rules sent to opus · /router for the pane`. "Rules sent" appears once the routing rules have gone out with a request to that model; before the first message it says they go out with your next one.
+- With no plan: `⇄ Router on · rules sent to opus · /router for the pane`. "Rules sent" appears once a request to that model carried the routing rules; until then (a fresh load, or right after a summary in the desktop app) it says they go out with your next message.
 - With a plan: progress dots, the running step and its model, subagent cost and savings.
 
 Limits: the main chat's own model never changes; the pane suggests switching it to Sonnet when a plan has no deep step.

@@ -66,6 +66,12 @@ declare module 'claude-code' {
       notes: string[]
       /** The model the routing rules were last sent to, in this chat. */
       policy: { model?: Model; sentAt?: string }
+      /**
+       * Where the rules reach the model. 'system': the system prompt carries them on
+       * every request. Otherwise they ride a typed message: inChat says one is in the
+       * conversation now; a summarization clears it, and planDue re-attaches the plan.
+       */
+      delivery: { via?: 'system' | 'message'; inChat: boolean; planDue: boolean }
     }
   }
 }

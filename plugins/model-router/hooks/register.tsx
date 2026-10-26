@@ -41,6 +41,7 @@ const seenSkills = atom({ plugin: 'model-router', key: 'seenSkills' } as const, 
 const showSettings = atom({ plugin: 'model-router', key: 'showSettings' } as const, false)
 const notes = atom({ plugin: 'model-router', key: 'notes' } as const, [])
 const policySent = atom({ plugin: 'model-router', key: 'policy' } as const, {})
+const delivery = atom({ plugin: 'model-router', key: 'delivery' } as const, { inChat: false, planDue: false })
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history' }
 const HISTORY_CAP = 500
@@ -638,9 +639,25 @@ export const register: Register = on => {
   })
 
   // Typed prompts carry the Always-plan reminder and any pending router notes, unseen by the person.
+  // Typed prompts carry, unseen by the person: the rules when the system prompt
+  // cannot hold them (the desktop app's sessions) and none are in the chat yet,
+  // the plan again after a summarization, the Always-plan reminder, router notes.
   on('prompt.submit', async ($, e, next) => {
     if (e.command || e.isMeta) return next(e)
     const extra: string[] = []
+    const how = await read($, delivery)
+    if (how.via !== 'system' && !how.inChat) {
+      extra.push(policy(await read($, settings)))
+      await update($, delivery, d => ({ ...d, inChat: true }))
+    }
+    const list = await read($, steps)
+    if (how.planDue && list.length > 0) {
+      const set = await read($, settings)
+      extra.push(
+        `Model router: the conversation was summarized. The current plan (${await read($, planStatus)}), from the router's own record:\n${planText(list, set)}`,
+      )
+    }
+    if (how.planDue) await update($, delivery, d => ({ ...d, planDue: false }))
     if (await read($, alwaysPlan)) extra.push(REMINDER)
     const pending = await read($, notes)
     if (pending.length) {
@@ -652,14 +669,31 @@ export const register: Register = on => {
     return next({ ...e, context: [...(e.context ?? []), ...extra] })
   })
 
+  // A summarization of the main chat drops the rules and the plan from the
+  // history: the next typed message brings them back.
+  on('session.compact', async ($, e, next) => {
+    const done = await next(e)
+    if (e.agentId || 'skip' in done) return done
+    await update($, delivery, d => ({ ...d, inChat: false, planDue: true }))
+    await refreshStatus($)
+
+    return done
+  })
+
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!e.tools.includes(PLAN_TOOL) || !e.tools.includes('Agent')) return composed
-    const model = modelOf(e.model)
+    // Under the SDK's preset (the desktop app) session sections ride the chat's first
+    // message, which an open chat sent long ago: the rules go with a typed message instead.
+    const isSystem = !e.traits.includes('sdk-preset')
+    await update($, delivery, d => ({ ...d, via: isSystem ? 'system' : 'message' }))
+    const hasRules = isSystem || (await read($, delivery)).inChat
+    const model = hasRules ? modelOf(e.model) : undefined
     if ((await read($, policySent)).model !== model) {
       await update($, policySent, () => ({ model, sentAt: new Date().toISOString() }))
       await refreshStatus($)
     }
+    if (!isSystem) return composed
 
     // Only the settings shape this text, so it stays stable and the prompt cache holds.
     return {

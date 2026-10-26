@@ -144,3 +144,57 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
     await any.unmount()
   }
 })
+
+test('in the desktop app the rules ride a message, and return with the plan after a summary', async ($, on) => {
+  const prompts: { text: string; context?: readonly string[] }[] = []
+  const statuses: (string | undefined)[] = []
+  const store = new Map<string, unknown>([['autoApprove', true]])
+  const SDK = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [PLAN, 'Agent'], outputStyle: null, traits: ['sdk-preset'] }
+
+  on('command.register', () => ({ value: { command: 'router' } }))
+  on('tool.register', () => ({ value: { tool: PLAN } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('store.get', (_, e) => ({ value: store.get((e as { key: string }).key) }))
+  on('store.set', (_, e) => {
+    store.set((e as { key: string }).key, (e as { value: unknown }).value)
+    return { value: undefined }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => {
+    prompts.push(e as { text: string; context?: readonly string[] })
+    return { text: (e as { text: string }).text }
+  })
+  on('ui.status', (_, e) => {
+    statuses.push((e as { text?: string }).text)
+    return { value: undefined }
+  })
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
+  const summaryMsg = { role: 'user' as const, text: 'summary', toolUses: [] }
+  on('session.compact', () => ({ messages: [summaryMsg] }))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  // The preset's prompt gets no section, and the status line does not claim the rules arrived.
+  const first = await $.prompt.compose(SDK as never)
+  expect(first.sections.map(x => x.id)).not.toContain('model-router:policy')
+  expect(statuses.at(-1)).toContain('next message')
+
+  // The next typed message carries them once; then the status line says so.
+  await $.prompt.submit({ text: 'hello' })
+  expect(prompts.at(-1)?.context?.join(' ')).toContain('# Model routing')
+  await $.prompt.compose(SDK as never)
+  expect(statuses.at(-1)).toContain('rules sent to opus')
+  await $.prompt.submit({ text: 'again' })
+  expect(prompts.at(-1)?.context ?? []).toHaveLength(0)
+
+  // After a summary of the main chat, the rules and the plan come back together.
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'p1', title: 'Read papers', tier: 'light', where: 'agent' }] } as never)
+  await $.session.compact({ trigger: 'manual', messages: [summaryMsg, { ...summaryMsg, text: 'old' }] } as never)
+  await $.prompt.submit({ text: 'continue' })
+  const ctx = prompts.at(-1)?.context?.join(' ') ?? ''
+  expect(ctx).toContain('# Model routing')
+  expect(ctx).toContain('conversation was summarized')
+  expect(ctx).toContain('[p1] Read papers')
+  await $.prompt.submit({ text: 'and on' })
+  expect(prompts.at(-1)?.context ?? []).toHaveLength(0)
+})
