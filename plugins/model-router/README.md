@@ -15,7 +15,7 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
 ## The pane (`/router`)
 
 - **Cost**: this chat, the subagents, and what routing saved, estimated from list prices (`hooks/tiers.ts`) and the token counts the API reports. Savings compare each step with the main chat's model doing the same tokens, so they are an estimate.
-- **Steps**: a card per step with pickers for tier, where, model and thinking level (buttons on mobile), its cost and tokens, and a warning when a step was mostly subagent start-up cost.
+- **Steps**: a card per step with pickers for where, tier, model and thinking level (buttons on mobile), its cost and tokens, and a warning when a step was mostly subagent start-up cost. A "here" step is done by this chat on its own model; its tier is only a label until you send it to a subagent, and its card says so.
 - **Rerun one rung up**: a finished step that came back weak can be redone on the next rung of the ladder (Haiku low → medium → high → Sonnet medium → high → Opus high → xhigh → Fable). The main agent is asked to delegate it again.
 - **What the history says**: runs, reruns and average cost per model and thinking level, remembered across chats. When a tier's steps often need reruns, it suggests raising that tier; when none ever did, it suggests trying a cheaper rung. One click applies it.
 - **Settings** (opens right under its button, closes with Done):

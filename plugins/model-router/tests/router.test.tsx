@@ -116,6 +116,7 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   // The card shows cost and savings, and offers the next rung.
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /saved ≈/ }))?.text).toContain('saved')
+  expect((await ui.find({ type: 'Text', text: /^Done in this chat, on opus/ }))?.text).toContain('only picks a model')
   await ui.press({ key: 'rerun:u1' })
   await ui.unmount()
   expect(prompts.at(-1)?.text).toContain('haiku/medium')

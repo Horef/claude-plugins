@@ -233,10 +233,24 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Button>
     )
 
-  const toggle = (key: string, label: string, isOn: boolean, onPress: () => void) => (
-    <Button key={key} variant={isOn ? 'primary' : 'secondary'} onPress={onPress}>
-      {`${label} ${isOn ? 'on' : 'off'}`}
-    </Button>
+  // A settings row: what the switch does on the left, On/Off on the right.
+  const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void) => (
+    <Box key={`row:${key}`} flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="sm">
+      <Box flexDirection="column" flexShrink={1}>
+        <Text weight="medium">{label}</Text>
+        <Text dimColor size="footnote" wrap="wrap">{help}</Text>
+      </Box>
+      <Button key={key} variant={isOn ? 'primary' : 'secondary'} onPress={onPress}>
+        {isOn ? 'On' : 'Off'}
+      </Button>
+    </Box>
+  )
+
+  const group = (title: string, help?: string) => (
+    <Box flexDirection="column" marginTop="xs">
+      <Text size="footnote" weight="semibold" color="subtle">{title.toUpperCase()}</Text>
+      {help ? <Text dimColor size="footnote" wrap="wrap">{help}</Text> : null}
+    </Box>
   )
 
   const section = (title: string, aside?: string) => (
@@ -274,11 +288,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
-          {pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
-            void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
-          )}
           {pick(`where:${s.id}`, s.where, [{ value: 'agent', label: 'subagent' }, { value: 'here', label: 'here' }], v =>
             void editStep($, s.id, x => ({ ...x, where: v as Step['where'] })),
+          )}
+          {pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
+            void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
           )}
           {s.where === 'agent' &&
             pick(
@@ -295,6 +309,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               v => void editStep($, s.id, x => ({ ...x, effort: v === 'tier' ? undefined : (v as Step['effort']) })),
             )}
         </Box>
+        {s.where === 'here' && (
+          <Text dimColor size="footnote">
+            {`Done in this chat, on ${m.model ?? "this chat's model"}. The tier only picks a model if you send the step to a subagent.`}
+          </Text>
+        )}
         {s.cost > 0 && (
           <Text dimColor size="footnote" tabular>
             ≈{fmtUsd(s.cost)} · {fmtTok(tokens)} tok + {fmtTok(s.usage.cacheRead)} cached
@@ -336,39 +355,52 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>
 
       {isSettingsOpen && (
-        <Box key="settings-panel" flexDirection="column" rowGap="sm" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
-          <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
-            {toggle('always', 'Always plan', always, () => void setAlways($, !always))}
-            {toggle('auto', 'Auto-approve', auto, () => void setAuto($, !auto))}
-            {toggle('open-pane', 'Open pane on start', set.openPane, () => void editSettings($, s => ({ ...s, openPane: !s.openPane })))}
-          </Box>
+        <Box key="settings-panel" flexDirection="column" rowGap="sm" borderStyle="round" borderColor="subtle" paddingX="md" paddingY="sm">
+          <Text size="heading" weight="semibold">Settings</Text>
+
+          {group('Behaviour')}
+          {switchRow('always', 'Always plan', 'Plan before any message that needs tools, not only multi-step ones.', always, () => void setAlways($, !always))}
+          {switchRow('auto', 'Auto-approve', 'Run new plans without asking first.', auto, () => void setAuto($, !auto))}
+          {switchRow('open-pane', 'Open pane on start', 'Open this pane in every new chat.', set.openPane, () =>
+            void editSettings($, s => ({ ...s, openPane: !s.openPane })),
+          )}
+
+          {group('Tiers', 'Model and thinking level for steps sent to a subagent. "Here" steps always use this chat\'s model.')}
           {TIER_ORDER.map(t => {
             const ts = set.tiers[t]
             const edit = (patch: Partial<typeof ts>) =>
               void editSettings($, s => ({ ...s, tiers: { ...s.tiers, [t]: { ...s.tiers[t], ...patch } } }))
             return (
-              <Box key={`tierset:${t}`} flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
-                <Box width={9}>
-                  <Text color={TIER_COLOR[t]} weight="medium">{t}</Text>
+              <Box key={`tierset:${t}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={TIER_COLOR[t]} paddingX="sm" paddingY="xs">
+                <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+                  <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
+                  <Button key={`set-scope:${t}`} plain dimColor={!ts.scopeNote} onPress={() => edit({ scopeNote: !ts.scopeNote })}>
+                    {ts.scopeNote ? '✓ Scope note' : 'Scope note off'}
+                  </Button>
                 </Box>
-                {pick(`set-model:${t}`, ts.model, MODELS.map(x => ({ value: x, label: x })), v => edit({ model: v as typeof ts.model }))}
-                {pick(`set-effort:${t}`, ts.effort, EFFORTS.map(x => ({ value: x, label: x })), v => edit({ effort: v as typeof ts.effort }))}
-                {toggle(`set-scope:${t}`, 'Scope note', ts.scopeNote, () => edit({ scopeNote: !ts.scopeNote }))}
+                <Text dimColor size="footnote" wrap="wrap">{TIER_USE[t]}</Text>
+                <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
+                  {pick(`set-model:${t}`, ts.model, MODELS.map(x => ({ value: x, label: x })), v => edit({ model: v as typeof ts.model }))}
+                  {pick(`set-effort:${t}`, ts.effort, EFFORTS.map(x => ({ value: x, label: `${x} thinking` })), v => edit({ effort: v as typeof ts.effort }))}
+                </Box>
               </Box>
             )
           })}
-          <Text dimColor size="footnote">
-            Scope note: adds one line to that tier's subagent briefs asking it to stay on the task and not start sessions or load extra tools.
+          <Text dimColor size="footnote" wrap="wrap">
+            Scope note: one line added to that tier's briefs, asking the subagent to stay on its task and not start sessions or load extra tools.
           </Text>
 
-          {section('Skills', 'run in a subagent on a tier')}
+          {group('Skills', 'Skills listed here run in a subagent on the tier you pick.')}
+          {mapped.length + unmapped.length === 0 && (
+            <Text dimColor size="footnote" wrap="wrap">None yet. Skills you use in a chat appear here, or add one by name.</Text>
+          )}
           {[...mapped.map(([n]) => n), ...unmapped].map(name => (
-            <Box key={`skill:${name}`} flexDirection="row" justifyContent="space-between" alignItems="center">
+            <Box key={`skill:${name}`} flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="sm">
               <Text mono size="footnote" wrap="truncate">{name}</Text>
               {pick(
                 `skill-tier:${name}`,
                 set.skills[name] ?? 'off',
-                [{ value: 'off', label: 'in main chat' }, ...TIER_ORDER.map(t => ({ value: t, label: t }))],
+                [{ value: 'off', label: 'in this chat' }, ...TIER_ORDER.map(t => ({ value: t, label: t }))],
                 v =>
                   void editSettings($, s => {
                     const skills = { ...s.skills }
@@ -382,7 +414,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {Input && (
             <Input
               key="add-skill"
-              placeholder="Add a skill by name, e.g. scientific-figures"
+              placeholder="Skill name, e.g. scientific-figures"
               submitLabel="Add"
               onSubmit={v => {
                 const name = v.trim()
@@ -391,7 +423,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             />
           )}
 
-          <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center" marginTop="xs">
             <Box flexDirection="row" columnGap="xs">
               <Button key="reset-tiers" plain dimColor onPress={() => void editSettings($, s => ({ ...s, tiers: DEFAULT_SETTINGS.tiers }))}>
                 Reset tiers
