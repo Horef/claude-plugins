@@ -5,7 +5,10 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
 ## How it works
 
 - **Plan**: for a multi-step request the main agent first calls `mcp__model-router__plan` with steps tagged by tier (light, standard, deep) and by where they run (a subagent, or here in the main chat).
-- **Approval**: the plan waits for your answer in the chat's question dialog (Approve / Approve, auto from now / Revise, or type a note). Change any step in the pane before you answer.
+- **Approval**: the plan waits for your answer in the chat's question dialog. Edits you make in the pane while it waits (tier, where, model, thinking) are kept whatever you pick.
+  - **Run it**: go with the plan as it now stands in the pane.
+  - **Run it, and auto-approve future plans**: the same, and later plans run without asking.
+  - **Change the steps**: the steps themselves need work (add, drop, split or reword). Nothing runs; the model asks what to change, or, if you typed it under Other, revises right away and asks again.
 - **Routing**: an Agent call whose description starts with `[<step id>]` gets its model and thinking level from the plan, whatever the main agent asked for. Forks are never rerouted, since they always inherit the parent model.
 - **Always plan** (Settings): every message you type carries a hidden reminder to plan before using tools.
 

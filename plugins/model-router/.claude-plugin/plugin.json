@@ -1,6 +1,6 @@
 {
   "name": "model-router",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Routes each step of a task to a model tier (light, standard, deep) and shows the plan with per-step overrides and token use in a pane",
   "license": "MIT",
   "types": "./types/index.d.ts"

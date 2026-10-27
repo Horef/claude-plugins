@@ -182,9 +182,11 @@ type PlanInput = {
   done?: string[]
 }
 
-const APPROVE = 'Approve'
-const APPROVE_AUTO = 'Approve, auto from now'
-const REVISE = 'Revise'
+// Run = go with the plan as it stands in the pane (tier, where, model, thinking edits
+// included). Change = the steps themselves need work (add, drop, split, reword).
+const APPROVE = 'Run it'
+const APPROVE_AUTO = 'Run it, and auto-approve future plans'
+const REVISE = 'Change the steps'
 
 
 // --- The pane -----------------------------------------------------------------
@@ -341,7 +343,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
       {status === 'pending' && (
         <Box borderStyle="round" borderColor="warning" paddingX="sm" paddingY="xs">
-          <Text color="warning" size="footnote">Adjust the steps below, then answer the question in the chat.</Text>
+          <Text color="warning" size="footnote">
+            Change tiers, models or where steps run below, then pick "Run it" in the chat. To add, drop or reword steps, pick "Change the steps".
+          </Text>
         </Box>
       )}
       {hint && (
@@ -545,10 +549,13 @@ export const register: Register = on => {
     await refreshStatus($)
     let answer: string
     try {
-      answer = await $.ui.ask('Run this plan? You can change tiers and models in the Model router pane first.', {
-        header: 'Plan',
-        options: [APPROVE, APPROVE_AUTO, REVISE],
-      })
+      answer = await $.ui.ask(
+        'Run this plan? Edits you make in the Model router pane (tier, where, model, thinking) are kept either way. To add, drop, split or reword steps, pick "Change the steps", or type what to change under Other.',
+        {
+          header: 'Plan',
+          options: [APPROVE, APPROVE_AUTO, REVISE],
+        },
+      )
     } catch {
       await update($, planStatus, () => 'none')
       await refreshStatus($)
@@ -566,9 +573,12 @@ export const register: Register = on => {
     }
     await update($, planStatus, () => 'none')
     await refreshStatus($)
-    const note = answer === REVISE ? 'They gave no details: ask what to change.' : `Their note: ${answer}`
+    const note = answer === REVISE ? 'They gave no details yet: ask them what to change before anything else.' : `What they want changed: ${answer}`
+    const kept = planText(await read($, steps), await read($, settings))
 
-    return { result: `The user asked to revise the plan. ${note} Then call ${PLAN_TOOL} again.` }
+    return {
+      result: `The user wants the steps changed before anything runs. ${note}\nTheir pane edits so far are in this version; keep a step's id when you keep the step, so its edits carry over:\n${kept}\nThen call ${PLAN_TOOL} again with the revised steps.`,
+    }
   }).catch(() => ({ deny: 'model-router: the plan tool failed; continue without routing.' }))
 
   // Skills mapped to a tier run in a subagent; the main chat is told how.
