@@ -18,7 +18,7 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
 - **Steps**: a card per step with pickers for tier, where, model and thinking level (buttons on mobile), its cost and tokens, and a warning when a step was mostly subagent start-up cost.
 - **Rerun one rung up**: a finished step that came back weak can be redone on the next rung of the ladder (Haiku low → medium → high → Sonnet medium → high → Opus high → xhigh → Fable). The main agent is asked to delegate it again.
 - **What the history says**: runs, reruns and average cost per model and thinking level, remembered across chats. When a tier's steps often need reruns, it suggests raising that tier; when none ever did, it suggests trying a cheaper rung. One click applies it.
-- **Settings**:
+- **Settings** (opens right under its button, closes with Done):
   - Always plan and auto-approve.
   - Each tier's model and thinking level.
   - An optional scope note per tier. It adds one line to that tier's briefs: stay on the task, don't start sessions or load extra tools. Off by default.
