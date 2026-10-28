@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { HistoryEntry, Settings, Step, Tier, Usage } from '../types'
+import type { CostView, HistoryEntry, Lifetime, Settings, Step, Tier, Totals, Usage } from '../types'
 import {
   EMPTY_USAGE,
   PANE,
@@ -43,8 +43,14 @@ const showSettings = atom({ plugin: 'model-router', key: 'showSettings' } as con
 const notes = atom({ plugin: 'model-router', key: 'notes' } as const, [])
 const policySent = atom({ plugin: 'model-router', key: 'policy' } as const, {})
 const delivery = atom({ plugin: 'model-router', key: 'delivery' } as const, { inChat: false, planDue: false })
+const EMPTY_TOTALS: Totals = { mainCost: 0, agentCost: 0, mainEquivalent: 0, steps: 0 }
+const newLifetime = (): Lifetime => ({ ...EMPTY_TOTALS, since: new Date().toISOString(), plans: 0, byTier: { light: 0, standard: 0, deep: 0 } })
+const chatTotals = atom({ plugin: 'model-router', key: 'chatTotals' } as const, EMPTY_TOTALS)
+const planBase = atom({ plugin: 'model-router', key: 'planBase' } as const, { mainCost: 0 })
+const costView = atom({ plugin: 'model-router', key: 'costView' } as const, 'plan')
+const lifetime = atom({ plugin: 'model-router', key: 'lifetime' } as const, newLifetime())
 
-const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history' }
+const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime' }
 const HISTORY_CAP = 500
 
 // What the router saw in this load, for the plan tool's status check.
@@ -63,6 +69,13 @@ async function loadRemembered($: EngineInterface) {
   if ((await $.store.get(STORE.always)) === true) await update($, alwaysPlan, () => true)
   const past = (await $.store.get(STORE.history)) as HistoryEntry[] | undefined
   await update($, history, () => (Array.isArray(past) ? past : []))
+  const life = (await $.store.get(STORE.lifetime)) as Lifetime | undefined
+  await update($, lifetime, () => (life?.since ? { ...newLifetime(), ...life } : newLifetime()))
+}
+
+async function editLifetime($: EngineInterface, fn: (l: Lifetime) => Lifetime) {
+  await update($, lifetime, fn)
+  await $.store.set(STORE.lifetime, await read($, lifetime))
 }
 
 async function setAuto($: EngineInterface, on: boolean) {
@@ -107,7 +120,7 @@ async function summary($: EngineInterface) {
   const dots = list.map(s => STATUS_GLYPH[s.status]).join('')
   const head = status === 'pending' ? 'plan awaiting approval' : `${done}/${list.length} done`
   const now = running ? ` · ${running.id} on ${rungLabel(runsOn(running, set))}` : ''
-  const money = cost > 0 ? ` · agents ≈${fmtUsd(cost)}${saved > 0 ? `, saved ≈${fmtUsd(saved)}` : ''}` : ''
+  const money = cost > 0 ? ` · plan agents ≈${fmtUsd(cost)}${saved > 0 ? `, saved ≈${fmtUsd(saved)}` : ''}` : ''
 
   return `⇄ Router ${dots} ${head}${now}${money} · /router`
 }
@@ -220,6 +233,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const done = list.filter(s => s.status === 'done').length
   const agentCost = list.reduce((n, s) => n + s.cost, 0)
   const saved = list.reduce((n, s) => n + Math.max(0, s.mainCost - s.cost), 0)
+  const view = await read($, costView)
+  const chat = await read($, chatTotals)
+  const base = await read($, planBase)
+  const life = await read($, lifetime)
   const hint = modelHint(list, m.model)
   const advice = suggestions(past, set)
 
@@ -266,6 +283,61 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       <Text weight="semibold" tabular color={color}>{value}</Text>
     </Box>
   )
+
+  const savedOf = (t: Totals) => Math.max(0, t.mainEquivalent - t.agentCost)
+  const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—')
+  const since = (iso?: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '')
+  const VIEWS: { value: CostView; label: string }[] = [
+    { value: 'plan', label: 'This plan' },
+    { value: 'chat', label: 'This chat' },
+    { value: 'all', label: 'All time' },
+  ]
+
+  // The money at the top: one span at a time, picked with a small segmented switch.
+  const costCard = () => {
+    const planMain = Math.max(0, m.cost - base.mainCost)
+    const chatSaved = savedOf(chat)
+    const lifeSaved = savedOf(life)
+    const body =
+      view === 'plan' ? (
+        <Box flexDirection="row" columnGap="md">
+          {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, `≈${fmtUsd(planMain)}`)}
+          {stat('Subagents', `≈${fmtUsd(agentCost)}`)}
+          {stat('Saved', saved > 0 ? `≈${fmtUsd(saved)}` : '—', saved > 0 ? 'success' : undefined)}
+        </Box>
+      ) : view === 'chat' ? (
+        <Box flexDirection="row" columnGap="md">
+          {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, `≈${fmtUsd(m.cost)}`)}
+          {stat('Subagents', `≈${fmtUsd(chat.agentCost)}`)}
+          {stat('Saved', chatSaved > 0 ? `≈${fmtUsd(chatSaved)}` : '—', chatSaved > 0 ? 'success' : undefined)}
+        </Box>
+      ) : (
+        <Box flexDirection="row" columnGap="md">
+          {stat('Saved', lifeSaved > 0 ? `≈${fmtUsd(lifeSaved)}` : '—', lifeSaved > 0 ? 'success' : undefined)}
+          {stat('Subagents cost', `≈${fmtUsd(life.agentCost)}`)}
+          {stat('On main model', `≈${fmtUsd(life.mainEquivalent)}`)}
+        </Box>
+      )
+    const foot =
+      view === 'plan'
+        ? `Since this plan was posted${base.at ? ` (${new Date(base.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })})` : ''}. A new plan starts a new count.`
+        : view === 'chat'
+          ? `Since this chat was opened or its plugins reloaded: ${chat.steps} delegated steps. Earlier turns are not counted.`
+          : `Since ${since(life.since)}: ${life.steps} delegated steps in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegating cut their cost by ${pct(lifeSaved, life.mainEquivalent)}; main chats cost ≈${fmtUsd(life.mainCost)}.`
+    return (
+      <Box flexDirection="column" rowGap="xs" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
+        <Box flexDirection="row" columnGap="xs">
+          {VIEWS.map(v => (
+            <Button key={`cost-view:${v.value}`} plain={v.value !== view ? true : undefined} variant={v.value === view ? 'primary' : undefined} onPress={() => void update($, costView, () => v.value)}>
+              {v.label}
+            </Button>
+          ))}
+        </Box>
+        {body}
+        <Text dimColor size="caption" wrap="wrap">{foot}</Text>
+      </Box>
+    )
+  }
 
   const card = (s: Step) => {
     const now = runsOn(s, set)
@@ -431,6 +503,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               <Button key="clear-history" plain dimColor onPress={() => void editHistory($, () => [])}>
                 Clear history
               </Button>
+              <Button key="reset-stats" plain dimColor onPress={() => void editLifetime($, () => newLifetime())}>
+                Reset statistics
+              </Button>
             </Box>
             <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
               Done
@@ -439,11 +514,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         </Box>
       )}
 
-      <Box flexDirection="row" columnGap="md" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
-        {stat(`This chat${m.model ? ` · ${m.model}` : ''}`, `≈${fmtUsd(m.cost)}`)}
-        {stat('Subagents', `≈${fmtUsd(agentCost)}`)}
-        {stat('Saved', saved > 0 ? `≈${fmtUsd(saved)}` : '—', saved > 0 ? 'success' : undefined)}
-      </Box>
+      {costCard()}
 
       {status === 'pending' && (
         <Box borderStyle="round" borderColor="warning" paddingX="sm" paddingY="xs">
@@ -565,6 +636,12 @@ export const register: Register = on => {
     if (!input.steps) return withNotes(planText(await read($, steps), set))
 
     const old = await read($, steps)
+    // A plan that shares no step with the last one starts its own cost count.
+    const isNewPlan = !old.some(o => input.steps!.some(s => s.id === o.id))
+    if (isNewPlan) {
+      const mainCost = (await read($, main)).cost
+      await update($, planBase, () => ({ mainCost, at: new Date().toISOString() }))
+    }
     await update($, steps, () =>
       input.steps!.map(s => {
         const was = old.find(o => o.id === s.id)
@@ -574,6 +651,7 @@ export const register: Register = on => {
     void $.ui.open({ id: PANE, title: 'Model router' })
 
     if (await read($, autoApprove)) {
+      if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
       await update($, planStatus, () => 'approved')
       await refreshStatus($)
       return withNotes(`Plan auto-approved:\n${planText(await read($, steps), set)}`)
@@ -598,6 +676,7 @@ export const register: Register = on => {
 
     if (answer === APPROVE || answer === APPROVE_AUTO) {
       if (answer === APPROVE_AUTO) await setAuto($, true)
+      if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
       await update($, planStatus, () => 'approved')
       await refreshStatus($)
       const now = await read($, settings)
@@ -660,7 +739,9 @@ export const register: Register = on => {
     const model = modelOf(e.usage.model)
 
     if (!e.agentId) {
-      await update($, main, m => ({ usage: addUsage(m.usage, used), cost: m.cost + costOf(used, model), model: model ?? m.model }))
+      const cost = costOf(used, model)
+      await update($, main, m => ({ usage: addUsage(m.usage, used), cost: m.cost + cost, model: model ?? m.model }))
+      await editLifetime($, l => ({ ...l, mainCost: l.mainCost + cost }))
       await refreshStatus($)
       return ran
     }
@@ -677,14 +758,30 @@ export const register: Register = on => {
     const heavy = isSetupHeavy(usage)
     const at = new Date().toISOString()
     const key = `${at}:${step.id}`
-    const cost = step.cost + costOf(used, ranOn.model)
+    const turnCost = costOf(used, ranOn.model)
+    const turnEquivalent = costOf(used, mainModel)
+    const cost = step.cost + turnCost
+    const isFirstFinish = step.status !== 'done'
+    const add = (t: Totals): Totals => ({
+      ...t,
+      agentCost: t.agentCost + turnCost,
+      mainEquivalent: t.mainEquivalent + turnEquivalent,
+      steps: t.steps + (isFirstFinish ? 1 : 0),
+    })
+    await update($, chatTotals, add)
+    await editLifetime($, l => ({
+      ...add(l),
+      since: l.since,
+      plans: l.plans,
+      byTier: isFirstFinish ? { ...l.byTier, [step.tier]: l.byTier[step.tier] + 1 } : l.byTier,
+    }))
 
     await editStep($, step.id, s => ({
       ...s,
       status: 'done',
       usage,
       cost,
-      mainCost: s.mainCost + costOf(used, mainModel),
+      mainCost: s.mainCost + turnEquivalent,
       resolvedModel: s.resolvedModel ?? e.usage!.model,
       setupHeavy: heavy,
       historyKey: key,

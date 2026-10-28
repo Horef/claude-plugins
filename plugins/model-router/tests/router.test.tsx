@@ -108,6 +108,11 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   expect(statuses.at(-1)).toContain('1/2 done')
   expect(statuses.at(-1)).toContain('saved')
   expect((store.get('history') as unknown[]).length).toBe(1)
+  const life = store.get('lifetime') as { steps: number; plans: number; agentCost: number; mainEquivalent: number; byTier: { light: number } }
+  expect(life.plans).toBe(1)
+  expect(life.steps).toBe(1)
+  expect(life.byTier.light).toBe(1)
+  expect(life.mainEquivalent).toBeGreaterThan(life.agentCost)
 
   // The start-up-heavy note reaches the model with the next plan call.
   const after = await $.tool.call({ tool: PLAN, done: ['u2'] } as never)
@@ -117,6 +122,11 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /saved ≈/ }))?.text).toContain('saved')
   expect((await ui.find({ type: 'Text', text: /^Done in this chat, on opus/ }))?.text).toContain('only picks a model')
+  await ui.press({ key: 'cost-view:all' })
+  expect((await ui.find({ type: 'Text', text: /delegated steps in 1 plans/ }))?.text).toContain('light 1')
+  await ui.press({ key: 'cost-view:chat' })
+  expect((await ui.find({ type: 'Text', text: /^Since this chat was opened/ }))?.text).toContain('1 delegated steps')
+  await ui.press({ key: 'cost-view:plan' })
   await ui.press({ key: 'rerun:u1' })
   await ui.unmount()
   expect(prompts.at(-1)?.text).toContain('haiku/medium')

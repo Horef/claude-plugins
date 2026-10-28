@@ -39,6 +39,15 @@ export type Step = {
   historyKey?: string
 }
 
+/** Money counted over some span: the main chat, the subagents, and what the
+ *  subagents' tokens would have cost on the main chat's model. */
+export type Totals = { mainCost: number; agentCost: number; mainEquivalent: number; steps: number }
+
+/** Remembered across chats: a few numbers, never per-run detail. */
+export type Lifetime = Totals & { since: string; plans: number; byTier: Record<Tier, number> }
+
+export type CostView = 'plan' | 'chat' | 'all'
+
 export type HistoryEntry = {
   key: string
   tier: Tier
@@ -71,6 +80,12 @@ declare module 'claude-code' {
        * every request. Otherwise they ride a typed message: inChat says one is in the
        * conversation now; a summarization clears it, and planDue re-attaches the plan.
        */
+      /** This chat's subagent totals; the main chat's own cost is in `main`. */
+      chatTotals: Totals
+      /** The main chat's cost when the current plan was posted. */
+      planBase: { mainCost: number; at?: string }
+      costView: CostView
+      lifetime: Lifetime
       delivery: { via?: 'system' | 'message'; inChat: boolean; planDue: boolean }
     }
   }
