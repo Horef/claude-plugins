@@ -159,6 +159,41 @@ async function applySuggestion($: EngineInterface, s: Suggestion) {
   await editSettings($, set => ({ ...set, tiers: { ...set.tiers, [s.tier]: { ...set.tiers[s.tier], ...s.to } } }))
 }
 
+// --- Money ---------------------------------------------------------------------
+
+// Which plan step a subagent runs, by the tag its Agent call's description starts with.
+const stepByAgent = new Map<string, string>()
+
+async function stepOfAgent($: EngineInterface, agentId: string) {
+  let id = stepByAgent.get(agentId)
+  if (!id) {
+    const agent = (await $.agent.list()).find(a => a.id === agentId)
+    id = agent ? STEP_TAG.exec(agent.description)?.[1] : undefined
+    if (id) stepByAgent.set(agentId, id)
+  }
+  return id ? (await read($, steps)).find(s => s.id === id) : undefined
+}
+
+/** Adds one model response's cost to the chat, the step it belongs to, and the totals. */
+async function account($: EngineInterface, used: Usage, modelId: string, agentId: string | undefined) {
+  const model = modelOf(modelId)
+  if (!agentId) {
+    const cost = costOf(used, model)
+    await update($, main, m => ({ usage: addUsage(m.usage, used), cost: m.cost + cost, model: model ?? m.model }))
+    await editLifetime($, l => ({ ...l, mainCost: l.mainCost + cost }))
+    await refreshStatus($)
+    return
+  }
+  const step = await stepOfAgent($, agentId)
+  if (!step) return
+  const cost = costOf(used, model ?? runsOn(step, await read($, settings)).model)
+  const equivalent = costOf(used, (await read($, main)).model ?? 'opus')
+  const add = (t: Totals): Totals => ({ ...t, agentCost: t.agentCost + cost, mainEquivalent: t.mainEquivalent + equivalent })
+  await update($, chatTotals, add)
+  await editLifetime($, l => ({ ...l, ...add(l) }))
+  await editStep($, step.id, s => ({ ...s, usage: addUsage(s.usage, used), cost: s.cost + cost, mainCost: s.mainCost + equivalent }))
+}
+
 // --- Policy -------------------------------------------------------------------
 
 const policy = (set: Settings) => {
@@ -277,10 +312,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     </Box>
   )
 
-  const stat = (label: string, value: string, color?: string) => (
+  const stat = (label: string, value: string, color?: string, sub?: string) => (
     <Box flexDirection="column" flexGrow={1}>
       <Text dimColor size="caption">{label}</Text>
       <Text weight="semibold" tabular color={color}>{value}</Text>
+      {sub ? <Text size="caption" tabular color={color}>{sub}</Text> : null}
     </Box>
   )
 
@@ -294,6 +330,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   ]
 
   // The money at the top: one span at a time, picked with a small segmented switch.
+  // Saved as a share of what the same work would have cost with no routing:
+  // main chat + what the subagents' tokens would have cost on the main model.
+  const savedStat = (amount: number, mainSpent: number, equivalent: number) =>
+    stat(
+      'Saved',
+      amount > 0 ? `≈${fmtUsd(amount)}` : '—',
+      amount > 0 ? 'success' : undefined,
+      amount > 0 ? `${pct(amount, mainSpent + equivalent)} of the total` : undefined,
+    )
+
   const costCard = () => {
     const planMain = Math.max(0, m.cost - base.mainCost)
     const chatSaved = savedOf(chat)
@@ -303,17 +349,17 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         <Box flexDirection="row" columnGap="md">
           {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, `≈${fmtUsd(planMain)}`)}
           {stat('Subagents', `≈${fmtUsd(agentCost)}`)}
-          {stat('Saved', saved > 0 ? `≈${fmtUsd(saved)}` : '—', saved > 0 ? 'success' : undefined)}
+          {savedStat(saved, planMain, list.reduce((n, x) => n + x.mainCost, 0))}
         </Box>
       ) : view === 'chat' ? (
         <Box flexDirection="row" columnGap="md">
           {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, `≈${fmtUsd(m.cost)}`)}
           {stat('Subagents', `≈${fmtUsd(chat.agentCost)}`)}
-          {stat('Saved', chatSaved > 0 ? `≈${fmtUsd(chatSaved)}` : '—', chatSaved > 0 ? 'success' : undefined)}
+          {savedStat(chatSaved, m.cost, chat.mainEquivalent)}
         </Box>
       ) : (
         <Box flexDirection="row" columnGap="md">
-          {stat('Saved', lifeSaved > 0 ? `≈${fmtUsd(lifeSaved)}` : '—', lifeSaved > 0 ? 'success' : undefined)}
+          {savedStat(lifeSaved, life.mainCost, life.mainEquivalent)}
           {stat('Subagents cost', `≈${fmtUsd(life.agentCost)}`)}
           {stat('On main model', `≈${fmtUsd(life.mainEquivalent)}`)}
         </Box>
@@ -323,7 +369,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ? `Since this plan was posted${base.at ? ` (${new Date(base.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })})` : ''}. A new plan starts a new count.`
         : view === 'chat'
           ? `Since this chat was opened or its plugins reloaded: ${chat.steps} delegated steps. Earlier turns are not counted.`
-          : `Since ${since(life.since)}: ${life.steps} delegated steps in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegating cut their cost by ${pct(lifeSaved, life.mainEquivalent)}; main chats cost ≈${fmtUsd(life.mainCost)}.`
+          : `Since ${since(life.since)}: ${life.steps} delegated steps in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
     return (
       <Box flexDirection="column" rowGap="xs" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
         <Box flexDirection="row" columnGap="xs">
@@ -569,6 +615,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await loadRemembered($)
+    // A reload mid-plan starts this chat's count from the plan's own, so the views agree.
+    const plan = await read($, steps)
+    if ((await read($, chatTotals)).agentCost === 0 && plan.some(x => x.cost > 0)) {
+      await update($, chatTotals, t => ({
+        ...t,
+        agentCost: plan.reduce((n, x) => n + x.cost, 0),
+        mainEquivalent: plan.reduce((n, x) => n + x.mainCost, 0),
+        steps: plan.filter(x => x.where === 'agent' && x.status === 'done').length,
+      }))
+    }
     await $.command.register({ name: 'router', description: 'Show the model-router pane' })
     await $.tool.register({
       name: 'plan',
@@ -732,65 +788,43 @@ export const register: Register = on => {
     return ran
   }).catch(($, e, next) => next(e))
 
+  // Money is counted per model response, as it arrives, so every view moves together.
+  on('turn.step', async function* ($, e, next) {
+    const r = yield* next(e)
+    if (r.usage) await account($, usageOf(r.usage), r.usage.model, e.agentId)
+
+    return r
+  })
+
+  // A subagent's run ending finishes its step: status, history, the start-up check.
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
-    if (!e.usage) return ran
-    const used = usageOf(e.usage)
-    const model = modelOf(e.usage.model)
-
-    if (!e.agentId) {
-      const cost = costOf(used, model)
-      await update($, main, m => ({ usage: addUsage(m.usage, used), cost: m.cost + cost, model: model ?? m.model }))
-      await editLifetime($, l => ({ ...l, mainCost: l.mainCost + cost }))
-      await refreshStatus($)
-      return ran
-    }
-
-    const agent = (await $.agent.list()).find(a => a.id === e.agentId)
-    const id = agent && STEP_TAG.exec(agent.description)?.[1]
-    const step = id ? (await read($, steps)).find(s => s.id === id) : undefined
+    if (!e.agentId) return ran
+    const step = await stepOfAgent($, e.agentId)
     if (!step) return ran
 
     const set = await read($, settings)
-    const ranOn = { model: model ?? runsOn(step, set).model, effort: runsOn(step, set).effort }
-    const mainModel = (await read($, main)).model ?? 'opus'
-    const usage = addUsage(step.usage, used)
-    const heavy = isSetupHeavy(usage)
+    const ranOn = { model: modelOf(e.usage?.model) ?? runsOn(step, set).model, effort: runsOn(step, set).effort }
+    const heavy = isSetupHeavy(step.usage)
     const at = new Date().toISOString()
     const key = `${at}:${step.id}`
-    const turnCost = costOf(used, ranOn.model)
-    const turnEquivalent = costOf(used, mainModel)
-    const cost = step.cost + turnCost
     const isFirstFinish = step.status !== 'done'
-    const add = (t: Totals): Totals => ({
-      ...t,
-      agentCost: t.agentCost + turnCost,
-      mainEquivalent: t.mainEquivalent + turnEquivalent,
-      steps: t.steps + (isFirstFinish ? 1 : 0),
-    })
-    await update($, chatTotals, add)
-    await editLifetime($, l => ({
-      ...add(l),
-      since: l.since,
-      plans: l.plans,
-      byTier: isFirstFinish ? { ...l.byTier, [step.tier]: l.byTier[step.tier] + 1 } : l.byTier,
-    }))
-
+    if (isFirstFinish) {
+      await update($, chatTotals, t => ({ ...t, steps: t.steps + 1 }))
+      await editLifetime($, l => ({ ...l, steps: l.steps + 1, byTier: { ...l.byTier, [step.tier]: l.byTier[step.tier] + 1 } }))
+    }
     await editStep($, step.id, s => ({
       ...s,
       status: 'done',
-      usage,
-      cost,
-      mainCost: s.mainCost + turnEquivalent,
-      resolvedModel: s.resolvedModel ?? e.usage!.model,
+      resolvedModel: s.resolvedModel ?? e.usage?.model,
       setupHeavy: heavy,
       historyKey: key,
     }))
-    await editHistory($, h => [...h, { key, tier: step.tier, ...ranOn, cost, setupHeavy: heavy, rerun: false, at }])
+    await editHistory($, h => [...h, { key, tier: step.tier, ...ranOn, cost: step.cost, setupHeavy: heavy, rerun: false, at }])
     if (heavy) {
       await update($, notes, n => [
         ...n,
-        `Step ${step.id} was mostly subagent start-up cost (${usage.input + usage.cacheWrite + usage.cacheRead} tokens read, ${usage.output} written): steps this small are cheaper done here.`,
+        `Step ${step.id} was mostly subagent start-up cost (${step.usage.input + step.usage.cacheWrite + step.usage.cacheRead} tokens read, ${step.usage.output} written): steps this small are cheaper done here.`,
       ])
     }
 

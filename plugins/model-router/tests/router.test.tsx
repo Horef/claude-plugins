@@ -45,6 +45,17 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   })
   on('agent.list', () => ({ value: [{ id: 'a1', description: '[u1] list files', type: 'Explore', status: 'completed' }] }))
   on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
+  const usageFor: Record<string, unknown> = {}
+  on('turn.step', async function* (_, e) {
+    const x = e as { turnId: string; index: number }
+    return { turnId: x.turnId, index: x.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: usageFor[x.turnId] ?? null } as never
+  })
+  const step = async (turnId: string, usage: unknown, agentId?: string) => {
+    usageFor[turnId] = usage
+    const st = $.turn.step({ turnId, index: 0, model: 'x', messageCount: 1, ...(agentId ? { agentId } : {}) } as never)
+    for await (const _ of st) void _
+    return st.result
+  }
   const composed: string[][] = []
   const rows = mock.session(on)
   on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }))
@@ -96,15 +107,24 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   await $.tool.call({ tool: 'Agent', description: 'other', prompt: 'go' })
   expect(calls.at(-1)?.model).toBe(undefined)
 
-  // The main chat runs on Opus; the subagent's turn is priced at Haiku and compared.
-  await $.turn.complete({
-    answer: 'ok', durationMs: 1, isAborted: false, turnId: 't0', reason: 'answer',
-    usage: { model: 'claude-opus-5-5', input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: 50000, output_tokens: 500 },
-  } as never)
-  await $.turn.complete({
-    answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'a1',
-    usage: { model: 'claude-haiku-5-5', input_tokens: 2, cache_creation_input_tokens: 4000, cache_read_input_tokens: 37000, output_tokens: 1000 },
-  } as never)
+  // The main chat runs on Opus; the subagent's responses are priced at Haiku and compared.
+  await step('t0', { model: 'claude-opus-5-5', input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: 50000, output_tokens: 500 })
+  await step('t1', { model: 'claude-haiku-5-5', input_tokens: 2, cache_creation_input_tokens: 4000, cache_read_input_tokens: 37000, output_tokens: 1000 }, 'a1')
+
+  // Live: before the subagent finishes, the plan, chat and all-time numbers already moved together.
+  const live = store.get('lifetime') as { agentCost: number; steps: number; mainCost: number }
+  expect(live.agentCost).toBeGreaterThan(0)
+  expect(live.mainCost).toBeGreaterThan(0)
+  expect(live.steps).toBe(0)
+  expect(statuses.at(-1)).toContain('saved')
+  const mid = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const planSaved = (await mid.find({ type: 'Text', text: /of the total$/ }))?.text
+  await mid.press({ key: 'cost-view:chat' })
+  expect((await mid.find({ type: 'Text', text: /of the total$/ }))?.text).toBe(planSaved)
+  await mid.press({ key: 'cost-view:plan' })
+  await mid.unmount()
+
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'a1' } as never)
   expect(statuses.at(-1)).toContain('1/2 done')
   expect(statuses.at(-1)).toContain('saved')
   expect((store.get('history') as unknown[]).length).toBe(1)

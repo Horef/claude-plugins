@@ -18,6 +18,7 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
   - **This plan**: the main chat since the plan was posted, its subagents, and what they saved. A new plan (no step in common with the last) starts a new count.
   - **This chat**: since the chat was opened or its plugins reloaded; earlier turns are not counted.
   - **All time**: what delegating saved, what the subagents cost and what they would have cost on the main model, steps and plans by tier, since the first use or the last reset. Remembered across chats as a handful of numbers.
+  Every view moves together: cost is counted per model response as it arrives, not when a step finishes. Saved also shows as a share of what the same work would have cost without routing (the main chat plus the subagents' tokens at the main model's prices).
   All amounts are estimates from list prices (`hooks/tiers.ts`) and the token counts the API reports; savings compare each step with the main chat's model doing the same tokens.
 - **Steps**: a card per step with pickers for where, tier, model and thinking level (buttons on mobile), its cost and tokens, and a warning when a step was mostly subagent start-up cost. A "here" step is done by this chat on its own model; its tier is only a label until you send it to a subagent, and its card says so.
 - **Rerun one rung up**: a finished step that came back weak can be redone on the next rung of the ladder (Haiku low → medium → high → Sonnet medium → high → Opus high → xhigh → Fable). The main agent is asked to delegate it again.
