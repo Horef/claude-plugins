@@ -1,6 +1,8 @@
 {
   "name": "horef-claude-plugins",
-  "owner": { "name": "Sergiy Horef" },
+  "owner": {
+    "name": "Sergiy Horef"
+  },
   "description": "Sergiy Horef's mods and skills for Claude Code, kept as a self-improving genome (strange-loop)",
   "plugins": [
     {
@@ -17,6 +19,11 @@
       "name": "scientific-figures",
       "source": "./plugins/scientific-figures",
       "description": "Figures for study notes and papers: circuits, anatomy, data plots, flows, phase portraits, 3D surfaces, with a lint-render-look loop"
+    },
+    {
+      "name": "course-lecture-notes",
+      "source": "./plugins/course-lecture-notes",
+      "description": "Lecture or tutorial slides in DEVONthink into complete, self-contained, Anki-ready teaching notes with figures (uses scientific-figures)"
     },
     {
       "name": "model-router",
