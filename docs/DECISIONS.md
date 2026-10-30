@@ -13,6 +13,7 @@ Every choice between alternatives about the genome itself, and every gap we fill
 | D7 | The sciencefig library lives inside the scientific-figures skill (2026-10-30; status: accepted) |
 | D8 | Plugins are labelled general or personal (2026-10-30; status: accepted) |
 | D9 | Personal choices live in a profile the skill reads (2026-10-30; status: accepted) |
+| D10 | How lessons travel; who merges (2026-10-30; status: accepted) |
 <!-- docmap:end -->
 
 ## D1. This repository is the genome (2026-10-30; status: accepted, confirmed by owner 2026-10-30)
@@ -77,3 +78,10 @@ Every choice between alternatives about the genome itself, and every gap we fill
 - **Alternatives:** keep personal rules in SKILL.md behind "if you are Sergiy" - leaks one person's setup to everyone; a fork per person - two copies drift.
 - **Consequences:** the same pattern as `AGENTS.local.md` in project-foundations; course-lecture-notes stays personal but now loads scientific-figures' DEVONthink reference itself.
 - **Evidence / source:** owner's request (2026-10-30); scientific-figures 7.0.0 evals pass (31 figures) and two judged cases cover both paths.
+
+## D10. How lessons travel; who merges (2026-10-30; status: accepted)
+- **Context:** The owner asked how a lesson learned in one harness gets back into the genome and out to every copy, and gave standing permission to merge changes that are not too major.
+- **Decision:** Upward: notes go into a clone (or a reply block absorbed later); `loop.py sync` commits observation-only changes, pulls with `LEARNINGS.md merge=union` (`.gitattributes`), renumbers ids two machines both used, and pushes; the session-start hook runs it when `~/.config/strange-loop/auto_sync` is on. Inward: a versioned change merged to `main` reaches claude.ai and Cowork by marketplace sync, Claude Code by sync or plugin update, and symlinked agents by the next pull. Agents merge fix and learn changes themselves once checks and CI are green; major, kernel and owner-material restructures go through a PR the owner approves.
+- **Alternatives:** a PR for every observation - noise and lost notes; a database or service for observations - not readable by every harness; no auto-sync - notes stay on one machine.
+- **Consequences:** a lesson is lost only when a reply block is never absorbed or a clone never synced; the digest reports uncommitted observations so that is visible.
+- **Evidence / source:** owner's question and permission (2026-10-30); `test_sync_two_machines` (two clones, one bare remote: both notes survive, duplicate id renumbered, unrelated work untouched).

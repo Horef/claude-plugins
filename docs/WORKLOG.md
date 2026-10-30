@@ -2,6 +2,17 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-30 - Closing the loop (D10)
+Changed: PR #4 merged. The owner asked how lessons propagate. Upward was open: notes written into a clone were never committed or pushed, two machines would collide, reply blocks had no importer. strange-loop 0.7.0 adds `sync` (commit observation-only changes, pull with a union merge for LEARNINGS.md, renumber duplicate ids, push), `hook` (opt-in auto-sync at session start, then the digest), `absorb FILE|-` for reply blocks, and section 11 on the round trip. `.gitattributes` sets the union merge. AGENTS.md records the owner's standing permission: agents merge fix and learn changes once checks and CI are green (D10).
+
+| Verification command | Result |
+|---|---|
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop` | 12 tests OK |
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py hook` (auto_sync off) | digest printed, exit 0, reports uncommitted LEARNINGS |
+| `git check-attr merge -- .../LEARNINGS.md` | merge: union |
+
+Next: owner pulls and turns on auto_sync; the first real observations travel.
+
 ## 2026-10-30 - scientific-figures generalised (D9); CI history explained
 Changed: PR #3 merged. scientific-figures 7.0.0: general description, audience and defaults; personal choices in a figure profile (`~/.config/scientific-figures/profile.md`, template in the skill); DEVONthink and Anki rules in `references/devonthink.md`; library docstrings made general; two new judged cases. course-lecture-notes 1.2.0 loads that reference directly. Marketplace and README list scientific-figures as general. The red CI run the owner saw is run #1 (commit 5aa9f0a, before the 6.2.2 fix); runs #2-#7 passed.
 
