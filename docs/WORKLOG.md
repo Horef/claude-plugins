@@ -13,6 +13,8 @@ Changed: owner confirmed D1 and D4 and kept the ripeness threshold (strange-loop
 | `python plugins/strange-loop/skills/strange-loop/scripts/loop.py check --base origin/main` | 0 errors, 1 warning |
 | `python plugins/project-foundations/skills/project-foundations/scripts/docmap.py check` | 0 errors |
 
+Then the first CI run failed on the figure evals: headless Chrome (the Mac's and the runner's render path) does not create the output folder and lecture1.py wrote to a claude.ai-only path; fixed in scientific-figures 6.2.2, CI green on bb21ada. `claude plugin validate` passes for all five plugins and the marketplace (warnings only: no author field, no icons).
+
 Next: owner sets up the Mac; first real observations; reflection on scientific-figures O5 when convenient.
 
 ## 2026-10-30 - strange-loop framework; skills imported and adopted
