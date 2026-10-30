@@ -1,3 +1,4 @@
+// Engine tests for model-router: planning, routing, costs, reruns, skill routing, rule delivery, all surfaces.
 import { expect, mock, test } from 'claude-code/testing'
 
 const PLAN = 'mcp__model-router__plan'
@@ -176,6 +177,11 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   const phone = await $.ui.mount({ ...PANE, surface: 'mobile' })
   await phone.press({ key: 'tier:u1' })
   await phone.unmount()
+
+  // A narrow pane with settings open still draws every control, Done included.
+  const narrow = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 28 }, surface: 'terminal' } as never)
+  expect((await narrow.find({ type: 'Button', key: 'settings-done' } as never))).toBeTruthy()
+  await narrow.unmount()
 
   // The whole pane, settings open, draws on every surface.
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {

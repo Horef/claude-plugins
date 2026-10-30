@@ -1,9 +1,10 @@
+// Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
 import type { Effort, HistoryEntry, Model, Settings, Step, Tier, Usage } from '../types'
 import { EFFORTS, LADDER, MODELS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.9.1'
+export const VERSION = '0.9.2'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/

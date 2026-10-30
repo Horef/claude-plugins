@@ -1,3 +1,4 @@
+// The state contract of model-router: plan steps, settings, history, cost totals and rule delivery.
 export type Model = 'haiku' | 'sonnet' | 'opus' | 'fable'
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type Tier = 'light' | 'standard' | 'deep'
