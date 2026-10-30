@@ -225,8 +225,10 @@ Examples are general: a figure drawn for one note stays in that note's project. 
 
 ## Learning loop
 
-This skill and the `sciencefig` library improve themselves from use (strange-loop). When a step here misleads you, the library lacks a helper you had to hand-write, the linter misses something you only saw on the render, or a rule clearly paid off, add one line to `LEARNINGS.md` next to this file:
+This skill and its `sciencefig` library improve themselves from use (strange-loop). When a step here misleads you, the library lacks a helper you had to hand-write, the linter misses something you only saw on the render, or a rule clearly paid off, record one line with the note command (in claude.ai, run it on the connected computer):
 
-`- O<n> <YYYY-MM-DD> [failure|friction|misled|missing|workaround|win|wish] <section>: <what happened, what would have helped> (<harness>, <note or figure>)`
+```bash
+python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note scientific-figures <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
+```
 
-If this copy is read-only (an uploaded skill, an installed plugin), run `loop.py note scientific-figures <kind> "<text>"` from the strange-loop skill, or list the lines at the end of your reply under "Observations for scientific-figures". A figure you had to fix by hand is the best evidence there is: say what the linter should have caught. Library fixes you verified (a helper that now renders correctly) are committed as in step 0.3 and noted here as `win` or `workaround`; changes to the rules above wait for a reflection pass, which checks them against `evals/` (the worked examples in `lib/examples/` are the scripted part).
+It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell), end your reply with a block headed `Observations for scientific-figures` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. A figure you had to fix by hand is the best evidence there is: say what the linter should have caught. Library fixes you verified go to the genome as in setup step 4. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.

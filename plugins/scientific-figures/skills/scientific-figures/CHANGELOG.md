@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.0.1 (2026-10-30)
+- Learning loop: record lessons with the note command (routes to the genome clone) instead of editing LEARNINGS.md in a possibly installed copy, where notes are lost on update; found by the pre-launch end-to-end run.
+
 ## 7.0.0 (2026-10-30)
 - Generalised for anyone: the description, intro and audience rule no longer assume one person; a figure profile (~/.config/scientific-figures/profile.md, template profile.example.md) names the audience, output targets and preferences and overrides the defaults; the DEVONthink and Anki rules moved to references/devonthink.md, loaded when the target is a DEVONthink note; SKILL.md section 6 keeps the general delivery rules (inline SVG in Markdown, captions, size, licences, papers, math). Library docstrings made general. Owner's request; two new judged cases (no profile, DEVONthink profile); evals pass (31 figures). (O3)
 
