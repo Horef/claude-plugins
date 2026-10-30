@@ -55,6 +55,7 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 
 - Say the section, what happened, and **what would have helped**. Concrete beats general: the next agent must be able to act on it without your context.
 - Before adding, read the open list: if it is the same lesson, append ` ×N` (or increment it) instead of a new line. Recurrence is the main evidence the loop has.
+- A warning from a check that your change did not cause (a budget, a stale doc, a slow command) is an observation too: note it with the warning's text, so drift that no single session feels gets counted.
 - Never paste secrets, private data or long logs; link or summarise.
 - Don't stop the user's task to reflect. Note, finish the task, mention the notes in one line at the end.
 
@@ -121,6 +122,8 @@ Always-loaded text costs every session and dilutes attention, so growth must be 
 - Project `AGENTS.md` ≤ ~120 lines (project-foundations).
 - `LEARNINGS.md` open list ≤ ~15 entries; beyond that, a reflection pass is overdue.
 
+**Slow costs need sensors.** Some decay is invisible from inside any one session: a log that grows a little each week, a map that lists one more file, a search that takes a little longer. The working agent never sees the comparison, so it never writes the observation. When a unit's cost can grow with use, give it a measurement that becomes a check warning past a budget (project-foundations does this with `docmap.py stats` and `read_max_tokens`); warnings then reach the loop through the rule in section 2. A unit whose cost grows without a sensor is a `missing` observation.
+
 Lessons also go stale: an open observation older than about six months (`loop.py check` warns) is either confirmed by new use or rejected as no longer relevant.
 
 Forgetting is part of learning: a rule with no recorded `win`, no eval that needs it and no owner preference behind it is a candidate for removal in a Restructure pass. Removed text stays in git and the CHANGELOG says where it went.
@@ -145,7 +148,7 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 3. Add a `## Learning loop` section to the skill (template below), adapted to where its users can write.
 4. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
 5. `loop.py check`.
-6. For harnesses that take uploads (claude.ai), `loop.py pack <name>` writes `dist/<name>-<version>.zip`; re-upload it after every version, so the uploaded copy never drifts from the genome.
+6. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
 Template for the skill's own section:
 
@@ -170,7 +173,7 @@ Prefer, in this order: a check that catches the mistake, a tool that makes it im
 
 ## 10. Auditing the whole system
 
-Occasionally (or when asked "how is the system doing?"): `loop.py status` across all units; `loop.py check`; look for lessons stuck open for months (decide: wait or reject), units with no evals, skills over budget, rules duplicated across units (move the shared one up a layer), and observations about the kernel. Report the findings most important first, propose the passes, do the ones the user approves.
+Occasionally (or when asked "how is the system doing?"): `loop.py status` across all units; `loop.py check`; run the units' sensors where they apply (e.g. `docmap.py stats` in projects that use project-foundations), look for lessons stuck open for months (decide: wait or reject), units with no evals, skills over budget, rules duplicated across units (move the shared one up a layer), and observations about the kernel. Report the findings most important first, propose the passes, do the ones the user approves.
 
 ## Learning loop
 

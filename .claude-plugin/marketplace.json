@@ -8,27 +8,32 @@
     {
       "name": "strange-loop",
       "source": "./plugins/strange-loop",
-      "description": "Skills and tools that improve themselves from use: observations, evidence-gated reflection passes, evals, versions and a session-start digest"
+      "description": "Skills and tools that improve themselves from use: observations, evidence-gated reflection passes, evals, versions and a session-start digest",
+      "category": "general"
     },
     {
       "name": "project-foundations",
       "source": "./plugins/project-foundations",
-      "description": "Set up, retrofit, upgrade or audit a repo so agents and humans can maintain and share it: AGENTS.md, status, decisions, generated map and checks"
+      "description": "Set up, retrofit, upgrade or audit a repo so agents and humans can maintain and share it: AGENTS.md, status, decisions, generated map and checks",
+      "category": "general"
     },
     {
       "name": "scientific-figures",
       "source": "./plugins/scientific-figures",
-      "description": "Figures for study notes and papers: circuits, anatomy, data plots, flows, phase portraits, 3D surfaces, with a lint-render-look loop"
+      "description": "Figures for study notes and papers: circuits, anatomy, data plots, flows, phase portraits, 3D surfaces, with a lint-render-look loop",
+      "category": "personal"
     },
     {
       "name": "course-lecture-notes",
       "source": "./plugins/course-lecture-notes",
-      "description": "Lecture or tutorial slides in DEVONthink into complete, self-contained, Anki-ready teaching notes with figures (uses scientific-figures)"
+      "description": "Lecture or tutorial slides in DEVONthink into complete, self-contained, Anki-ready teaching notes with figures (uses scientific-figures)",
+      "category": "personal"
     },
     {
       "name": "model-router",
       "source": "./plugins/model-router",
-      "description": "Routes each step of a task to a model tier (light, standard, deep), with plan approval, a status line and a plan pane"
+      "description": "Routes each step of a task to a model tier (light, standard, deep), with plan approval, a status line and a plan pane",
+      "category": "general"
     }
   ]
 }

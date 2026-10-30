@@ -11,6 +11,7 @@ Every choice between alternatives about the genome itself, and every gap we fill
 | D5 | Portable core, harness adapters at the edge (2026-10-30; status: accepted) |
 | D6 | The genome runs project-foundations on itself, with plugin-repo exemptions (2026-10-30; status: accepted) |
 | D7 | The sciencefig library lives inside the scientific-figures skill (2026-10-30; status: accepted) |
+| D8 | Plugins are labelled general or personal (2026-10-30; status: accepted) |
 <!-- docmap:end -->
 
 ## D1. This repository is the genome (2026-10-30; status: accepted, confirmed by owner 2026-10-30)
@@ -61,3 +62,10 @@ Every choice between alternatives about the genome itself, and every gap we fill
 - **Alternatives:** its own repository or pip package - a second thing to version and install, and skill and library could drift apart; keep it on the Mac - the archive round trip and no cloud use.
 - **Consequences:** the upload zip is about 2 MB; the CC BY-NC-SA reconstructions are now in a public repository, allowed for non-commercial use with credit and the same licence, which `LICENSES.md` states; the Mac folder `~/Scripts/ScientificFigures` can be retired once the clone's evals pass there.
 - **Evidence / source:** owner approved (2026-10-30); `evals/run.py` builds, lints and renders all 31 benchmark figures in a cloud container.
+
+## D8. Plugins are labelled general or personal (2026-10-30; status: accepted)
+- **Context:** The owner shares the marketplace with other people. strange-loop, project-foundations and model-router are general by design (personal facts live in git-ignored or `~/.config` files); scientific-figures and course-lecture-notes are written for the owner's setup.
+- **Decision:** Each marketplace entry carries `category: general | personal`, and the README lists the two groups separately. A general plugin must not contain one person's facts (they go in a local file the plugin reads); a personal plugin may.
+- **Alternatives:** a second marketplace for personal plugins - two things to sync and maintain, and the loop is the same for both; making every plugin general now - a restructure of the owner's daily tools without evidence that anyone else needs them (proposed to the owner instead).
+- **Consequences:** readers see what transfers; a personal plugin can later be generalised with the same person-layer pattern as project-foundations and move to `general`.
+- **Evidence / source:** owner's question (2026-10-30); `claude plugin validate .` accepts the `category` field.
