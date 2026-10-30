@@ -8,7 +8,7 @@ This repository is also the **genome** of the skills: their source copy, which t
 | --- | --- |
 | [strange-loop](plugins/strange-loop) | Makes skills and tools improve themselves from use: one-line observations while working, evidence-gated reflection passes, evals, versions, and a session-start digest of lessons waiting. |
 | [project-foundations](plugins/project-foundations) | Sets up, retrofits, upgrades or audits a repo so agents and humans can maintain and share it: AGENTS.md, a git-ignored AGENTS.local.md, status, decisions, layered docs, a generated map and `docmap.py` checks. |
-| [scientific-figures](plugins/scientific-figures) | Draws figures for study notes and papers (circuits, anatomy, data plots, flows, phase portraits, 3D surfaces) with a lint-render-look loop and DEVONthink-safe SVG. Needs the `sciencefig` library. |
+| [scientific-figures](plugins/scientific-figures) | Draws figures for study notes and papers (circuits, anatomy, data plots, flows, phase portraits, 3D surfaces) with a lint-render-look loop and DEVONthink-safe SVG. Includes its `sciencefig` library. |
 | [course-lecture-notes](plugins/course-lecture-notes) | Turns a lecture or tutorial (slides in DEVONthink) into complete, self-contained, Anki-ready teaching notes with figures; written for one person's courses and setup. |
 | [model-router](plugins/model-router) | Plans multi-step tasks, routes each step to a model tier (Haiku / Sonnet / Opus), asks you to approve the plan, shows cost and savings, reruns weak steps one rung up and learns better tier defaults from history. |
 
@@ -28,9 +28,7 @@ claude plugin install strange-loop --marketplace Horef/claude-plugins
 
 Update later with `/plugin update`.
 
-To let agents feed lessons back, keep a writable clone and point strange-loop at it (once per machine; see [strange-loop setup](plugins/strange-loop/README.md#setup)).
-
-Other harnesses (claude.ai, Kiro, Copilot, Codex) can use the skill folders under `plugins/*/skills/` directly; they follow the open Agent Skills format.
+To let agents feed lessons back, keep a writable clone and point strange-loop at it, once per machine. Other harnesses (claude.ai, Kiro, Copilot, Codex) use the same skill folders (open Agent Skills format), through symlinks or upload zips. Both are in [strange-loop setup](plugins/strange-loop/README.md#setup).
 
 ## For agents working here
 
