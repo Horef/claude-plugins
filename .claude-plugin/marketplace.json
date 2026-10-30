@@ -20,8 +20,8 @@
     {
       "name": "scientific-figures",
       "source": "./plugins/scientific-figures",
-      "description": "Figures for study notes and papers: circuits, anatomy, data plots, flows, phase portraits, 3D surfaces, with a lint-render-look loop",
-      "category": "personal"
+      "description": "Scientific figures for notes, papers and slides (circuits, anatomy, data plots, phase portraits, 3D surfaces) with a lint-render-look loop; a personal profile sets audience and output targets",
+      "category": "general"
     },
     {
       "name": "course-lecture-notes",

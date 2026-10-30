@@ -1,11 +1,11 @@
 ---
 name: "scientific-figures"
-description: "Draw figures for Sergiy's study notes and papers: circuits, anatomy (brain, eye, retina, cochlea), data plots, flows, phase portraits, geometry, 3D surfaces. Lint-render-look loop, DEVONthink-safe SVG."
+description: "Draw scientific figures for study notes, papers and slides: circuits, anatomy (brain, eye, retina, cochlea), data plots, flows, phase portraits, geometry, 3D surfaces. Lint-render-look loop, inline-safe SVG for Markdown notes (DEVONthink included), export for journals. Reads the person's figure profile for audience, output targets and preferences."
 ---
 
 # Scientific figures
 
-Use this skill whenever a figure goes into Sergiy's notes (course-lecture-notes, paper notes, any DEVONthink Markdown), into a paper or slides of his, or he asks for a scientific diagram or plot. It distils Rougier et al. "Ten simple rules for better figures" (2014), Rougier "Scientific Visualization: Python + Matplotlib" (2021), Wilke "Fundamentals of Data Visualization" (2019) and Tufte "The Visual Display of Quantitative Information" (2001). It also builds on the built-in `dataviz` skill (colour validation) and `artifact-diagramming` skill (draw the mechanism).
+Use this skill whenever a scientific figure goes into notes (study notes, paper notes, a Markdown knowledge base), a paper or slides, or someone asks for a scientific diagram or plot. It distils Rougier et al. "Ten simple rules for better figures" (2014), Rougier "Scientific Visualization: Python + Matplotlib" (2021), Wilke "Fundamentals of Data Visualization" (2019) and Tufte "The Visual Display of Quantitative Information" (2001). It also builds on the built-in `dataviz` skill (colour validation) and `artifact-diagramming` skill (draw the mechanism).
 
 **The core problem this skill solves:** Claude draws blind, typing coordinates. So never trust a figure until (1) the linter says it is clean and (2) you have rendered it and *looked at it*.
 
@@ -15,12 +15,13 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 1. `LIB` = this skill's folder + `/lib`: in claude.ai the skill's folder under the skills mount; in Claude Code `${CLAUDE_PLUGIN_ROOT}/skills/scientific-figures/lib`; in a clone of the genome `<genome>/plugins/scientific-figures/skills/scientific-figures/lib` (the clone's path is in `~/.config/strange-loop/genome`). `$SCIENCEFIG` overrides all of these.
 2. `import sys; sys.path.insert(0, LIB)`, then `from sciencefig import Canvas, style as S, plot as P, geom as G, flow as F, neuro as N, morph as M, nets as Nt, dynamics as Dy, surf as Sf, anatomy as An, assets as A, check as C, devonthink as D, topng as T`. It needs matplotlib, numpy, scipy and Pillow; MorphIO only for real neurons (`pip install morphio`); Graphviz `dot` for `F.graphviz`. The library only reads from `LIB`, so a read-only skill folder is fine: write figures and check sheets to a work folder.
    `C.render` and the `topng` exporters use Playwright when node can load it (`$SF_PLAYWRIGHT`, known install folders, then node's own module resolution) and otherwise headless Chrome (`C.find_chrome()`: `$SF_CHROME`, the macOS app bundles, then PATH). `C.cvd_png` and `C.cvd_sheet` need no browser at all.
-3. If you improve the library, make the change in the genome, never in an installed or uploaded copy (updates overwrite those): in the clone on the Mac (through the device tools from claude.ai, or directly from a local agent) or in a cloud session on the repository. Run `python evals/run.py` from this folder, record the version with strange-loop (`loop.py bump scientific-figures patch|minor "..."`), commit and push, and say so. A harness with no route to the genome lists the changed files and the reason under "Observations for scientific-figures" at the end of the reply.
+3. **Read the person's figure profile** if there is one: `~/.config/scientific-figures/profile.md` (format: `profile.example.md` next to this file), or the person's standing instructions in the chat app. It names the audience, the output targets (for example `devonthink-markdown`, which means: also follow `references/devonthink.md`), and preferences that override the defaults below. Without a profile, infer the target from the request (a note, a paper, slides) and ask only if it changes the output format. If the person states lasting preferences, offer to write them into the profile.
+4. If you improve the library, make the change in the genome, never in an installed or uploaded copy (updates overwrite those): in the clone on the Mac (through the device tools from claude.ai, or directly from a local agent) or in a cloud session on the repository. Run `python evals/run.py` from this folder, record the version with strange-loop (`loop.py bump scientific-figures patch|minor "..."`), commit and push, and say so. A harness with no route to the genome lists the changed files and the reason under "Observations for scientific-figures" at the end of the reply.
 
 ## 1. Before drawing: message, audience, form
 
 - **One figure, one message.** Write the message as one sentence first (e.g. "lateral inhibition makes the relay profile narrower than the receptor profile"). The design follows from it. If a sentence or a small table says it faster, don't draw it (Tufte: under ~20 numbers, use a table).
-- **Audience = a student learning alone** from the note (Rougier rule 1): label more than you would for experts, and spell words out (no cryptic abbreviations).
+- **Know the audience** (Rougier rule 1; the profile names it). For study notes it is a student learning alone from the note: label more than you would for experts, and spell words out (no cryptic abbreviations). For a paper, follow the field's conventions and the journal.
 - **Draw the mechanism, not its name**: show the path, the connection, the difference. For a comparison, draw the same layout several times and change only what differs, emphasised (small multiples; example `inhibition_types`).
 - **Pick the form by the job** (Wilke ch. 5; dataviz `choosing-a-form`): amounts → bars/dots; distributions → density, violin, strip; x–y → scatter; change over an ordered variable → line; part of a whole → stacked bar or pie (simple fractions only); uncertainty → error bars or bands, saying which (SD, SE, CI).
 - **Prefer wider than tall, about 1.5:1** (Tufte ch. 9), unless the content has its own shape. Same units on both axes → equal aspect (geometry, ROC, x = y comparisons).
@@ -63,7 +64,7 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
   - Anatomy: cells in the neutral `S.CELL` slate; colour goes to what the figure is about (synapses, pathways).
   - Pathways: feedforward, recurrent and feedback get different hues AND feedback is dashed (top-down = dashed, as in every pipeline figure).
   - Shape always duplicates colour, so the figure works in grayscale and for colour-blind readers (Wilke ch. 20, redundant coding).
-- **Neuron style - Sergiy's preference: simple.** Use the schematic glyphs (`morph.pyramidal`, `morph.stellate`, `neuro.soma`); real-looking neurons only when he asks.
+- **Neuron style: simple by default** (a profile may say otherwise). Use the schematic glyphs (`morph.pyramidal`, `morph.stellate`, `neuro.soma`); real-looking neurons only when asked.
 - **Anatomy**: tissue in quiet neutrals; only what the figure is about gets a hue; label with `c.callout_column` (labels keep the order of their targets, so leaders never cross).
 - **Dynamics conventions**: stable fixed point = filled dot, unstable = open dot, saddle = half-filled; flow field = light gray streamlines; highlighted trajectories carry arrowheads in the direction of time and an open dot at their start; separatrix = dashed black; growing eigen-direction vermilion, decaying blue. Compute fixed points (`Dy.fixed_points`), never place them by eye.
 - **Panel letters**: lowercase bold a, b, c, small and quiet (Wilke ch. 21). Consistent visual language across panels and across the figures of one note: the same entity keeps the same colour and order everywhere.
@@ -112,7 +113,7 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 
 1. **Draw** with the library. Compute geometry (cell positions, edge points, label positions) from variables; never eyeball offsets. Use `neuro.edge_point`, `box()['r']` and similar anchors.
 2. **Lint**: `c.lint()` (Canvas) or `svg, probs = P.finish(fig)` (matplotlib: lint, then export; `P.lint` after `P.export` fails because export closes the figure) must give `[]`. It reports text outside the figure, text overlapping text, lines and scatter markers under text, curves or branches that run off the canvas (clipped), fonts below 11 px, and `&`. Streamlines are not checked, so look for labels sitting on the flow field yourself (put such labels in titles or outside the axes). It does not see filled patches (icon boxes, bands) covering text: check those when you look. Fix the layout. Do not silence a warning with `lint=False` or a halo unless the overlap is intended (e.g. a label inside a shaded area).
-3. **Render**: `C.render([svg,...], "/home/claude/work/check.png", names=[...])` (Chromium via Playwright, or headless Chrome on a Mac; 2×). For figures saved as PNG (e.g. matplotlib straight to file), `C.cvd_sheet(png, out_png)` puts the original beside grayscale, deuteranopia and protanopia versions (Machado et al. 2009, linear RGB) for one look. Batch 4–6 figures per sheet while iterating, re-render only the figures you changed, and add `cvd=True` (grayscale and deuteranopia copies) in one final pass for colour-coded figures: each sheet image costs context.
+3. **Render**: `C.render([svg,...], "work/check.png", names=[...])` (Chromium via Playwright, or headless Chrome on a Mac; 2×). For figures saved as PNG (e.g. matplotlib straight to file), `C.cvd_sheet(png, out_png)` puts the original beside grayscale, deuteranopia and protanopia versions (Machado et al. 2009, linear RGB) for one look. Batch 4–6 figures per sheet while iterating, re-render only the figures you changed, and add `cvd=True` (grayscale and deuteranopia copies) in one final pass for colour-coded figures: each sheet image costs context.
 4. **Look**: open the PNG with Read and check, figure by figure:
    - [ ] The message is visible within 5 seconds; the subject stands out.
    - [ ] No collisions, clipping or crowding; spacing is even; elements are aligned to a grid.
@@ -127,29 +128,17 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
    - [ ] **For readers outside the project** (a PI, collaborators): the caption names every panel, axis, unit and style, and states the take-home; every abbreviation is defined in the caption or a linked glossary.
 5. **Fix and repeat.** Usually 2–3 rounds. Report the residual compromises honestly.
 
-## 6. DEVONthink and Anki constraints
+## 6. Delivery: notes, papers, slides
 
-**DEVONthink inline-SVG rules** (`D.md_figure` and `C.check_inline` enforce them):
-- Each `<svg>` is ONE line with no blank lines inside.
-- White background rect; explicit colours (no `currentColor`).
-- **No `#rrggbb` hex colours: DEVONthink turns them into tags when a Markdown file is imported.** The library converts them to `rgb()`.
-- After `import_file`, reset the record's tags (`set_record_tags`): imported files also bring their macOS Finder tags and DEVONthink may auto-tag.
-- No raw `&`.
-- No `<style>` blocks (they leak into the whole note); unique ids per figure (the library prefixes them with the figure name).
-
-**Placing figures in a note**
-- Use a BLANK line between `</svg>` and the italic caption, otherwise the asterisks show literally.
-- Keep a `{{FIG:name}}` placeholder in the draft and substitute with `D.substitute(md, {name: (svg, caption)})`.
-- DEVONthink WikiLinks must be set to "Square Brackets" only. If links appear inside figures, check that setting.
+**Placing figures in a Markdown note**
+- Keep a `{{FIG:name}}` placeholder in the draft and substitute with `D.substitute(md, {name: (svg, caption)})`: each SVG stays on one line, colours become `rgb()`, and a blank line separates `</svg>` from the italic caption (without it the asterisks show literally).
+- Inline SVG in Markdown: one line, a white background rect, explicit colours (no `currentColor`), no raw `&`, no `<style>` blocks, ids unique per figure (`C.check_inline` checks all of these).
+- Target-specific rules: DEVONthink (import, tags, flashcards, replacing figures) in `references/devonthink.md`.
 
 **Captions** (Rougier rule 4; Wilke ch. 22)
 - Open with a title-like assertion ("Lateral inhibition sharpens the relay profile"), not "This figure shows".
 - Then say how to read the figure: what the colours, shapes and shading mean.
 - State what error bars are (SD, SE or CI) and whether lines are "a guide to the eye".
-
-**Anki**
-- The note text must describe in prose everything the figure shows, because Anki cards cannot say "see figure".
-- If Sergiy wants figures on cards, export PNGs via `C.render` of single figures; see course-lecture-notes for the import steps.
 
 **Size**
 - Keep each SVG under ~100 kB (a 3D surface or a three-panel phase portrait may need ~120 kB): reduce sample points, round coordinates (export does this), use fewer trials. Streamplots are the main cost: the `Dy.flow_field` defaults (n=36, density=0.7) give ~35 kB per panel; use n=30, density=0.55 for three panels in a row.
@@ -161,9 +150,6 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 
 **Papers and slides**
 - `T.export_files(svg, "/path/fig3")` writes fig3.svg (standalone), fig3.png (3×) and fig3.pdf (vector, fonts embedded). Design at the journal column width (one column ≈ 85 mm ≈ 240 px, two columns ≈ 174 mm ≈ 490 px, at 1 px = 1 pt; check the journal) and keep text ≥ 7 pt at that size.
-
-**Replacing a figure in an existing DEVONthink note**
-- `update_record_content` needs the exact old text in a patch, so a large inline SVG is costly to swap. Render the new figure with `T.svg_to_png`, import the PNG into the course's Figures group (reset its tags), and patch the old `<svg …>` line into `![…](x-devonthink-item://UUID)`. New notes keep inline SVG.
 
 **Math and markup**
 - Math belongs in the note as LaTeX (`$...$`, `$$...$$`).
@@ -221,7 +207,7 @@ G.angle_arc(ax, center, v1, v2, label="θ"); G.right_angle(ax, at, d1, d2); G.pr
 F.pipeline(c, x, y, [("Title", ["detail"]), ...], arrow_labels=[...], max_width=W-16)
 svg, dot_src = F.graphviz('a [label="A"]; a -> b [label="excites"];', name="fig", rankdir="TB")
 
-C.render([svg], "/home/claude/work/check.png", cvd=True)   # then Read the PNG
+C.render([svg], "work/check.png", cvd=True)   # then Read the PNG
 C.cvd_sheet("fig.png", "fig_cvd.png")   # PNG figures: original + grayscale/deutan/protan, no browser
 x, y = P.wrap_periodic(ori_deg, rates, period=180, center=0); P.periodic_xaxis(ax, 180, 0, label="orientation (deg)")
 key = S.ColorKey(); key.add("v2", S.BLUE, marker="D"); ax.plot(x, y, **key.style("v2")); S.name_of(S.BLUE)  # "blue"

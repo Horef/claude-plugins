@@ -27,6 +27,22 @@ Judge each output against the skill's own §5 "Look" checklist plus the criteria
 - Axis titles with units; few meaningful ticks.
 **Origin:** §4 circular variables.
 
+## No profile: a journal figure
+**Task:** A researcher with no figure profile asks for a two-panel figure for a LaTeX paper: firing-rate traces of an E and an I population, and the f-I curve of the E cell.
+**Good looks like:**
+- Infers the target (a paper) without asking; does not apply DEVONthink rules or flashcard prose.
+- Designs at the journal column width with text >= 7 pt at that size, and delivers `T.export_files` (SVG, PNG, PDF).
+- E population blue, I vermilion, each with a second channel (line style or marker); lint clean; rendered and looked at.
+**Origin:** generalisation to people other than the owner (scientific-figures 7.0.0).
+
+## Profile with a DEVONthink target
+**Task:** The profile says `targets: devonthink-markdown` and `flashcards: yes`. Add a phase-portrait figure to a study note.
+**Good looks like:**
+- Reads `references/devonthink.md` before delivering.
+- One-line inline SVG with `rgb()` colours via `D.substitute`, blank line before the italic caption.
+- The note's prose describes everything the figure shows.
+**Origin:** the owner's workflow, kept after the DEVONthink rules moved out of SKILL.md (7.0.0).
+
 ## Trigger: should fire
 **Task:** "Add a figure of the retina layers to this note." / "Plot the psychometric function from these numbers for my paper."
 **Good looks like:** scientific-figures is loaded.

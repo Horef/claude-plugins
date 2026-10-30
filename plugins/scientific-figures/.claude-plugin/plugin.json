@@ -1,6 +1,6 @@
 {
   "name": "scientific-figures",
-  "version": "6.3.0",
-  "description": "Draw figures for Sergiy's study notes and papers: circuits, anatomy (brain, eye, retina, cochlea), data plots, flows, phase portraits, geometry, 3D surfaces. Lint-render-look loop, DEVONthink-safe SVG.",
+  "version": "7.0.0",
+  "description": "Draw scientific figures for study notes, papers and slides: circuits, anatomy, data plots, flows, phase portraits, geometry, 3D surfaces. Lint-render-look loop, inline-safe SVG for Markdown notes, journal export; a personal profile sets audience and targets",
   "license": "MIT"
 }

@@ -12,6 +12,7 @@ Every choice between alternatives about the genome itself, and every gap we fill
 | D6 | The genome runs project-foundations on itself, with plugin-repo exemptions (2026-10-30; status: accepted) |
 | D7 | The sciencefig library lives inside the scientific-figures skill (2026-10-30; status: accepted) |
 | D8 | Plugins are labelled general or personal (2026-10-30; status: accepted) |
+| D9 | Personal choices live in a profile the skill reads (2026-10-30; status: accepted) |
 <!-- docmap:end -->
 
 ## D1. This repository is the genome (2026-10-30; status: accepted, confirmed by owner 2026-10-30)
@@ -69,3 +70,10 @@ Every choice between alternatives about the genome itself, and every gap we fill
 - **Alternatives:** a second marketplace for personal plugins - two things to sync and maintain, and the loop is the same for both; making every plugin general now - a restructure of the owner's daily tools without evidence that anyone else needs them (proposed to the owner instead).
 - **Consequences:** readers see what transfers; a personal plugin can later be generalised with the same person-layer pattern as project-foundations and move to `general`.
 - **Evidence / source:** owner's question (2026-10-30); `claude plugin validate .` accepts the `category` field.
+
+## D9. Personal choices live in a profile the skill reads (2026-10-30; status: accepted)
+- **Context:** The owner asked to generalise scientific-figures (D8 listed it as personal). Its method and library were general; its audience, output target (DEVONthink notes with Anki prose) and preferences were one person's.
+- **Decision:** A general skill keeps one person's choices outside its folder, in `~/.config/<skill>/profile.md` (template `profile.example.md` in the skill), or in the person's standing instructions where a chat app has no file access. Target-specific rules (e.g. DEVONthink) go in a reference file loaded when that target applies. Personal skills that depend on such a target load the reference directly. scientific-figures is now `general`.
+- **Alternatives:** keep personal rules in SKILL.md behind "if you are Sergiy" - leaks one person's setup to everyone; a fork per person - two copies drift.
+- **Consequences:** the same pattern as `AGENTS.local.md` in project-foundations; course-lecture-notes stays personal but now loads scientific-figures' DEVONthink reference itself.
+- **Evidence / source:** owner's request (2026-10-30); scientific-figures 7.0.0 evals pass (31 figures) and two judged cases cover both paths.

@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.0.0 (2026-10-30)
+- Generalised for anyone: the description, intro and audience rule no longer assume one person; a figure profile (~/.config/scientific-figures/profile.md, template profile.example.md) names the audience, output targets and preferences and overrides the defaults; the DEVONthink and Anki rules moved to references/devonthink.md, loaded when the target is a DEVONthink note; SKILL.md section 6 keeps the general delivery rules (inline SVG in Markdown, captions, size, licences, papers, math). Library docstrings made general. Owner's request; two new judged cases (no profile, DEVONthink profile); evals pass (31 figures). (O3)
+
 ## 6.3.0 (2026-10-30)
 - Restructure: lib/benchmark becomes lib/examples - 22 general worked examples named after what they show (e.g. saddle_portrait, lateral_inhibition_relay, sensory_basics), each exposing draw() or build() and writing nothing, plus one examples/build_all.py (build, lint, optional --out and --render). Removed as task outputs, not genome: before/after renders, the three DEVONthink report builders, the per-round builders (all kept in git history and on the owner's Mac). Verified: all 31 figures byte-identical to the old scripts' output, except the 11 renamed ones (sensory-*, mutual-inhibition-*), whose only differences are the name-derived ids; evals build, lint and render all 31. SKILL.md lists the examples by kind and says what may become one. Owner's review. (O8)
 
