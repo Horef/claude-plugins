@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 6.3.0 (2026-10-30)
+- Restructure: lib/benchmark becomes lib/examples - 22 general worked examples named after what they show (e.g. saddle_portrait, lateral_inhibition_relay, sensory_basics), each exposing draw() or build() and writing nothing, plus one examples/build_all.py (build, lint, optional --out and --render). Removed as task outputs, not genome: before/after renders, the three DEVONthink report builders, the per-round builders (all kept in git history and on the owner's Mac). Verified: all 31 figures byte-identical to the old scripts' output, except the 11 renamed ones (sensory-*, mutual-inhibition-*), whose only differences are the name-derived ids; evals build, lint and render all 31. SKILL.md lists the examples by kind and says what may become one. Owner's review. (O8)
+
 ## 6.2.2 (2026-10-30)
 - Fix: C.render, T.svg_to_png and T.svg_to_pdf create the output folder (headless Chrome, used on the Mac and in CI, does not); lecture1.py renders to $SF_WORK or the temp folder instead of a claude.ai path. Found by the first CI run of the figure evals. (O7)
 

@@ -11,7 +11,7 @@ Use this skill whenever a figure goes into Sergiy's notes (course-lecture-notes,
 
 ## 0. Setup (once per chat)
 
-The library `sciencefig` is in `lib/` next to this file, with its `README.md` (modules, requirements), `benchmark/` (worked examples, which double as the scripted evals), `assets/`, `morphologies/` and `LICENSES.md`. It travels with the skill: an installed plugin, an uploaded skill and a clone of the genome (`Horef/claude-plugins`) all contain it, so there is nothing to fetch.
+The library `sciencefig` is in `lib/` next to this file, with its `README.md` (modules, requirements), `examples/` (general worked examples, one figure type each, which double as the scripted evals), `assets/`, `morphologies/` and `LICENSES.md`. It travels with the skill: an installed plugin, an uploaded skill and a clone of the genome (`Horef/claude-plugins`) all contain it, so there is nothing to fetch.
 1. `LIB` = this skill's folder + `/lib`: in claude.ai the skill's folder under the skills mount; in Claude Code `${CLAUDE_PLUGIN_ROOT}/skills/scientific-figures/lib`; in a clone of the genome `<genome>/plugins/scientific-figures/skills/scientific-figures/lib` (the clone's path is in `~/.config/strange-loop/genome`). `$SCIENCEFIG` overrides all of these.
 2. `import sys; sys.path.insert(0, LIB)`, then `from sciencefig import Canvas, style as S, plot as P, geom as G, flow as F, neuro as N, morph as M, nets as Nt, dynamics as Dy, surf as Sf, anatomy as An, assets as A, check as C, devonthink as D, topng as T`. It needs matplotlib, numpy, scipy and Pillow; MorphIO only for real neurons (`pip install morphio`); Graphviz `dot` for `F.graphviz`. The library only reads from `LIB`, so a read-only skill folder is fine: write figures and check sheets to a work folder.
    `C.render` and the `topng` exporters use Playwright when node can load it (`$SF_PLAYWRIGHT`, known install folders, then node's own module resolution) and otherwise headless Chrome (`C.find_chrome()`: `$SF_CHROME`, the macOS app bundles, then PATH). `C.cvd_png` and `C.cvd_sheet` need no browser at all.
@@ -21,7 +21,7 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 
 - **One figure, one message.** Write the message as one sentence first (e.g. "lateral inhibition makes the relay profile narrower than the receptor profile"). The design follows from it. If a sentence or a small table says it faster, don't draw it (Tufte: under ~20 numbers, use a table).
 - **Audience = a student learning alone** from the note (Rougier rule 1): label more than you would for experts, and spell words out (no cryptic abbreviations).
-- **Draw the mechanism, not its name**: show the path, the connection, the difference. For a comparison, draw the same layout several times and change only what differs, emphasised (small multiples; Kandel 17‑11C benchmark).
+- **Draw the mechanism, not its name**: show the path, the connection, the difference. For a comparison, draw the same layout several times and change only what differs, emphasised (small multiples; example `inhibition_types`).
 - **Pick the form by the job** (Wilke ch. 5; dataviz `choosing-a-form`): amounts → bars/dots; distributions → density, violin, strip; x–y → scatter; change over an ordered variable → line; part of a whole → stacked bar or pie (simple fractions only); uncertainty → error bars or bands, saying which (SD, SE, CI).
 - **Prefer wider than tall, about 1.5:1** (Tufte ch. 9), unless the content has its own shape. Same units on both axes → equal aspect (geometry, ROC, x = y comparisons).
 
@@ -228,16 +228,19 @@ key = S.ColorKey(); key.add("v2", S.BLUE, marker="D"); ax.plot(x, y, **key.style
 md = D.md_figure(svg, "Caption.")
 ```
 
-Worked examples to copy from:
-- `benchmark/lecture1.py`: pipeline, spike rasters, psychometric functions, SDT + ROC, spectra with a spectrum axis, receptive-field sampling, colour vectors.
-- `benchmark/kandel_17_11ab.py`: circuit with aligned activity profiles; `kandel_17_11c.py`: three circuits that differ in one edge.
-- `benchmark/round2/`: `neuron_labeled` (anatomy with callouts), `cortical_layers` (layered circuit with pathways), `hebbian_net` (network + typeset equations), `fi_curve` (simulated traces + f–I curve), `autoencoder` (architecture), `activation_surfaces` (3D loss landscapes), `t1_saddle`, `t1_tracedet`, `t1_ei_spiral`, `l2_fixedpoints` (dynamics), `t1_diagonalise` (commutative diagram). `build_all.py` lints and builds them all.
-- `benchmark/round3/`: `brain_areas` (asset + overlays), `eye`, `retina`, `cochlea` (anatomy components); `neuron_styles`, `neuron_illustrated`, `cortical_column` are the real-reconstruction examples (on request only).
-- `benchmark/round4/l3_mutual_inhibition.py`: `Dy.portrait` small multiples across a parameter, curved separatrices with unequal inputs, a pitchfork from `Dy.bifurcation_branches`, eigen-directions of a linearised flow.
+Worked examples to copy from, in `lib/examples/` (one figure type each; `python examples/build_all.py [names] [--out DIR] [--render sheet.png]` builds, lints and renders them):
+- Circuits: `lateral_inhibition_relay` (circuit with aligned activity profiles), `inhibition_types` (small multiples that differ in one edge), `cortical_layers` (layered circuit with pathways).
+- Data and model plots: `sensory_basics` (pipeline, adaptation traces, psychometric functions, SDT + ROC, spectra with a spectrum axis, receptive-field sampling, colour vectors), `fi_curve` (simulated traces + f–I curve).
+- Dynamics: `saddle_portrait`, `ei_spiral`, `trace_determinant`, `graphical_fixed_points`, `change_of_basis` (commutative diagram), `mutual_inhibition` (`Dy.portrait` small multiples across a parameter, curved separatrices with unequal inputs, a pitchfork from `Dy.bifurcation_branches`, eigen-directions of a linearised flow).
+- Networks and ML: `hebbian_net` (network + typeset equations), `autoencoder` (architecture), `activation_surfaces` (3D loss landscapes).
+- Anatomy: `neuron_labeled` (schematic neuron with callouts), `brain_areas` (asset + overlays), `eye`, `retina`, `cochlea` (anatomy components); `neuron_styles`, `neuron_illustrated`, `cortical_column` are the real-reconstruction examples (on request only).
+
+Examples are general: a figure drawn for one note stays in that note's project. Add an example here only when it shows a figure type or library feature the others don't, name it after what it shows, and keep it free of output paths.
+
 ## Learning loop
 
 This skill and the `sciencefig` library improve themselves from use (strange-loop). When a step here misleads you, the library lacks a helper you had to hand-write, the linter misses something you only saw on the render, or a rule clearly paid off, add one line to `LEARNINGS.md` next to this file:
 
 `- O<n> <YYYY-MM-DD> [failure|friction|misled|missing|workaround|win|wish] <section>: <what happened, what would have helped> (<harness>, <note or figure>)`
 
-If this copy is read-only (an uploaded skill, an installed plugin), run `loop.py note scientific-figures <kind> "<text>"` from the strange-loop skill, or list the lines at the end of your reply under "Observations for scientific-figures". A figure you had to fix by hand is the best evidence there is: say what the linter should have caught. Library fixes you verified (a helper that now renders correctly) are committed as in step 0.3 and noted here as `win` or `workaround`; changes to the rules above wait for a reflection pass, which checks them against `evals/` (the benchmark scripts are the scripted part).
+If this copy is read-only (an uploaded skill, an installed plugin), run `loop.py note scientific-figures <kind> "<text>"` from the strange-loop skill, or list the lines at the end of your reply under "Observations for scientific-figures". A figure you had to fix by hand is the best evidence there is: say what the linter should have caught. Library fixes you verified (a helper that now renders correctly) are committed as in step 0.3 and noted here as `win` or `workaround`; changes to the rules above wait for a reflection pass, which checks them against `evals/` (the worked examples in `lib/examples/` are the scripted part).

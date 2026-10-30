@@ -1,6 +1,6 @@
 # Licences in this folder
 
-The repository's MIT licence covers the code (`sciencefig/`, `benchmark/*.py`) and the figures the benchmark scripts generate. It does **not** cover the reused material, which keeps its own licence:
+The repository's MIT licence covers the code (`sciencefig/`, `examples/*.py`) and the figures the examples generate. It does **not** cover the reused material, which keeps its own licence:
 
 | Folder | Source | Licence | What it means here |
 |---|---|---|---|
