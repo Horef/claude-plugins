@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.2.1 (2026-10-30)
+- Learning loop: record lessons with the note command (routes to the genome clone) instead of editing LEARNINGS.md in a possibly installed copy, where notes are lost on update; found by the pre-launch end-to-end run.
+
 ## 1.2.0 (2026-10-30)
 - Step 5 points at scientific-figures' references/devonthink.md, where the DEVONthink and Anki figure rules moved in scientific-figures 7.0.0, so study-guide figures keep them even where the owner's figure profile is not readable.
 

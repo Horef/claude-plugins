@@ -76,4 +76,10 @@ Menu of figures that teach well (pick what the lecture supports):
 
 ## Learning loop
 
-This skill improves itself from use (strange-loop). When a step here misleads you, a DEVONthink tool behaves differently than described, the owner corrects the notes, or something clearly pays off, add one line to `LEARNINGS.md` next to this file - `- O<n> <YYYY-MM-DD> [failure|friction|misled|missing|workaround|win|wish] <section>: <what happened, what would have helped> (<harness>, <course and lecture>)` - or run `loop.py note course-lecture-notes <kind> "<text>"` from the strange-loop skill when this copy is read-only, or list the lines at the end of your reply under "Observations for course-lecture-notes". His corrections to a note are the strongest evidence: record what he changed and why. Figure lessons go to scientific-figures instead. Fix only plain errors on the spot, after verifying them; the goals above are his stated preferences and change only when he says so.
+This skill improves itself from use (strange-loop). When a step here misleads you, a DEVONthink tool behaves differently than described, the owner corrects the notes (record what he changed and why: the strongest evidence), or something clearly pays off, record one line with the note command (in claude.ai, run it on the connected computer):
+
+```bash
+python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note course-lecture-notes <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
+```
+
+It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell), end your reply with a block headed `Observations for course-lecture-notes` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Figure lessons go to scientific-figures instead. The goals above are the owner's stated preferences and change only when he says so. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
