@@ -17,7 +17,12 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
   python loop.py bump UNIT patch|minor|major "SUMMARY" [--obs O3,O4]
                                              bump the version, prepend a CHANGELOG entry, resolve the observations
                                              (`--obs last` = the newest open one)
-  python loop.py absorb                      move inbox lines into the genome's LEARNINGS files
+  python loop.py absorb [FILE|-]             move inbox lines, or "Observations for <unit>" blocks pasted from a chat
+                                             reply (FILE, or - for stdin), into the genome's LEARNINGS files
+  python loop.py sync [--no-push]            close the loop on this machine: absorb the inbox, commit observation-only
+                                             changes, pull (LEARNINGS merge as a union), renumber duplicate ids, push
+  python loop.py hook                        session start: `sync` first if ~/.config/strange-loop/auto_sync says on,
+                                             then `digest`; never fails
   python loop.py pack UNIT [--out DIR]       zip a skill folder for upload (claude.ai), as dist/<unit>-<version>.zip
   python loop.py link TARGET [--only A,B]    symlink the genome's skill folders into a harness's skills folder
 
@@ -203,6 +208,25 @@ class Learnings:
         self.save()
         return [l.split()[1] for l in moved]
 
+    def renumber(self) -> list[str]:
+        """Give later duplicates of an id (two machines both wrote O12) the next free ids. Returns 'old->new'."""
+        seen, changes = set(), []
+        nxt = int(self.next_id()[1:])
+        for title in ("resolved", "open"):           # resolved ids are cited in CHANGELOGs: they keep theirs
+            for i, m in self.entries(title):
+                oid = m.group(1)
+                if oid in seen:
+                    new = f"O{nxt}"
+                    nxt += 1
+                    self.lines[i] = self.lines[i].replace(f"- {oid} ", f"- {new} ", 1)
+                    changes.append(f"{oid}->{new}")
+                    seen.add(new)
+                else:
+                    seen.add(oid)
+        if changes:
+            self.save()
+        return changes
+
     def save(self) -> None:
         self.path.write_text("\n".join(self.lines).rstrip() + "\n", encoding="utf-8")
 
@@ -303,6 +327,10 @@ def cmd_digest(args):
         inbox = INBOX.read_text(encoding="utf-8").splitlines() if INBOX.exists() else []
         if inbox:
             out.append(f"{len(inbox)} observation(s) waiting in {INBOX}")
+        if g and (g / ".git").exists():
+            pending = [l for l in git(g, "status", "--porcelain").splitlines() if l.endswith("LEARNINGS.md")]
+            if pending:
+                out.append(f"{len(pending)} LEARNINGS file(s) with observations not yet committed; `loop.py sync` shares them")
         if out:
             print("strange-loop: skills with lessons waiting for a reflection pass (the strange-loop skill, when the user "
                   "has time; do not interrupt the current task for it):")
@@ -513,8 +541,30 @@ def cmd_link(args):
         print(f"linked  {link} -> {d}")
 
 
+def absorb_blocks(g: Path, text: str) -> tuple[int, list[str]]:
+    """Add the lines of "Observations for <unit>" blocks (as chat-only agents write them) to the genome."""
+    us, unit, done, skipped = units(g), None, 0, []
+    for line in text.splitlines():
+        head = re.match(r"^\W*observations for ([\w-]+)", line.strip(), re.I)
+        if head:
+            unit = head.group(1)
+            continue
+        m = re.match(r"^\s*- (?:O\S*\s+)?(\d{4}-\d{2}-\d{2}) \[([a-z]+)\] (.+)$", line)
+        if m and unit in us and m.group(2) in KINDS:
+            Learnings(us[unit] / "LEARNINGS.md", unit).add(m.group(2), f"{m.group(3).strip()} (noted {m.group(1)})")
+            done += 1
+        elif m:
+            skipped.append(line.strip())
+    return done, skipped
+
+
 def cmd_absorb(args):
     g = need_genome(args)
+    if args.file:
+        text = sys.stdin.read() if args.file == "-" else Path(args.file).expanduser().read_text(encoding="utf-8")
+        done, skipped = absorb_blocks(g, text)
+        print(f"absorbed {done} observation(s)" + (f"; skipped {len(skipped)} (unknown unit or kind)" if skipped else ""))
+        return
     if not INBOX.exists():
         print("inbox empty")
         return
@@ -529,6 +579,76 @@ def cmd_absorb(args):
             keep.append(line)
     INBOX.write_text("\n".join(keep) + ("\n" if keep else ""), encoding="utf-8")
     print(f"absorbed {done} observation(s); {len(keep)} left (unknown unit or malformed)")
+
+
+def run_git(g: Path, *a: str, timeout: int = 60) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(g), *a], capture_output=True, text=True, timeout=timeout)
+
+
+def cmd_sync(args) -> int:
+    """Share this machine's observations and receive everyone else's. Leaves all other uncommitted work alone."""
+    g = need_genome(args)
+    if not (g / ".git").exists():
+        sys.exit(f"strange-loop: {g} is not a git checkout")
+    quiet = getattr(args, "quiet", False)
+    say = (lambda *_: None) if quiet else print
+    net = 15 if quiet else 120                      # inside the session-start hook, never stall the session
+    if INBOX.exists() and INBOX.read_text(encoding="utf-8").strip():
+        cmd_absorb(argparse_ns(genome=args.genome, file=None))
+    for name, d in units(g).items():
+        if (d / "LEARNINGS.md").exists():
+            Learnings(d / "LEARNINGS.md", name).renumber()
+    status = run_git(g, "status", "--porcelain").stdout.splitlines()
+    learn = [l[3:] for l in status if l[3:].endswith("LEARNINGS.md")]
+    other = [l[3:] for l in status if not l[3:].endswith("LEARNINGS.md")]
+    if learn:
+        run_git(g, "add", "--", *learn)
+        names = sorted({Path(p).parent.name for p in learn})
+        run_git(g, "commit", "-q", "-m", f"observations: {', '.join(names)}", "--", *learn)
+        say(f"committed observations in {len(learn)} LEARNINGS file(s)")
+    if other:
+        say(f"left alone: {len(other)} other uncommitted file(s) (work in progress)")
+    if not run_git(g, "rev-parse", "--abbrev-ref", "@{u}").stdout.strip():
+        say("no upstream branch: committed locally only")
+        return 0
+    pull = run_git(g, "pull", "--rebase", "--autostash", "-q", timeout=net)
+    if pull.returncode != 0:
+        run_git(g, "rebase", "--abort")
+        say("pull failed (conflict outside LEARNINGS, or offline); nothing pushed:\n" + (pull.stderr.strip()[-400:]))
+        return 1
+    renamed = []
+    for name, d in units(g).items():
+        if (d / "LEARNINGS.md").exists():
+            renamed += [f"{name} {c}" for c in Learnings(d / "LEARNINGS.md", name).renumber()]
+    if renamed:
+        run_git(g, "commit", "-q", "-m", "observations: renumber ids that two machines both used", "--",
+                *[str(d / "LEARNINGS.md") for d in units(g).values() if (d / "LEARNINGS.md").exists()])
+        say(f"renumbered duplicate ids: {', '.join(renamed)}")
+    ahead = run_git(g, "rev-list", "--count", "@{u}..HEAD").stdout.strip()
+    if ahead not in ("", "0") and not args.no_push:
+        push = run_git(g, "push", "-q", timeout=net)
+        say("pushed" if push.returncode == 0 else "push failed: " + push.stderr.strip()[-300:])
+        return push.returncode
+    say("up to date")
+    return 0
+
+
+def argparse_ns(**kw):
+    import argparse
+    return argparse.Namespace(**kw)
+
+
+def cmd_hook(args):
+    """Session start: optional automatic sync (opt-in), then the digest. A hook must never break a session."""
+    try:
+        flag = CONFIG / "auto_sync"
+        if flag.is_file() and flag.read_text(encoding="utf-8").strip().lower() in ("on", "yes", "true", "1"):
+            g, _ = find_genome(args.genome)
+            if g and (g / ".git").exists():
+                cmd_sync(argparse_ns(genome=args.genome, no_push=False, quiet=True))
+    except Exception:
+        pass
+    cmd_digest(args)
 
 
 def main(argv: list[str]) -> None:
@@ -546,12 +666,15 @@ def main(argv: list[str]) -> None:
     p = sub.add_parser("eval"); p.add_argument("unit")
     p = sub.add_parser("bump"); p.add_argument("unit"); p.add_argument("part", choices=["patch", "minor", "major"])
     p.add_argument("summary"); p.add_argument("--obs")
-    sub.add_parser("absorb")
+    p = sub.add_parser("absorb"); p.add_argument("file", nargs="?")
+    p = sub.add_parser("sync"); p.add_argument("--no-push", action="store_true"); p.add_argument("--quiet", action="store_true")
+    sub.add_parser("hook")
     p = sub.add_parser("pack"); p.add_argument("unit"); p.add_argument("--out")
     p = sub.add_parser("link"); p.add_argument("target"); p.add_argument("--only")
     args = ap.parse_args(argv)
     {"where": cmd_where, "note": cmd_note, "status": cmd_status, "digest": cmd_digest, "check": cmd_check,
-     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link}[args.cmd](args)
+     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link,
+     "sync": lambda a: sys.exit(cmd_sync(a)), "hook": cmd_hook}[args.cmd](args)
 
 
 if __name__ == "__main__":

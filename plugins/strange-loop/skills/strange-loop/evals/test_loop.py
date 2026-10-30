@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -145,6 +146,45 @@ class LoopTest(unittest.TestCase):
         self.assertIn("ok", run("--genome", str(self.g), "link", str(target))[1])
         (target / "demo").unlink(); (target / "demo").mkdir()
         self.assertIn("skipped", run("--genome", str(self.g), "link", str(target))[1])
+
+    def test_absorb_reply_block(self):
+        run("--genome", str(self.g), "note", "demo", "win", "x works")
+        block = Path(self.tmp.name) / "reply.txt"
+        block.write_text("Some answer text.\n\n**Observations for demo**\n"
+                         "- O? 2026-10-29 [friction] §2: the export step needs a folder that may not exist (claude-ai, note)\n"
+                         "- 2026-10-29 [banana] not a kind\n")
+        code, out = run("--genome", str(self.g), "absorb", str(block))
+        self.assertIn("absorbed 1", out)
+        self.assertIn("[friction] §2: the export step needs a folder", self.learn.read_text())
+
+    def test_sync_two_machines(self):
+        git = lambda cwd, *a: subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True)
+        remote = Path(self.tmp.name) / "remote.git"
+        git(self.tmp.name, "init", "-q", "--bare", "-b", "main", str(remote))
+        (self.g / ".gitattributes").write_text("LEARNINGS.md merge=union\n")
+        run("--genome", str(self.g), "note", "demo", "win", "the checklist works")
+        for a in (("init", "-q", "-b", "main"), ("config", "user.email", "a@a"), ("config", "user.name", "a"),
+                  ("add", "-A"), ("commit", "-qm", "base"), ("remote", "add", "origin", str(remote)), ("push", "-qu", "origin", "main")):
+            git(self.g, *a)
+        b = Path(self.tmp.name) / "machine-b"
+        git(self.tmp.name, "clone", "-q", str(remote), str(b))
+        git(b, "config", "user.email", "b@b"); git(b, "config", "user.name", "b")
+        run("--genome", str(self.g), "note", "demo", "friction", "machine A saw the lint miss a patch over text")
+        run("--genome", str(b), "note", "demo", "missing", "machine B wanted a contour view of the surface")
+        (self.g / "plugins/demo/skills/demo/SKILL.md").write_text(SKILL + "\nwork in progress\n")   # must be left alone
+        self.assertEqual(run("--genome", str(self.g), "sync")[0], 0)
+        code, out = run("--genome", str(b), "sync")
+        self.assertEqual(code, 0, out)
+        self.assertIn("renumbered", out)                       # both machines had used O2
+        self.assertEqual(run("--genome", str(self.g), "sync")[0], 0)
+        for clone in (self.g, b):
+            text = (clone / "plugins/demo/skills/demo/LEARNINGS.md").read_text()
+            self.assertIn("machine A saw", text)
+            self.assertIn("machine B wanted", text)
+            ids = re.findall(r"^- (O\d+) ", text, re.M)
+            self.assertEqual(len(ids), len(set(ids)), text)
+        self.assertIn("work in progress", (self.g / "plugins/demo/skills/demo/SKILL.md").read_text())
+        self.assertIn("SKILL.md", git(self.g, "status", "--porcelain").stdout)
 
     def test_inbox_when_no_genome_then_absorb(self):
         os.environ.pop("STRANGE_LOOP_GENOME", None)

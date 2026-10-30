@@ -62,9 +62,11 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 **Where to write** (first that works):
 1. `python <this skill>/scripts/loop.py note <unit> <kind> "<text>" --where "§5" --harness <name> --context "<project>"`. It finds the writable source checkout (the *genome*: `$STRANGE_LOOP_GENOME`, `~/.config/strange-loop/genome`, or the marketplace repo you are in), deduplicates, and falls back to `~/.config/strange-loop/inbox.md`.
 2. Without a shell but with file access: edit the genome's `LEARNINGS.md` directly in the format above.
-3. With neither (a chat-only harness, a read-only uploaded skill): end your reply with a block headed `Observations for <unit>` containing the lines, so the person can carry them over or a later agent can absorb them.
+3. With neither (a chat-only harness, a cloud session on another repository, a read-only uploaded skill): end your reply with a block headed `Observations for <unit>` and the lines in the format above, one block per unit. `loop.py absorb <file>` (or `-` for pasted text) adds such blocks to the genome later, so the person can paste a reply into any session that has the genome.
 
 Installed copies (`~/.claude/plugins/…`, uploaded skill zips) are overwritten on update: never treat them as the place to write.
+
+A note in a clone is local until it is shared: `loop.py sync` commits observation-only changes, pulls everyone else's and pushes (section 11). If you wrote notes into a clone and auto-sync is off, run it at the end of the session.
 
 ## 3. Change classes (who may change what)
 
@@ -174,6 +176,19 @@ Prefer, in this order: a check that catches the mistake, a tool that makes it im
 ## 10. Auditing the whole system
 
 Occasionally (or when asked "how is the system doing?"): `loop.py status` across all units; `loop.py check`; run the units' sensors where they apply (e.g. `docmap.py stats` in projects that use project-foundations), look for lessons stuck open for months (decide: wait or reject), units with no evals, skills over budget, rules duplicated across units (move the shared one up a layer), and observations about the kernel. Report the findings most important first, propose the passes, do the ones the user approves.
+
+## 11. Closing the loop: how a lesson travels
+
+The genome is the GitHub repository; every other copy is either a clone that can write back or an installed copy that only receives.
+
+**Upward, from use to the genome.**
+- Local agents (Claude Code, Kiro, Copilot, Codex on a machine with a clone): `loop.py note` writes into the clone; `loop.py sync` commits observation-only changes, pulls (LEARNINGS files merge as a union through `.gitattributes`, so two machines never conflict; ids both machines used are renumbered) and pushes. With `~/.config/strange-loop/auto_sync` set to `on`, Claude Code's session-start hook does this by itself.
+- claude.ai with the computer connected: the agent edits `LEARNINGS.md` in the clone through the connector; the next sync on that machine shares it.
+- Chat-only and cloud sessions without the genome: the `Observations for <unit>` block at the end of the reply; `loop.py absorb` brings it in from any session that has the genome.
+
+**Inward, from the genome to every copy.** A reflection pass (section 4) changes a unit, bumps its version and pushes to the genome's main branch as its AGENTS.md allows. From there: claude.ai and Cowork re-sync the marketplace (Sync automatically), Claude Code receives the synced skills or updates its installed plugins, symlinked local agents read the clone after its next sync (pull), and CI checks every push.
+
+What closes the loop is therefore one routine per machine (sync) and one rule per change (bump and push). A note that stays in a chat reply, or a clone that is never synced, is where a lesson gets lost: when you see either, say so.
 
 ## Learning loop
 
