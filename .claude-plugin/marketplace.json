@@ -34,6 +34,12 @@
       "source": "./plugins/model-router",
       "description": "Routes each step of a task to a model tier (light, standard, deep), with plan approval, a status line and a plan pane",
       "category": "general"
+    },
+    {
+      "name": "model-routing",
+      "source": "./plugins/model-routing",
+      "description": "Portable model routing as a skill for agents without the model-router mod (Copilot, Kiro, Codex, Cursor, claude.ai): plan steps by tier, get approval, run each on the cheapest model that does it well",
+      "category": "general"
     }
   ]
 }

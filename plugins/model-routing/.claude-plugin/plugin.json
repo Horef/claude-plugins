@@ -1,0 +1,6 @@
+{
+  "name": "model-routing",
+  "version": "0.1.0",
+  "description": "Plan multi-step work as steps tagged light, standard or deep, get the person's approval, then run each step on the cheapest model that does it well: a cheaper sub-agent where the harness can start one, the main chat where the step needs its context. For agents without the model-router mod (GitHub Copilot, Kiro, Codex, Cursor, claude.ai). Use when a task has several distinct steps, when asked to save tokens or cost, or to pick models for sub-tasks.",
+  "license": "MIT"
+}
