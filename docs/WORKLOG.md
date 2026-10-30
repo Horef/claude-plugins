@@ -2,6 +2,16 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-30 - Artifacts remember their origin
+Changed: the owner asked how lessons reach a skill that is used once but shapes a project for good (project-foundations). project-foundations 5.3.0: the AGENTS.md template names the scaffolding's source and sends lessons about the scaffolding to the skill with the note command; `docmap.py check` warns when the person's genome clone has a newer docmap, so old projects learn about upgrades. strange-loop 0.10.0 states the general rule (section 1) and adds it to adoption (section 8).
+
+| Verification command | Result |
+|---|---|
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval project-foundations` | 14/14 (new: an older copy points at the newer skill) |
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop` | 16 tests OK |
+
+Next: in each existing project, run project-foundations' Upgrade (6b) once so it gets the new AGENTS.md lines and docmap.
+
 ## 2026-10-30 - Adding skills: loop.py new
 Changed: PR #6 merged. The owner asked about adding skills in future. Adding one took about eight manual edits that each drift. strange-loop 0.9.0 adds `loop.py new` (manifest, marketplace entry with category, README row, SKILL.md with the Learning loop section, LEARNINGS, CHANGELOG, evals; `--from` adopts an existing folder and lists its files for the genome/expression sort; `--mod` for hooks-only plugins). `check` now requires a category per marketplace entry (D8), warns when a Learning loop section lacks the note command, and when `TODO(new):` placeholders remain. Section 8 rewritten; a test keeps its template identical to what `new` writes. AGENTS.md points at `new`.
 

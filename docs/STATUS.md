@@ -25,6 +25,7 @@ Updated 2026-10-30. Snapshot only - overwrite each session; history is in `docs/
 1. Owner: on the Mac, `git pull` in the clone and `echo on > ~/.config/strange-loop/auto_sync` (D10); add the marketplace in claude.ai with Sync automatically, then remove the hand-uploaded skills; install strange-loop locally in Claude Code; run `loop.py eval scientific-figures` on the Mac, then retire `~/Scripts/ScientificFigures`.
 1a. Owner: save the figure profile to `~/.config/scientific-figures/profile.md` (sent in chat) and add one line to claude.ai's standing instructions so chats without Mac access know it (D9).
 2. Use the skills normally; real observations are what the loop needs.
+2b. Existing projects: run project-foundations' Upgrade (step 6b) once each, so their AGENTS.md routes scaffolding lessons to the skill and their docmap warns about newer versions.
 2a. To add a skill (e.g. paper-premark from its claude.ai upload): `loop.py new <name> --description ... --category ... --from <folder>` (strange-loop section 8).
 3. Reflection passes when units turn ripe: scientific-figures O5; project-foundations O3 (templates on demand, which also fixes the line budget).
 
