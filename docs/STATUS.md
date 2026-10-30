@@ -5,7 +5,8 @@ Updated 2026-10-30. Snapshot only - overwrite each session; history is in `docs/
 | Capability | How verified |
 |---|---|
 | Marketplace with five plugins, all units adopted (LEARNINGS, CHANGELOG, evals) | `loop.py check --base origin/main` → 0 errors, 1 warning (project-foundations SKILL.md 505/500 lines), 2026-10-30 |
-| `loop.py` note/status/digest/check/eval/bump/absorb/pack/link/sync/hook | `loop.py eval strange-loop` → 12 unit tests OK (incl. two clones syncing through one remote), 2026-10-30 |
+| `loop.py` note/status/digest/check/eval/bump/absorb/pack/link/sync/hook | `loop.py eval strange-loop` → 13 unit tests OK (incl. two clones syncing through one remote), 2026-10-30 |
+| The whole round trip on a sandboxed Mac setup (fake home, local stand-in for GitHub, the real `claude` CLI) | install from the marketplace → session-start hook → notes from another project → auto-sync push → a second machine's note pulled → reply block absorbed → skills linked for a local agent → version bump reaches the installed plugin (0.7.0 → 0.7.1), 2026-10-30 |
 | `docmap.py` from its new home | `loop.py eval project-foundations` → 8/8 OK, 2026-10-30 |
 | `sciencefig` in the skill: all 31 worked-example figures build, lint and render outside the Mac | `loop.py eval scientific-figures` → pass (31 figures, 0 problems, one render sheet), 2026-10-30; the examples' output is byte-identical to the scripts they came from |
 | docmap reading cost at scale | synthetic projects (15-400 decisions, 40-1500 modules): session start ~4k-12k tokens with `find`/`get` instead of 9k-66k; `loop.py eval project-foundations` 13/13, 2026-10-30 |
@@ -13,7 +14,7 @@ Updated 2026-10-30. Snapshot only - overwrite each session; history is in `docs/
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 
 ## Doesn't work yet / known issues
-- Not yet confirmed in the app: claude.ai marketplace sync of this repo (documented, not tried), and whether it needs a version change to pick up an update.
+- Not yet confirmed in the apps: claude.ai marketplace sync of this repo (documented, not tried), whether it needs a version change to pick up an update, and the hook inside a real Claude Code session (the same command was run by hand in the sandbox).
 - The Claude Code session-start hook (`plugins/strange-loop/hooks/hooks.json`) has not been tried in an installed session.
 - course-lecture-notes has judged cases only; its DEVONthink steps need the owner's Mac.
 - The judged cases (`evals/cases.md`) have never been run; no tooling for blind A/B yet (strange-loop O1).

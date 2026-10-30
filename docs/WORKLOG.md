@@ -2,6 +2,21 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-30 - Pre-launch end-to-end pass
+Changed: PR #5 merged. Ran the owner's Mac setup in a sandbox (fake home, `~/Programming/claude-plugins` cloned from a local bare stand-in for GitHub, config and auto_sync as the README says, the real `claude` CLI installing strange-loop from the marketplace) and walked a lesson through the whole loop. It worked, and it found three problems, fixed in strange-loop 0.8.0 and patch releases of the other skills: the skills told agents to write LEARNINGS.md next to the skill, which in an installed or synced copy is lost on update (now one canonical note command that routes to the clone); sync pushed unchecked unit commits (now only observation-only commits are pushed automatically, D10); the hook was silent about syncing. The digest also warns when the genome setting points to a folder that is not a clone (strange-loop O2). AGENTS.md notes that docmap needs Python 3.11+ to read its config.
+
+| Verification command | Result |
+|---|---|
+| sandbox: `claude plugin marketplace add <clone>` + `claude plugin install strange-loop@horef-claude-plugins` | installed 0.7.0 |
+| sandbox: hook run as Claude Code runs it, from another project | digest; next run auto-synced and pushed the notes |
+| sandbox: second clone notes + syncs; first machine's hook | note received |
+| sandbox: `loop.py absorb -` with a reply block; `loop.py link ~/.kiro/skills` | absorbed 1; skills linked |
+| sandbox: bump strange-loop, sync, `claude plugin marketplace update` + `claude plugin update` | updated 0.7.0 → 0.7.1 |
+| sandbox: the note command copied verbatim from scientific-figures' SKILL.md, run from another project | recorded in the clone |
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop` | 13 tests OK |
+
+Next: owner runs the setup on the Mac; first real use.
+
 ## 2026-10-30 - Closing the loop (D10)
 Changed: PR #4 merged. The owner asked how lessons propagate. Upward was open: notes written into a clone were never committed or pushed, two machines would collide, reply blocks had no importer. strange-loop 0.7.0 adds `sync` (commit observation-only changes, pull with a union merge for LEARNINGS.md, renumber duplicate ids, push), `hook` (opt-in auto-sync at session start, then the digest), `absorb FILE|-` for reply blocks, and section 11 on the round trip. `.gitattributes` sets the union merge. AGENTS.md records the owner's standing permission: agents merge fix and learn changes once checks and CI are green (D10).
 
