@@ -43,6 +43,7 @@ def _design_size(svg):
 
 def svg_to_png(svg, out_png, scale=2.0):
     """One inline SVG string -> PNG of exactly the figure at `scale`x."""
+    os.makedirs(os.path.dirname(os.path.abspath(out_png)), exist_ok=True)
     tmp = tempfile.mkdtemp()
     hp = os.path.join(tmp, "f.html"); js = os.path.join(tmp, "r.js")
     # remove max-width so the figure renders at its design size
@@ -86,6 +87,7 @@ const [html, out, exe, w, h] = process.argv.slice(3);
 def svg_to_pdf(svg, out_pdf):
     """Vector PDF of the figure at its design size (for papers and slides).
     Text stays text; fonts are embedded by Chromium."""
+    os.makedirs(os.path.dirname(os.path.abspath(out_pdf)), exist_ok=True)
     m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
     w, h = (float(m.group(1)), float(m.group(2))) if m else (640, 400)
     tmp = tempfile.mkdtemp()

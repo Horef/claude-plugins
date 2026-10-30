@@ -1,6 +1,6 @@
 """Benchmark: Lecture 1 (Intro to sensory systems) figures redrawn with
 sciencefig. Run:  python3 benchmark/lecture1.py  -> benchmark/after/*.svg"""
-import sys, os
+import sys, os, tempfile
 ROOT = __file__.rsplit("/benchmark", 1)[0]
 sys.path.insert(0, ROOT)
 import numpy as np
@@ -269,4 +269,4 @@ if __name__ == "__main__":
     for w in which:
         globals()["fig_" + w]()
     from sciencefig import check as C
-    C.render(list(FIGS.values()), "/home/claude/work/l1.png", names=list(FIGS))
+    C.render(list(FIGS.values()), os.path.join(os.environ.get("SF_WORK", os.path.join(tempfile.gettempdir(), "sciencefig")), "l1.png"), names=list(FIGS))

@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 6.2.2 (2026-10-30)
+- Fix: C.render, T.svg_to_png and T.svg_to_pdf create the output folder (headless Chrome, used on the Mac and in CI, does not); lecture1.py renders to $SF_WORK or the temp folder instead of a claude.ai path. Found by the first CI run of the figure evals. (O7)
+
 ## 6.2.1 (2026-10-30)
 - Fix: Playwright discovery asks node (NODE_PATH, global installs) and honours $SF_PLAYWRIGHT, so rendering works in containers whose Playwright is not in the three known folders; verified by evals/run.py (lecture1.py renders) and a rendered check sheet. (O6)
 

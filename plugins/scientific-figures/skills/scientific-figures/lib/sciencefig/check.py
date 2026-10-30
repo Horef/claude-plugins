@@ -144,6 +144,7 @@ def chrome_shot(html_path, out_png, width, height, scale=2.0, size=None):
         raise RuntimeError("no Playwright and no Chrome/Chromium/Edge found; "
                            "install one or set SF_CHROME to the binary")
     out_png = os.path.abspath(out_png)
+    os.makedirs(os.path.dirname(out_png), exist_ok=True)  # Playwright creates the folder; headless Chrome does not
     prof = tempfile.mkdtemp()
     try:
         for _ in range(4):
