@@ -22,7 +22,7 @@ An agent should be able to go from "nothing loaded" to "the right lines of the r
 2. `docs/MAP.md` - **generated**: every folder and code file with its one-line summary, the most-imported modules, the enforced boundaries.
 3. `<folder>/README.md` - **hand-written** purpose paragraph and folder-specific rules, plus a **generated** table of its files and subfolders with their summaries and who imports them.
 4. The file's header docstring/comment - **hand-written**: what it is for, how to use it, its contracts.
-5. `python tools/docmap.py show PATH | where NAME | uses PATH` - **computed on demand**: symbols with signatures and line numbers, definitions, importers and every reference.
+5. `python tools/docmap.py show PATH | where NAME | uses PATH | find WORDS | get D12` - **computed on demand**: symbols with signatures and line numbers, definitions, importers and every reference.
 
 **Write what lasts, generate what changes.** People and agents write purpose, usage and reasons, which change rarely. The script generates lists of files, symbols and "who uses this", which change with every commit and go stale the moment anyone maintains them by hand. CI fails when a generated block is out of date or a description is missing, so forgetting becomes visible instead of silent. The same holds for prose that can go stale: every doc carries a dated Status line, key values live once in a generated `docs/FACTS.md`, and `check` points at docs that are overdue for verification or still cite superseded decisions. "Imported by" also lists the tests that import a module, which tells an agent which tests to run after changing it.
 
@@ -145,7 +145,7 @@ Goal, scope and open questions: `docs/BRIEF.md`.
 1. `git status` (and `git pull --rebase` if there is a remote). Do not commit, discard or overwrite changes you did not make; ask.
 2. Read `AGENTS.local.md` (git-ignored): this machine's interpreter, paths, limits and quirks. If it is missing, create it from `AGENTS.local.example.md` with `python tools/docmap.py local` and the user's answers.
 3. Read `docs/STATUS.md`; skim the latest entry in `docs/WORKLOG.md`.
-4. Before changing behavior covered by a decision, read it in `docs/DECISIONS.md` (index at the top).
+4. Before changing behavior covered by a decision, find it with `python tools/docmap.py find <topic>` and read it with `python tools/docmap.py get D<n>`. Never read `docs/DECISIONS.md` or `docs/RESULTS.md` whole: they only grow.
 
 ## Finding your way
 1. `docs/MAP.md` (generated): every folder and code file with a one-line summary.
@@ -402,36 +402,17 @@ Always: `.env`, `.env.*` + `!.env.example`, `*.pem`, `*.key`, `*.local.md` (cove
 1. Copy `scripts/docmap.py` (in this skill's folder) to `tools/docmap.py` unchanged: copy the file (`cp`, or read and write it whole), never retype it. If this harness shows only SKILL.md and not the skill's other files, download it from the canonical repository: `https://raw.githubusercontent.com/Horef/claude-plugins/main/plugins/project-foundations/skills/project-foundations/scripts/docmap.py`. Each copy carries `DOCMAP_VERSION` near the top: when a project's copy is older than the skill's, replace it (Upgrade procedure); when a project changed its copy, carry the change back to the skill (Learning loop below) instead of letting copies diverge. Add a `tools/README.md` purpose paragraph if the folder is new.
 2. Configure it in `pyproject.toml` (or `docmap.toml` with the same keys at top level for non-Python projects). In globs, `*` also matches `/`.
 
+Start with the keys the project needs (most need only `exclude` and `forbid`); every key with its default and an example is in `references/docmap-config.md`:
+
 ```toml
 [tool.docmap]
 exclude = ["references/*"]            # never mapped (vendored copies, large reference material)
-readme_exempt = []                    # folders that need no README
-docstring_exempt = []                 # files that need no header doc
-link_exempt = ["docs/archive/*"]      # markdown whose relative links are historical
-lifecycle = ["docs/*.md"]             # docs that must open with a Status line (generated/append-only logs are exempt)
-lifecycle_exempt = []                 # e.g. ["docs/briefs/*"] if briefs are throwaway
-lifecycle_strict = false              # true: missing/stale Status lines fail CI (switch on once every doc has one)
-verify_max_days = 60                  # a "current" doc older than this is due for re-verification
-proposal_max_days = 30                # an open proposal older than this: decided? supersede it
-
-[tool.docmap.facts]                   # generated docs/FACTS.md: one row per key value, read from its source
-"default cell" = { file = "configs/cell.json", key = "id", note = "D27" }      # key = dotted path in JSON/TOML
-"encoder preset" = { file = "src/mypkg/defaults.py", pattern = "^ENCODER = \"(.+)\"" }  # or a regex with one group
 
 [[tool.docmap.forbid]]                # one block per architectural rule
 source = "mypkg"
 except = ["mypkg.adapters"]           # where the import is allowed
 imports = ["torch", "neuron"]
 reason = "core runs without heavy backends"
-
-[tool.docmap.runs]                    # research projects: run index from run manifests (JSON)
-manifests = "outputs/**/manifest.json"
-out = "docs/RUNS.md"
-columns = { run = "run_id", created = "created_utc", commit = "project_git.revision", config = "config_hash" }
-# columns map a header to a dotted key in the manifest; the second column is the sort key (use the date)
-# Also available (see DEFAULTS in the script): agents_max_lines (default 150), indexes (heading patterns for the ID
-# indexes), portable / portable_exempt (files scanned for machine-specific paths), portable_allow (paths that are facts
-# about other code, e.g. an upstream's hard-coded "/home/someone"), local / local_example (file names)
 ```
 
    Only module-level imports count for `forbid`, so deliberate lazy imports inside functions stay allowed. If the project has no run manifests yet, have the run code write one JSON per run (run id, UTC time, git revision and dirty flag, config hash, seeds, runtime) - it is the cheapest reproducibility record there is.
@@ -444,7 +425,7 @@ columns = { run = "run_id", created = "created_utc", commit = "project_git.revis
       - run: python tools/docmap.py check
 ```
 
-   `check` fails on: stale generated blocks, missing folder descriptions or file headers, files that don't parse, broken relative links in Markdown, forbidden imports. It warns on: cited decision IDs that don't exist, AGENTS.md over the length limit, old WORKLOG months, STATUS not touched for many commits, docs without a Status line, "current" docs not verified for `verify_max_days`, proposals open longer than `proposal_max_days`, and lines in live docs that cite a superseded decision without saying so (a decision is superseded when its heading, or its `Status:` line, says `superseded by D<n>`). A stale `docs/FACTS.md` (a source value changed) is an error like any stale generated block.
+   `check` fails on: stale generated blocks, missing folder descriptions or file headers, files that don't parse, broken relative links in Markdown, forbidden imports. It warns on: cited decision IDs that don't exist, AGENTS.md over the length limit, a file agents read whole at session start over `read_max_tokens` (`docmap.py stats` shows the reading cost), old WORKLOG months, STATUS not touched for many commits, docs without a Status line, "current" docs not verified for `verify_max_days`, proposals open longer than `proposal_max_days`, and lines in live docs that cite a superseded decision without saying so (a decision is superseded when its heading, or its `Status:` line, says `superseded by D<n>`). A stale `docs/FACTS.md` (a source value changed) is an error like any stale generated block.
 5. For research projects: `python tools/docmap.py runs` after runs; commit `docs/RUNS.md` (rows from other machines, e.g. a cluster, are kept).
 
 ## Retrofit procedure
@@ -468,6 +449,7 @@ columns = { run = "run_id", created = "created_utc", commit = "project_git.revis
 4. Split a very long design document into per-component files if agents keep reading all of it; keep `ARCHITECTURE.md` short.
 5. `rotate` the WORKLOG; set up `[tool.docmap.runs]` for research repos and run `runs`.
 6. Add `python tools/docmap.py check` to CI; update the Copilot shim's fallback rules.
+6b. Coming from an older `tools/docmap.py` (compare `DOCMAP_VERSION`): replace the script, then bring AGENTS.md's session-start and finding-your-way lines up to the template (since 5.2: `find` and `get D<n>` instead of reading DECISIONS whole), run `update`, and `stats` to see what a session now reads.
 6a. Doc lifecycle: give every doc in `docs/` a Status line (read it against the code, DECISIONS and RESULTS first: current, proposal, superseded or historical; move fully historical docs to `docs/archive/`). Mark superseded decisions in their headings. Configure `[tool.docmap.facts]` with the values docs keep repeating (defaults, presets, counts) and replace copied values with a reference to `docs/FACTS.md`. Keep `lifecycle_strict = false` until every doc has a Status line, then switch it on.
 7. Fix what `check` finds in old docs (broken links: fix the link or exempt truly historical folders via `link_exempt`; never delete history to silence a check).
 8. WORKLOG entry with the before/after `check` summary; commit; push.

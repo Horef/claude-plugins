@@ -59,6 +59,13 @@ def main() -> int:
         p = docmap(root, "where", "add")
         expect("demo/core.py" in p.stdout and "demo/adapter.py" in p.stdout, "where finds the definition and its user", p)
 
+        p = docmap(root, "get", "D2")
+        expect("## D2. Pure core" in p.stdout and "## D1." not in p.stdout, "get D2 prints only that decision", p)
+        p = docmap(root, "find", "json", "core")
+        expect("docs/DECISIONS.md" in p.stdout and "D2. Pure core" in p.stdout, "find locates the entry by its words", p)
+        p = docmap(root, "stats")
+        expect(p.returncode == 0 and "AGENTS.md" in p.stdout and "DECISIONS.md" in p.stdout, "stats reports what agents read", p)
+
         (root / "demo/core.py").write_text('import json\n\n\ndef add(a, b):\n    return a + b\n', encoding="utf-8")
         p = docmap(root, "check")
         expect(p.returncode == 1 and "docstring" in p.stdout + p.stderr, "check fails on a missing file header", p)
@@ -70,6 +77,21 @@ def main() -> int:
         docmap(root, "update")
         p = docmap(root, "check")
         expect(p.returncode == 1 and "TODO(docmap)" in p.stdout + p.stderr, "check fails until a new folder's README stub is written", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # a large project: the map lists folders, and budgets warn
+        root = Path(tmp)
+        for i in range(160):
+            (root / f"pkg{i % 4}").mkdir(exist_ok=True)
+            (root / f"pkg{i % 4}" / f"m{i}.py").write_text(f'"""Module {i}."""\n', encoding="utf-8")
+        for d in range(4):
+            (root / f"pkg{d}" / "README.md").write_text(f"# pkg{d}/\n\nPackage {d}.\n", encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Big\n\n" + "word " * 40000, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        m = (root / "docs/MAP.md").read_text()
+        expect("folders only" in m and "m17.py" not in m, "MAP lists folders only above map_files_max")
+        p = docmap(root, "check")
+        expect("AGENTS.md: about" in p.stdout and "read_max_tokens" in p.stdout, "check warns when a file read whole is over budget", p)
 
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
