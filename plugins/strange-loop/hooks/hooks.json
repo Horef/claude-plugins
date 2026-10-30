@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/strange-loop/scripts/loop.py\" digest",
-            "timeout": 10
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/strange-loop/scripts/loop.py\" hook",
+            "timeout": 45
           }
         ]
       }

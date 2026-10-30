@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.7.0 (2026-10-30)
+- Closing the loop: 'sync' commits observation-only changes, pulls with a union merge for LEARNINGS.md (.gitattributes in the genome), renumbers ids two machines both used, and pushes; 'hook' runs sync at session start when ~/.config/strange-loop/auto_sync is on, then the digest (which now reports uncommitted observations); 'absorb FILE|-' imports 'Observations for <unit>' reply blocks. New section 11 describes the round trip. 12 unit tests, including two clones syncing through one remote. (O11)
+
 ## 0.6.0 (2026-10-30)
 - Slow costs need sensors: section 6 asks every unit whose cost grows with use for a measurement that becomes a check warning past a budget; section 2 makes warnings an agent did not cause into observations; section 10 runs the sensors in audits. (O10)
 

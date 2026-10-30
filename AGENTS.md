@@ -42,4 +42,6 @@ Design and rationale: `plugins/strange-loop/README.md`; research behind it: `doc
 
 ## Git
 - One unit, one logical change per commit. Summary ≤ 72 characters, starting with the unit and version when one changes (`project-foundations 5.2.0: templates on demand`); body says why and cites O-ids and D-ids.
-- Work on a branch and open a PR when the harness can; never force-push, rewrite pushed history or change repo settings without an explicit request.
+- Observation-only commits (`loop.py sync`) go straight to the current branch, `main` included.
+- Owner's standing permission (D10): fix and learn changes (patch or minor bumps) and genome bookkeeping may be merged to `main` by the agent once `loop.py check`, the changed units' evals and CI are green, through a PR the agent merges (or a direct push where there is no PR tool). Major versions, kernel changes, and anything that deletes or restructures the owner's own material: open a PR and ask.
+- Never force-push, rewrite pushed history or change repo settings without an explicit request.

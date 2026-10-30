@@ -89,6 +89,14 @@ mkdir -p ~/.config/strange-loop && echo ~/code/claude-plugins > ~/.config/strang
 | Claude Code (terminal, desktop, cloud sessions) | Skills enabled in claude.ai sync into Claude Code by themselves (as `anthropic-skills:<name>` or the plugin's synced copy). For strange-loop's session-start digest hook, also install it locally: `/plugin install strange-loop --marketplace Horef/claude-plugins` (a local install wins over the synced copy) | `loop.py note` writes into the clone; agents edit skills in the clone, never in an installed copy |
 | Kiro, Copilot, Codex, other local agents | `loop.py link <the harness's skills folder>` symlinks every skill folder from the clone, so they read the genome live | They write to the files they read: the clone |
 
+**Closing the loop on a machine with a clone:** `loop.py sync` commits the observations agents wrote into the clone, pulls everyone else's (LEARNINGS files merge as a union, so machines never conflict) and pushes. To have Claude Code's session-start hook do it every time:
+
+```bash
+echo on > ~/.config/strange-loop/auto_sync
+```
+
+Sessions without the clone (claude.ai without the computer connected, cloud sessions on other repositories) end their reply with an "Observations for <name>" block; paste it into `loop.py absorb -` from any session that has the clone. Section 11 of the skill describes the whole round trip.
+
 Claude Code updates an installed plugin only when its `plugin.json` `version` changes (the docs do not say whether claude.ai's sync also needs that), which is one reason every change to a plugin bumps it (`loop.py bump`, enforced by `loop.py check --base`). Remove older copies of the same skills (folders in `~/.claude/skills/`, zips uploaded to claude.ai by hand) once the synced ones work, or agents see two versions and may load the stale one. `loop.py pack <name>` still builds an upload zip for a harness that cannot add a marketplace.
 
 ## Commands
@@ -101,6 +109,8 @@ python loop.py bump project-foundations minor "Templates move to templates/*.md"
 python loop.py check --base origin/main   # CI: manifests, versions, changelogs, learnings; changed plugins must bump
 python loop.py pack scientific-figures     # upload zip for claude.ai
 python loop.py link ~/.kiro/skills          # live symlinks for a local harness
+python loop.py sync                         # share this machine's observations, receive everyone else's
+python loop.py absorb reply.txt             # observations from a chat reply
 ```
 
 A lesson is **ripe** when it was seen twice, or is a `failure` or `misled`, or its unit has five open lessons. The thresholds are kernel settings in `loop.py`.

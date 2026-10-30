@@ -1,6 +1,6 @@
 {
   "name": "strange-loop",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Skills and tools that improve themselves from use: observations while working, evidence-gated reflection passes, evals, version history and a session-start digest of lessons waiting",
   "license": "MIT"
 }

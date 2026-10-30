@@ -5,7 +5,7 @@ Updated 2026-10-30. Snapshot only - overwrite each session; history is in `docs/
 | Capability | How verified |
 |---|---|
 | Marketplace with five plugins, all units adopted (LEARNINGS, CHANGELOG, evals) | `loop.py check --base origin/main` → 0 errors, 1 warning (project-foundations SKILL.md 505/500 lines), 2026-10-30 |
-| `loop.py` note/status/digest/check/eval/bump/absorb/pack/link | `loop.py eval strange-loop` → 10 unit tests OK, 2026-10-30 |
+| `loop.py` note/status/digest/check/eval/bump/absorb/pack/link/sync/hook | `loop.py eval strange-loop` → 12 unit tests OK (incl. two clones syncing through one remote), 2026-10-30 |
 | `docmap.py` from its new home | `loop.py eval project-foundations` → 8/8 OK, 2026-10-30 |
 | `sciencefig` in the skill: all 31 worked-example figures build, lint and render outside the Mac | `loop.py eval scientific-figures` → pass (31 figures, 0 problems, one render sheet), 2026-10-30; the examples' output is byte-identical to the scripts they came from |
 | docmap reading cost at scale | synthetic projects (15-400 decisions, 40-1500 modules): session start ~4k-12k tokens with `find`/`get` instead of 9k-66k; `loop.py eval project-foundations` 13/13, 2026-10-30 |
@@ -20,7 +20,7 @@ Updated 2026-10-30. Snapshot only - overwrite each session; history is in `docs/
 - Ripe now: scientific-figures O5 (eigen-directions in the saddle portrait, now `examples/saddle_portrait.py`, differ by hue only), seen by looking at the renders.
 
 ## Next actions
-1. Owner: add the marketplace in claude.ai with Sync automatically, then remove the hand-uploaded skills; install strange-loop locally in Claude Code; run `loop.py eval scientific-figures` on the Mac, then retire `~/Scripts/ScientificFigures`.
+1. Owner: on the Mac, `git pull` in the clone and `echo on > ~/.config/strange-loop/auto_sync` (D10); add the marketplace in claude.ai with Sync automatically, then remove the hand-uploaded skills; install strange-loop locally in Claude Code; run `loop.py eval scientific-figures` on the Mac, then retire `~/Scripts/ScientificFigures`.
 1a. Owner: save the figure profile to `~/.config/scientific-figures/profile.md` (sent in chat) and add one line to claude.ai's standing instructions so chats without Mac access know it (D9).
 2. Use the skills normally; real observations are what the loop needs.
 3. Reflection passes when units turn ripe: scientific-figures O5; project-foundations O3 (templates on demand, which also fixes the line budget).
