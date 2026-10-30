@@ -1,0 +1,31 @@
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  genome:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: strange-loop unit tests
+        run: python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop
+      - name: project-foundations evals (docmap on a fixture project)
+        run: python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval project-foundations
+      - name: genome check (changed plugins must bump their version)
+        run: |
+          base=origin/main
+          [ "${{ github.event_name }}" = pull_request ] && base="origin/${{ github.base_ref }}"
+          [ "${{ github.event_name }}" = push ] && base="${{ github.event.before }}"
+          if git cat-file -e "$base^{commit}" 2>/dev/null; then
+            python plugins/strange-loop/skills/strange-loop/scripts/loop.py check --base "$base"
+          else
+            python plugins/strange-loop/skills/strange-loop/scripts/loop.py check
+          fi
+      - name: docs check
+        run: python plugins/project-foundations/skills/project-foundations/scripts/docmap.py check

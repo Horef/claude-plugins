@@ -1,0 +1,8 @@
+# Configuration for project-foundations' docmap.py, run from the skill's own copy:
+#   python plugins/project-foundations/skills/project-foundations/scripts/docmap.py update | check
+# Skill internals (scripts/, evals/) are described by their SKILL.md and their file docstrings, so they need no README.
+readme_exempt = ["plugins", "plugins/*", "plugins/*/skills", "plugins/*/skills/*", "plugins/*/skills/*/scripts", "plugins/*/skills/*/evals",
+                 "plugins/*/hooks", "plugins/*/tests", "plugins/*/types"]
+docstring_exempt = ["plugins/model-router/*"]   # TS files without header comments; model-router O2
+lifecycle = ["docs/*.md"]
+portable_allow = ["/home/claude"]               # the claude.ai container's working folder, a fact about that harness

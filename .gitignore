@@ -2,3 +2,9 @@
 *.log
 .mcpb-cache/
 .claude-plugin/types/
+__pycache__/
+*.pyc
+*.local.md
+.env
+.env.*
+!.env.example
