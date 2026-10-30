@@ -58,16 +58,46 @@ _DEUTAN = "0.367322 0.860646 -0.227968 0 0  0.280085 0.672501 0.047413 0 0  -0.0
 _GRAY = "0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0 0 0 1 0"
 
 
+_RESOLVED = []
+
+
+def _node_playwright():
+    """Folder node itself resolves `playwright` to (NODE_PATH, global installs), or None. Cached."""
+    if not _RESOLVED:
+        found = None
+        if shutil.which("node"):
+            try:
+                r = subprocess.run(["node", "-e", "process.stdout.write(require.resolve('playwright/package.json'))"],
+                                   cwd=tempfile.gettempdir(), capture_output=True, text=True, timeout=20)
+                if r.returncode == 0 and r.stdout.strip():
+                    found = os.path.dirname(r.stdout.strip())
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        _RESOLVED.append(found)
+    return _RESOLVED[0]
+
+
 def _find_playwright():
-    for d in PLAYWRIGHT_DIRS:
+    """Folder of a Playwright node module: $SF_PLAYWRIGHT, then PLAYWRIGHT_DIRS, then node's own resolution."""
+    env = os.environ.get("SF_PLAYWRIGHT")
+    for d in ([env] if env else []) + PLAYWRIGHT_DIRS:
         if os.path.isdir(d):
             return d
-    raise RuntimeError("playwright module not found; see PLAYWRIGHT_DIRS in check.py")
+    found = _node_playwright()
+    if found:
+        return found
+    raise RuntimeError("playwright module not found; set SF_PLAYWRIGHT or see PLAYWRIGHT_DIRS in check.py")
 
 
 def playwright_ok():
     """True if node and a Playwright module are available (first choice)."""
-    return bool(shutil.which("node")) and any(os.path.isdir(d) for d in PLAYWRIGHT_DIRS)
+    if not shutil.which("node"):
+        return False
+    try:
+        _find_playwright()
+        return True
+    except RuntimeError:
+        return False
 
 
 def find_chrome():
