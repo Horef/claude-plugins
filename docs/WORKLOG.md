@@ -2,6 +2,18 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-30 - Owner questions: claude.ai sync, general vs personal, memory at scale
+Changed: (1) claude.ai can add this repo as a GitHub marketplace with Sync automatically (claude.com/docs/plugins), so the zip routine is gone from setup (strange-loop 0.5.0). (2) Plugins are labelled general or personal in the marketplace and README (D8). (3) project-foundations' memory measured on synthetic projects: lookups are cheap, but the template made agents read DECISIONS.md and MAP.md whole; docmap 5.2 adds `get`, `find`, `stats`, a reading budget in `check` and a folders-only map for big projects (project-foundations 5.2.0); strange-loop 0.6.0 adds "slow costs need sensors".
+
+| Verification command | Result |
+|---|---|
+| synthetic projects small/large/huge, token estimate of the session-start path | as instructed before: ~8.7k / 43k / 66k; with `find`/`get` and the folders-only map: ~4k / 8k / 12k |
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval project-foundations` | 13/13 OK |
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop` | 10 tests OK |
+| `claude plugin validate .` | passes (warnings: no author fields) |
+
+Next: owner adds the marketplace in claude.ai; decides on generalising the personal plugins.
+
 ## 2026-10-30 - Genome, not expressions: the figures library cleaned up
 Changed: the owner asked whether `lecture1.py` needed fixing and pointed out that some library files were outputs of tasks, not genome. Every file in `lib/` was sorted: `sciencefig/`, `assets/`, `morphologies/` and the docs are genome; `benchmark/before|after/`, the DEVONthink report builders and the per-round builders were task outputs and are removed (git history and the owner's Mac keep them); the 22 figure scripts were general content in task form and became `lib/examples/`, named after what they show, writing nothing, built by `examples/build_all.py` (scientific-figures 6.3.0). The C.render/topng folder fix of 6.2.2 is general and stays. strange-loop 0.4.0 adds the rule that caused the miss: adoption sorts genome from expressions (section 1, 8, 9) with a judged case. D7's "its benchmarks" now means `lib/examples/`.
 
