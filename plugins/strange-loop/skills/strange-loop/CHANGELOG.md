@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.10.0 (2026-10-30)
+- Section 1: artifacts remember their origin - every lasting artifact a skill installs into projects carries a provenance line and the note command, and tools compare their version with the genome; section 8 adds it to adoption. (O14)
+
 ## 0.9.0 (2026-10-30)
 - loop.py new adds a skill (or, with --mod, a hooks-only plugin) with every file the loop and checks expect, or adopts an existing folder with --from (copies it, adds the Learning loop section, lists files for the genome/expression sort); check now requires a general/personal category per marketplace entry, warns when a Learning loop section lacks the note command and when TODO(new) placeholders remain; section 8 rewritten around new, with skill-creator for content; a test keeps the SKILL.md template identical to what new writes. 16 unit tests. (O13)
 

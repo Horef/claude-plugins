@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.3.0 (2026-10-30)
+- Artifacts remember their origin: the AGENTS.md template names the scaffolding's source under the title and has a maintenance row that sends lessons about the scaffolding to this skill with the note command; docmap.py check warns when the person's genome clone has a newer docmap (DOCMAP_VERSION 5.3.0); Upgrade 6b brings older projects along. New eval check. (O8)
+
 ## 5.2.1 (2026-10-30)
 - Learning loop: record lessons with the note command (routes to the genome clone) instead of editing LEARNINGS.md in a possibly installed copy, where notes are lost on update; found by the pre-launch end-to-end run.
 
