@@ -139,7 +139,7 @@ Fill templates with real, specific facts; delete sections that don't apply; no `
 # <Project name> - agent instructions
 
 <One or two sentences: what this project is.> It is **not** <the main non-goal>.
-Goal, scope and open questions: `docs/BRIEF.md`.
+Goal, scope and open questions: `docs/BRIEF.md`. Scaffolding: the project-foundations skill (version in `tools/docmap.py`, `DOCMAP_VERSION`).
 
 ## Start of every session
 1. `git status` (and `git pull --rebase` if there is a remote). Do not commit, discard or overwrite changes you did not make; ask.
@@ -186,7 +186,7 @@ Update in the same commit as the change that requires it:
 | write or substantially revise a doc in `docs/` | its Status line: `current (verified <today>)`, `proposal (<today>)`, `superseded by <id>` or `historical`; a decided proposal is superseded by its D entry |
 | change a default, preset or key number | its source (config/code); `docmap.py update` regenerates `docs/FACTS.md`. Docs cite FACTS.md rather than copying the value |
 | supersede a decision | the old entry's heading says `superseded by D<n>`; fix the live docs that `check` then lists |
-| notice a problem in a skill or tool you used, not in this project (a wrong step, a missing command, a workaround) | nothing here: record it where that skill's own Learning loop section says, so every project that uses it benefits |
+| find that this scaffolding itself (a template rule, the docs layout, a `docmap.py` check or command) misleads you, is missing something or costs too much | nothing here: send it to the skill that installed it, `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note project-foundations <kind> "<what happened, what would have helped>" --context <this project>` (if that fails, an `Observations for project-foundations` block in your reply); lessons about other skills go to that skill the same way |
 | reach a milestone (a result merged, a phase closed) | a docs audit: `python tools/docmap.py docs`, re-read the oldest or affected docs against code, DECISIONS and RESULTS, fix them and re-date their Status lines |
 
 - Before every commit: `python tools/docmap.py update`, then `python tools/docmap.py check` (CI runs it too). When `check` warns about old WORKLOG months, run `python tools/docmap.py rotate`.
@@ -449,7 +449,7 @@ reason = "core runs without heavy backends"
 4. Split a very long design document into per-component files if agents keep reading all of it; keep `ARCHITECTURE.md` short.
 5. `rotate` the WORKLOG; set up `[tool.docmap.runs]` for research repos and run `runs`.
 6. Add `python tools/docmap.py check` to CI; update the Copilot shim's fallback rules.
-6b. Coming from an older `tools/docmap.py` (compare `DOCMAP_VERSION`): replace the script, then bring AGENTS.md's session-start and finding-your-way lines up to the template (since 5.2: `find` and `get D<n>` instead of reading DECISIONS whole), run `update`, and `stats` to see what a session now reads.
+6b. Coming from an older `tools/docmap.py` (compare `DOCMAP_VERSION`): replace the script, then bring AGENTS.md's session-start and finding-your-way lines up to the template (since 5.2: `find` and `get D<n>` instead of reading DECISIONS whole; since 5.3: the Scaffolding line under the title and the maintenance row that sends lessons about the scaffolding to the skill), run `update`, and `stats` to see what a session now reads.
 6a. Doc lifecycle: give every doc in `docs/` a Status line (read it against the code, DECISIONS and RESULTS first: current, proposal, superseded or historical; move fully historical docs to `docs/archive/`). Mark superseded decisions in their headings. Configure `[tool.docmap.facts]` with the values docs keep repeating (defaults, presets, counts) and replace copied values with a reference to `docs/FACTS.md`. Keep `lifecycle_strict = false` until every doc has a Status line, then switch it on.
 7. Fix what `check` finds in old docs (broken links: fix the link or exempt truly historical folders via `link_exempt`; never delete history to silence a check).
 8. WORKLOG entry with the before/after `check` summary; commit; push.

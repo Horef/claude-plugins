@@ -6,6 +6,7 @@ finds definitions and importers. Run: python evals/run.py (from the skill folder
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,22 @@ def main() -> int:
         expect("folders only" in m and "m17.py" not in m, "MAP lists folders only above map_files_max")
         p = docmap(root, "check")
         expect("AGENTS.md: about" in p.stdout and "read_max_tokens" in p.stdout, "check warns when a file read whole is over budget", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # an older project copy warns when the person's skill clone is newer
+        root, home = Path(tmp) / "proj", Path(tmp) / "home"
+        genome = home / "skills"
+        newer = genome / "plugins/project-foundations/skills/project-foundations/scripts"
+        newer.mkdir(parents=True)
+        (newer / "docmap.py").write_text('DOCMAP_VERSION = "99.0.0"\n', encoding="utf-8")
+        (home / ".config/strange-loop").mkdir(parents=True)
+        (home / ".config/strange-loop/genome").write_text(str(genome), encoding="utf-8")
+        (root / "tools").mkdir(parents=True)
+        (root / "tools/docmap.py").write_text(DOCMAP.read_text(encoding="utf-8"), encoding="utf-8")
+        (root / "AGENTS.md").write_text("# P\n\nA project.\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        env = dict(os.environ, HOME=str(home)); env.pop("CI", None)
+        p = subprocess.run([sys.executable, "tools/docmap.py", "check"], cwd=root, capture_output=True, text=True, env=env)
+        expect("the project-foundations skill has 99.0.0" in p.stdout, "check points an older project at the newer skill", p)
 
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
