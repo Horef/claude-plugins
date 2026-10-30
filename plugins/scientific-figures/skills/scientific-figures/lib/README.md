@@ -1,10 +1,10 @@
 # ScientificFigures – `sciencefig`
 
-Python toolkit for the **scientific-figures** skill. It draws figures for Sergiy's study notes (DEVONthink Markdown, inline SVG), so that every figure:
+Python toolkit for the **scientific-figures** skill. It draws figures for study notes, papers and slides (Markdown notes with inline SVG, including DEVONthink; standalone SVG, PNG and PDF), so that every figure:
 
 - shares one house style (`style.py`),
 - is **checked before anyone looks at it** (every label is measured, so collisions and cut-off text are found automatically),
-- comes out as one-line, inline-safe SVG that DEVONthink renders,
+- comes out as one-line, inline-safe SVG that Markdown viewers (DEVONthink included) render, or as files for a journal,
 - and is then rendered to PNG (normal, grayscale, colour-blind) and looked at.
 
 ## Setup

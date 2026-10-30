@@ -1,4 +1,4 @@
-"""House style for Sergiy's study-note figures.
+"""House style for scientific figures in study notes, papers and slides.
 
 One place for every visual decision, so all figures (hand SVG, matplotlib,
 Graphviz) share one visual language (Wilke ch. 21, "consistent visual language").
@@ -10,9 +10,9 @@ built-in dataviz skill (palette validation).
 """
 
 # ---------------------------------------------------------------- fonts
-# DEVONthink renders with the Mac's Helvetica. In the cloud workspace
-# "Helvetica" resolves to TeX Gyre Heros (same metrics), so measured text
-# widths match what Sergiy sees.
+# Macs render Helvetica. In a Linux workspace "Helvetica" resolves to TeX
+# Gyre Heros (same metrics) where installed, so measured text widths match
+# what a reader on a Mac sees.
 FONT_STACK = "Helvetica, Arial, sans-serif"
 FONT_MEASURE = ["Helvetica", "Helvetica Neue", "TeX Gyre Heros", "Arial",
                 "Liberation Sans", "DejaVu Sans"]
