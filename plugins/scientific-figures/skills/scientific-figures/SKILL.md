@@ -234,3 +234,10 @@ Worked examples to copy from:
 - `benchmark/round2/`: `neuron_labeled` (anatomy with callouts), `cortical_layers` (layered circuit with pathways), `hebbian_net` (network + typeset equations), `fi_curve` (simulated traces + f–I curve), `autoencoder` (architecture), `activation_surfaces` (3D loss landscapes), `t1_saddle`, `t1_tracedet`, `t1_ei_spiral`, `l2_fixedpoints` (dynamics), `t1_diagonalise` (commutative diagram). `build_all.py` lints and builds them all.
 - `benchmark/round3/`: `brain_areas` (asset + overlays), `eye`, `retina`, `cochlea` (anatomy components); `neuron_styles`, `neuron_illustrated`, `cortical_column` are the real-reconstruction examples (on request only).
 - `benchmark/round4/l3_mutual_inhibition.py`: `Dy.portrait` small multiples across a parameter, curved separatrices with unequal inputs, a pitchfork from `Dy.bifurcation_branches`, eigen-directions of a linearised flow.
+## Learning loop
+
+This skill and the `sciencefig` library improve themselves from use (strange-loop). When a step here misleads you, the library lacks a helper you had to hand-write, the linter misses something you only saw on the render, or a rule clearly paid off, add one line to `LEARNINGS.md` next to this file:
+
+`- O<n> <YYYY-MM-DD> [failure|friction|misled|missing|workaround|win|wish] <section>: <what happened, what would have helped> (<harness>, <note or figure>)`
+
+If this copy is read-only (an uploaded skill, an installed plugin), run `loop.py note scientific-figures <kind> "<text>"` from the strange-loop skill, or list the lines at the end of your reply under "Observations for scientific-figures". A figure you had to fix by hand is the best evidence there is: say what the linter should have caught. Library fixes you verified (a helper that now renders correctly) are committed as in step 0.3 and noted here as `win` or `workaround`; changes to the rules above wait for a reflection pass, which checks them against `evals/` (the benchmark scripts are the scripted part).
