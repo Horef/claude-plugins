@@ -10,5 +10,6 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 - O3 2026-10-30 [missing] §6 forgetting: `win` observations are per unit, not tied to the rule they protect, so pruning can't tell which rules earned their place; ACE/ExpeL use per-item helpful/harmful counters - consider rule ids or section anchors in wins (claude-code-web, building 0.1.0)
 - O4 2026-10-30 [wish] §5: an adapter that turns `evals/cases.md` into `claude plugin eval` cases would give Claude Code users the with/without-plugin comparison for free; not built because the layout was read from docs, not tried (claude-code-web, building 0.1.0)
 - O5 2026-10-30 [wish] §2: the seed observations in the other units came from reading, not use; the first real reflection should check how many of them use confirms, which measures how good "reading" evidence is (claude-code-web, building 0.1.0)
+- O6 2026-10-30 [friction] §2 / loop.py digest: seed observations from adoption or reading count toward RIPE_OPEN, so a freshly adopted unit with 5 seeds shows in every session digest although none is confirmed by use; proposal for the owner (kernel): count only observations seen in use, e.g. exclude lines marked 'from reading', or require one ripe item (claude-code-web, first digest run)
 
 ## Resolved
