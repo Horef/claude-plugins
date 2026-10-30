@@ -316,7 +316,10 @@ def cmd_status(args):
 
 def cmd_digest(args):
     try:
-        g, _ = find_genome(args.genome)
+        g, why = find_genome(args.genome)
+        cfg = CONFIG / "genome"
+        if cfg.is_file() and why == str(cfg) and not (g / ".claude-plugin" / "marketplace.json").is_file():
+            print(f"strange-loop: {cfg} points to {g}, which is not a clone of the genome; notes queue in {INBOX} until it does.")
         out = []
         if g and g.is_dir():
             for name, d in units(g).items():
@@ -625,6 +628,12 @@ def cmd_sync(args) -> int:
                 *[str(d / "LEARNINGS.md") for d in units(g).values() if (d / "LEARNINGS.md").exists()])
         say(f"renumbered duplicate ids: {', '.join(renamed)}")
     ahead = run_git(g, "rev-list", "--count", "@{u}..HEAD").stdout.strip()
+    unit_work = [f for f in run_git(g, "log", "@{u}..HEAD", "--name-only", "--format=").stdout.split()
+                 if not f.endswith("LEARNINGS.md")]
+    if ahead not in ("", "0") and unit_work and not args.no_push:
+        say(f"not pushed: local commits change {len(set(unit_work))} file(s) besides observations; "
+            "push them yourself once `loop.py check` and the evals pass (AGENTS.md, D10)")
+        return 0
     if ahead not in ("", "0") and not args.no_push:
         push = run_git(g, "push", "-q", timeout=net)
         say("pushed" if push.returncode == 0 else "push failed: " + push.stderr.strip()[-300:])
@@ -645,7 +654,10 @@ def cmd_hook(args):
         if flag.is_file() and flag.read_text(encoding="utf-8").strip().lower() in ("on", "yes", "true", "1"):
             g, _ = find_genome(args.genome)
             if g and (g / ".git").exists():
+                before = run_git(g, "rev-parse", "HEAD").stdout.strip()
                 cmd_sync(argparse_ns(genome=args.genome, no_push=False, quiet=True))
+                if run_git(g, "rev-parse", "HEAD").stdout.strip() != before:
+                    print(f"strange-loop: synced the genome ({g}): this machine's observations shared, others' changes pulled.")
     except Exception:
         pass
     cmd_digest(args)
