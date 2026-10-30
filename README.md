@@ -11,12 +11,12 @@ This repository is also the **genome** of the skills: their source copy, which t
 | [strange-loop](plugins/strange-loop) | Makes skills and tools improve themselves from use: one-line observations while working, evidence-gated reflection passes, evals, versions, and a session-start digest of lessons waiting. |
 | [project-foundations](plugins/project-foundations) | Sets up, retrofits, upgrades or audits a repo so agents and humans can maintain and share it: AGENTS.md, a git-ignored AGENTS.local.md, status, decisions, layered docs, a generated map and `docmap.py` checks. |
 | [model-router](plugins/model-router) | Plans multi-step tasks, routes each step to a model tier (Haiku / Sonnet / Opus), asks you to approve the plan, shows cost and savings, reruns weak steps one rung up and learns better tier defaults from history. |
+| [scientific-figures](plugins/scientific-figures) | Draws scientific figures for study notes, papers and slides (circuits, anatomy, data plots, flows, phase portraits, 3D surfaces) with a lint-render-look loop; includes its `sciencefig` library. Your audience, output targets (e.g. DEVONthink notes) and preferences go in a personal profile. |
 
-**Personal**: written for one person's setup (DEVONthink, Anki, a house style for study notes, particular courses). Shared as working examples; their methods transfer, their specifics need adapting.
+**Personal**: written for one person's setup (DEVONthink, Anki, particular courses). Shared as working examples; their methods transfer, their specifics need adapting.
 
 | Plugin | What it does |
 | --- | --- |
-| [scientific-figures](plugins/scientific-figures) | Draws figures for study notes and papers (circuits, anatomy, data plots, flows, phase portraits, 3D surfaces) with a lint-render-look loop and DEVONthink-safe SVG. Includes its `sciencefig` library. |
 | [course-lecture-notes](plugins/course-lecture-notes) | Turns a lecture or tutorial (slides in DEVONthink) into complete, self-contained, Anki-ready teaching notes with figures; written for one person's courses and setup. |
 
 ## Install

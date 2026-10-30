@@ -2,6 +2,17 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-30 - scientific-figures generalised (D9); CI history explained
+Changed: PR #3 merged. scientific-figures 7.0.0: general description, audience and defaults; personal choices in a figure profile (`~/.config/scientific-figures/profile.md`, template in the skill); DEVONthink and Anki rules in `references/devonthink.md`; library docstrings made general; two new judged cases. course-lecture-notes 1.2.0 loads that reference directly. Marketplace and README list scientific-figures as general. The red CI run the owner saw is run #1 (commit 5aa9f0a, before the 6.2.2 fix); runs #2-#7 passed.
+
+| Verification command | Result |
+|---|---|
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval scientific-figures` | pass: 31 figures, 0 problems, render sheet |
+| GitHub Actions runs list (public API) | run 1 failure (5aa9f0a); runs 2-7 success |
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py check --base origin/main` | 0 errors |
+
+Next: owner saves the profile; marketplace sync in claude.ai.
+
 ## 2026-10-30 - Owner questions: claude.ai sync, general vs personal, memory at scale
 Changed: (1) claude.ai can add this repo as a GitHub marketplace with Sync automatically (claude.com/docs/plugins), so the zip routine is gone from setup (strange-loop 0.5.0). (2) Plugins are labelled general or personal in the marketplace and README (D8). (3) project-foundations' memory measured on synthetic projects: lookups are cheap, but the template made agents read DECISIONS.md and MAP.md whole; docmap 5.2 adds `get`, `find`, `stats`, a reading budget in `check` and a folders-only map for big projects (project-foundations 5.2.0); strange-loop 0.6.0 adds "slow costs need sensors".
 
