@@ -29,6 +29,8 @@ Every layer has the same shape: an instruction surface, a `LEARNINGS.md` for obs
 | Project | `AGENTS.md`, `docs/` (project-foundations) | this repository's facts and rules |
 | Folder | `README.md` or nested `AGENTS.md` | one part of a project |
 
+**Things made *with* a skill are not the skill.** A figure drawn for one note, a report about one run, a script written for one course is an expression of the skill and belongs to the project that asked for it; only what generalises (rules, tools, reusable material, curated examples) belongs to the skill.
+
 **Lessons flow up when they generalise and down when they specialise.** A project lesson that recurs in a second project is really a skill lesson: move it up. A skill rule that only ever matters to one project belongs in that project's `AGENTS.md`: move it down. A preference the person stated is a person-layer fact, not a skill rule, unless the skill is personal on purpose. Never put machine facts (paths, interpreters) above the project layer's `AGENTS.local.md`.
 
 ## 2. Notice: recording observations
@@ -138,6 +140,7 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 ## 8. Adopting a skill or mod into the loop
 
 1. Put it in the genome: `plugins/<name>/.claude-plugin/plugin.json` (name, version, description), the skill in `plugins/<name>/skills/<name>/SKILL.md`, and a line in `.claude-plugin/marketplace.json`.
+   **Take only the genome, not its expressions.** Before copying a folder in, sort every file: the instructions, tools and libraries, reusable material (with licences) and worked examples that are general come in; outputs of tasks done with the skill stay out - work made for a particular project, before/after renders, reports about past runs, scripts named or framed after one course or client, anything that writes to a task's output location. A task output that shows something no example covers is distilled into a general example named after what it shows, and verified to produce the same result.
 2. Add `LEARNINGS.md` (`loop.py note` creates it from the template), `CHANGELOG.md` whose newest `## X.Y.Z (date)` matches `plugin.json`, and `evals/` with at least one case.
 3. Add a `## Learning loop` section to the skill (template below), adapted to where its users can write.
 4. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
@@ -159,7 +162,7 @@ When the same weakness shows up across tasks (figures that look bad, a format th
 1. **Ask the agent that struggles what it lacks.** Its answer is a list of `missing` and `wish` observations: references to read, a way to see its output, a library of parts, a check.
 2. **Get sources, distil them** into a short rule list with citations (books, papers, house style).
 3. **Close the perception loop first.** An agent working blind needs a way to look at its result: render, run, lint, test. A loop with no perception cannot improve.
-4. **Build the library from the worked examples**, not upfront: every helper exists because a figure needed it, and the examples become the benchmark (evals).
+4. **Build the library from the worked examples**, not upfront: every helper exists because a figure needed it, and the examples become the evals - once generalised: named after what they show, free of the task's paths and framing (section 8).
 5. **Write the skill last**, as the index to the tools: when to use which, and the checklist.
 6. Adopt it into the loop (section 8).
 
