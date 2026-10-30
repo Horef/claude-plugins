@@ -85,11 +85,11 @@ mkdir -p ~/.config/strange-loop && echo ~/code/claude-plugins > ~/.config/strang
 
 | Harness | How it gets the skills | How lessons get back |
 |---|---|---|
-| Claude Code | `/plugin install <name> --marketplace Horef/claude-plugins` for each plugin (strange-loop brings the session-start digest). After a new version is pushed: `/plugin marketplace update`, then `/plugin update` | `loop.py note` writes into the clone; agents edit skills in the clone, never in the installed copy |
+| claude.ai (web, desktop, mobile) and Cowork | Once: Customize → Plugins → Add → Add marketplace → `Horef/claude-plugins`, install the plugins, and turn on **Sync automatically**. Every version pushed to `main` then arrives by itself. Plugin skills appear under Customize → Skills, labelled with the plugin | With the Mac connected, the agent edits `LEARNINGS.md` in the clone (its path is in `~/.config/strange-loop/genome`); otherwise it lists "Observations for <name>" at the end of its reply |
+| Claude Code (terminal, desktop, cloud sessions) | Skills enabled in claude.ai sync into Claude Code by themselves (as `anthropic-skills:<name>` or the plugin's synced copy). For strange-loop's session-start digest hook, also install it locally: `/plugin install strange-loop --marketplace Horef/claude-plugins` (a local install wins over the synced copy) | `loop.py note` writes into the clone; agents edit skills in the clone, never in an installed copy |
 | Kiro, Copilot, Codex, other local agents | `loop.py link <the harness's skills folder>` symlinks every skill folder from the clone, so they read the genome live | They write to the files they read: the clone |
-| claude.ai | `loop.py pack <name>` writes `dist/<name>-<version>.zip`; upload it in Settings → Capabilities → Skills, replacing the old one, after every version | With the Mac connected, the agent edits `LEARNINGS.md` in the clone (its path is in `~/.config/strange-loop/genome`); otherwise it lists "Observations for <name>" at the end of its reply |
 
-Remove older copies of the same skills first (folders in `~/.claude/skills/`, earlier uploads in claude.ai), or agents will see two versions of each and may load the stale one.
+Claude Code updates an installed plugin only when its `plugin.json` `version` changes (the docs do not say whether claude.ai's sync also needs that), which is one reason every change to a plugin bumps it (`loop.py bump`, enforced by `loop.py check --base`). Remove older copies of the same skills (folders in `~/.claude/skills/`, zips uploaded to claude.ai by hand) once the synced ones work, or agents see two versions and may load the stale one. `loop.py pack <name>` still builds an upload zip for a harness that cannot add a marketplace.
 
 ## Commands
 

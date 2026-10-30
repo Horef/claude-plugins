@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.5.0 (2026-10-30)
+- Setup: claude.ai and Cowork add the genome as a GitHub marketplace with Sync automatically (documented in claude.com/docs/plugins), and Claude Code receives the synced skills, so hand-uploaded zips are no longer needed; strange-loop is still installed locally for its hook. Section 8 step 6: distribution follows the plugin.json version; pack remains for upload-only harnesses. (O9)
+
 ## 0.4.0 (2026-10-30)
 - Adoption takes the genome, not its expressions: section 1 says things made with a skill belong to the project that asked for them; section 8 step 1 sorts every file before copying it in and distils task outputs into general examples; section 9 says examples become evals only once generalised. New judged case from this failure. (O8)
 

@@ -145,7 +145,7 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 3. Add a `## Learning loop` section to the skill (template below), adapted to where its users can write.
 4. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
 5. `loop.py check`.
-6. For harnesses that take uploads (claude.ai), `loop.py pack <name>` writes `dist/<name>-<version>.zip`; re-upload it after every version, so the uploaded copy never drifts from the genome.
+6. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
 Template for the skill's own section:
 

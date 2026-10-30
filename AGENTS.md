@@ -7,7 +7,7 @@ Design and rationale: `plugins/strange-loop/README.md`; research behind it: `doc
 1. `git status` (and `git pull --rebase` if there is a remote). Do not commit, discard or overwrite changes you did not make; ask.
 2. Read `docs/STATUS.md`; skim the latest entry in `docs/WORKLOG.md`.
 3. `python plugins/strange-loop/skills/strange-loop/scripts/loop.py status`: units and the lessons waiting in them.
-4. Before changing behaviour covered by a decision, read it in `docs/DECISIONS.md` (index at the top).
+4. Before changing behaviour covered by a decision: `python plugins/project-foundations/skills/project-foundations/scripts/docmap.py find <topic>`, then `... get D<n>`; never read `docs/DECISIONS.md` whole.
 
 ## Finding your way
 - Each plugin is `plugins/<name>/` with `.claude-plugin/plugin.json` (name, version, description); skills are `plugins/<name>/skills/<name>/SKILL.md`; the listing is `.claude-plugin/marketplace.json`.
