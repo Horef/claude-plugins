@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.4.0 (2026-10-30)
+- Adoption takes the genome, not its expressions: section 1 says things made with a skill belong to the project that asked for them; section 8 step 1 sorts every file before copying it in and distils task outputs into general examples; section 9 says examples become evals only once generalised. New judged case from this failure. (O8)
+
 ## 0.3.0 (2026-10-30)
 - loop.py link symlinks the genome's skill folders into a local harness's skills folder (live, edits land in the genome; real folders are left alone); README setup is now a per-harness table (Claude Code plugins, local agents via link, claude.ai via pack). 10 unit tests.
 

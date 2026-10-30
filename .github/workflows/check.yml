@@ -17,7 +17,7 @@ jobs:
         run: python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop
       - name: project-foundations evals (docmap on a fixture project)
         run: python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval project-foundations
-      - name: scientific-figures evals (build, lint and render every benchmark figure)
+      - name: scientific-figures evals (build, lint and render every worked example)
         run: |
           sudo apt-get install -y -q graphviz >/dev/null
           python -m pip install -q matplotlib numpy scipy pillow morphio

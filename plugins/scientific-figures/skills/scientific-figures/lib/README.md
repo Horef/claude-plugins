@@ -17,7 +17,7 @@ import sciencefig
 ```
 Requires matplotlib, numpy, scipy and Pillow; MorphIO for real neurons (`pip install morphio`); Graphviz `dot` for `flow.graphviz`; for `check.render` and `topng`, Playwright + Chromium that node can load (`$SF_PLAYWRIGHT`, known folders, or node's own resolution) or a Chrome/Chromium/Edge binary (`$SF_CHROME`). Licences of the reused drawings and reconstructions: `LICENSES.md`.
 
-Change the library only in a clone of the genome, then run `python ../evals/run.py` (builds, lints and renders every benchmark figure in a temporary copy) and record the version with strange-loop.
+Change the library only in a clone of the genome, then run `python ../evals/run.py` (builds, lints and renders every worked example) and record the version with strange-loop.
 
 ## Modules
 
@@ -51,13 +51,11 @@ C.render([svg], "/home/claude/work/check.png", cvd=True)   # 3 render
 md = D.md_figure(svg, "Caption ...")              # 5 into the note
 ```
 
-## Benchmark
+## Examples
 
-`benchmark/` contains the Lecture 1 redraws and Kandel Fig. 17‑11 (A+B, C) – each script is a worked example of the library. `benchmark/before/` holds the old PNGs; `build_comparison.py` writes the before/after note.
+`examples/` holds general worked examples, one figure type each (circuits, data and model plots, dynamics, networks, anatomy, real reconstructions); the scientific-figures SKILL.md lists them by kind. Each module exposes `draw()` (one figure) or `build()` (several, as `{name: (svg, problems)}`) and writes nothing. `python examples/build_all.py [names] [--out DIR] [--render sheet.png]` builds and lints them all; it is also the skill's scripted eval.
 
-`benchmark/round2/` holds the hard round: six figures from the svg-images-test collection and five from the 769001 study guides (`before/` = the old SVGs, `after/` = new). `build_all.py` builds and lints all of them; `build_comparison2.py` writes the round-2 note.
-
-`benchmark/round3/` holds the third round: real-morphology neurons (styles, an illustrated cell, a cortical column at true scale) and anatomy (brain areas on a restyled Servier drawing, eye, retina, cochlea). `build_all.py` builds them; `build_note.py` writes the note.
+A figure drawn for a particular note belongs to that note's project, not here. Add an example only when it shows a figure type or library feature the others don't, and name it after what it shows.
 
 ## Data folders
 
@@ -74,11 +72,11 @@ Kept for future projects (e.g. drawing the morphology of a NEURON model in a pap
 - Conventions: dendrites gray or ink; axons blue (excitatory) or vermilion (inhibitory).
 - Sample cells: `morphologies/swc/` (11 types, sources in its README). Most are Blue Brain Project files under CC BY-NC-SA: fine for notes; for a paper use the NeuroMorpho.Org (CC BY) version and cite the original study.
 - Known limitation: where a real dendrite runs along the axon, the axon can be partly hidden even though it is drawn on top.
-- Examples: `benchmark/round3/neuron_styles.py`, `neuron_illustrated.py`, `cortical_column.py`.
+- Examples: `examples/neuron_styles.py`, `neuron_illustrated.py`, `cortical_column.py`.
 
-`benchmark/round4/l3_mutual_inhibition.py` (769001 Lecture 3) shows the round-4 dynamics helpers: `Dy.portrait` for three regimes as small multiples, curved separatrices with unequal inputs, a pitchfork diagram from `Dy.bifurcation_branches`, and eigen-directions clipped to the axes. Run it with a PNG path to render the sheet.
+`examples/mutual_inhibition.py` shows the dynamics helpers: `Dy.portrait` for three regimes as small multiples, curved separatrices with unequal inputs, a pitchfork diagram from `Dy.bifurcation_branches`, and eigen-directions clipped to the axes.
 
-## Changes in round 4 (October 2026)
+## Dynamics helpers and lint fixes (October 2026)
 
 - `P.finish(fig)` returns `(svg, problems)` in the right order; `P.lint` raises a clear error when called on an exported figure.
 - `P.lint` also reports scatter markers under text.

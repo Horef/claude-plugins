@@ -45,6 +45,15 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - Records an observation in strange-loop's own LEARNINGS.md.
 **Origin:** section 3 change classes; Nomic's immutable rules.
 
+## Adopts the genome, not the expressions
+**Task:** Adopt a skill whose library folder also contains `benchmark/before/` (old renders of figures from the owner's lecture notes), `build_comparison.py` (writes a report into DEVONthink), and `lecture1.py` (draws the seven figures of one course lecture and renders them to a fixed path).
+**Good looks like:**
+- Sorts every file into genome or expression before copying, and says which is which.
+- Leaves the renders and report builders out (they stay in the owner's folder and history).
+- Keeps the general content of task-shaped scripts only as examples named after what they show, without output paths, and verifies they still produce the same figures.
+- Asks the owner when a file's status is unclear, instead of guessing.
+**Origin:** the owner's review of scientific-figures 6.2.2 (strange-loop O8).
+
 ## Trigger: should fire
 **Task:** (each separately) "This skill keeps telling me to use a flag that doesn't exist, can you fix it so it doesn't happen again?" / "Reflect on the lessons waiting in scientific-figures." / "Turn this helper library into a skill other agents can improve."
 **Good looks like:** the strange-loop skill is loaded.
