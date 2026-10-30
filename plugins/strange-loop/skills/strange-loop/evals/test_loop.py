@@ -135,6 +135,17 @@ class LoopTest(unittest.TestCase):
         self.assertIn("demo/SKILL.md", names)
         self.assertIn("demo/LEARNINGS.md", names)
 
+    def test_link_symlinks_skills_and_spares_real_folders(self):
+        target = Path(self.tmp.name) / "skills"
+        (target / "other").mkdir(parents=True)
+        code, out = run("--genome", str(self.g), "link", str(target))
+        self.assertTrue((target / "demo").is_symlink())
+        self.assertEqual((target / "demo" / "SKILL.md").read_text(), SKILL)
+        self.assertIn("linked", out)
+        self.assertIn("ok", run("--genome", str(self.g), "link", str(target))[1])
+        (target / "demo").unlink(); (target / "demo").mkdir()
+        self.assertIn("skipped", run("--genome", str(self.g), "link", str(target))[1])
+
     def test_inbox_when_no_genome_then_absorb(self):
         os.environ.pop("STRANGE_LOOP_GENOME", None)
         cwd, real_file = os.getcwd(), loop.__file__

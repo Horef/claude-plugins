@@ -71,25 +71,25 @@ Every unit in the genome (each skill folder, or a mod's plugin root) has the sam
 
 ## Setup
 
-1. Install from the marketplace (Claude Code):
+Once per machine: keep a writable clone of this repository (the *genome*) and tell the loop where it is.
 
-   ```
-   /plugin install strange-loop --marketplace Horef/claude-plugins
-   ```
+```bash
+git clone git@github.com:Horef/claude-plugins.git ~/code/claude-plugins
+```
 
-2. Tell the loop where your writable clone of this repository (the *genome*) lives, once per machine:
+```bash
+mkdir -p ~/.config/strange-loop && echo ~/code/claude-plugins > ~/.config/strange-loop/genome
+```
 
-   ```bash
-   git clone git@github.com:Horef/claude-plugins.git ~/Scripts/claude-plugins
-   ```
+(Or set `STRANGE_LOOP_GENOME`.) Without a genome, observations queue in `~/.config/strange-loop/inbox.md` and `loop.py absorb` moves them in later. Agents working inside the clone need no setup. Then give each harness the skills; `loop.py` below means `python <clone>/plugins/strange-loop/skills/strange-loop/scripts/loop.py`.
 
-   ```bash
-   mkdir -p ~/.config/strange-loop && echo ~/Scripts/claude-plugins > ~/.config/strange-loop/genome
-   ```
+| Harness | How it gets the skills | How lessons get back |
+|---|---|---|
+| Claude Code | `/plugin install <name> --marketplace Horef/claude-plugins` for each plugin (strange-loop brings the session-start digest). After a new version is pushed: `/plugin marketplace update`, then `/plugin update` | `loop.py note` writes into the clone; agents edit skills in the clone, never in the installed copy |
+| Kiro, Copilot, Codex, other local agents | `loop.py link <the harness's skills folder>` symlinks every skill folder from the clone, so they read the genome live | They write to the files they read: the clone |
+| claude.ai | `loop.py pack <name>` writes `dist/<name>-<version>.zip`; upload it in Settings → Capabilities → Skills, replacing the old one, after every version | With the Mac connected, the agent edits `LEARNINGS.md` in the clone (its path is in `~/.config/strange-loop/genome`); otherwise it lists "Observations for <name>" at the end of its reply |
 
-   Or set `STRANGE_LOOP_GENOME`. Without a genome, observations queue in `~/.config/strange-loop/inbox.md`, and `loop.py absorb` moves them in later. Agents working inside the genome checkout itself need no setup.
-
-3. Other harnesses (claude.ai skills, Kiro, Copilot, Codex): upload or link the skill folders as usual. The protocol is plain Markdown. Without a shell, agents append observation lines directly or list them at the end of their reply under "Observations for <unit>".
+Remove older copies of the same skills first (folders in `~/.claude/skills/`, earlier uploads in claude.ai), or agents will see two versions of each and may load the stale one.
 
 ## Commands
 
@@ -99,6 +99,8 @@ python loop.py note scientific-figures friction "§5: lint missed a label under 
 python loop.py eval project-foundations
 python loop.py bump project-foundations minor "Templates move to templates/*.md" --obs O3
 python loop.py check --base origin/main   # CI: manifests, versions, changelogs, learnings; changed plugins must bump
+python loop.py pack scientific-figures     # upload zip for claude.ai
+python loop.py link ~/.kiro/skills          # live symlinks for a local harness
 ```
 
 A lesson is **ripe** when it was seen twice, or is a `failure` or `misled`, or its unit has five open lessons. The thresholds are kernel settings in `loop.py`.

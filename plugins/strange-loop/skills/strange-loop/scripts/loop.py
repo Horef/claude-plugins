@@ -19,6 +19,7 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
                                              (`--obs last` = the newest open one)
   python loop.py absorb                      move inbox lines into the genome's LEARNINGS files
   python loop.py pack UNIT [--out DIR]       zip a skill folder for upload (claude.ai), as dist/<unit>-<version>.zip
+  python loop.py link TARGET [--only A,B]    symlink the genome's skill folders into a harness's skills folder
 
 Genome resolution, first hit wins: --genome PATH, $STRANGE_LOOP_GENOME, the path in ~/.config/strange-loop/genome,
 the nearest folder above the current directory (then above this script) with .claude-plugin/marketplace.json.
@@ -491,6 +492,27 @@ def cmd_pack(args):
     print(f"{target} ({n} files, {target.stat().st_size / 1e6:.1f} MB)")
 
 
+def cmd_link(args):
+    """Symlink every skill folder of the genome into TARGET (a harness's skills folder), so it reads the genome live."""
+    g = need_genome(args)
+    target = Path(args.target).expanduser()
+    target.mkdir(parents=True, exist_ok=True)
+    for name, d in units(g).items():
+        if not (d / "SKILL.md").exists() or (args.only and name not in args.only.split(",")):
+            continue
+        link = target / name
+        if link.is_symlink():
+            if link.resolve() == d.resolve():
+                print(f"ok      {link}")
+                continue
+            link.unlink()
+        elif link.exists():
+            print(f"skipped {link}: a real folder is there (an old copy?); move it away and run again")
+            continue
+        link.symlink_to(d.resolve(), target_is_directory=True)
+        print(f"linked  {link} -> {d}")
+
+
 def cmd_absorb(args):
     g = need_genome(args)
     if not INBOX.exists():
@@ -526,9 +548,10 @@ def main(argv: list[str]) -> None:
     p.add_argument("summary"); p.add_argument("--obs")
     sub.add_parser("absorb")
     p = sub.add_parser("pack"); p.add_argument("unit"); p.add_argument("--out")
+    p = sub.add_parser("link"); p.add_argument("target"); p.add_argument("--only")
     args = ap.parse_args(argv)
     {"where": cmd_where, "note": cmd_note, "status": cmd_status, "digest": cmd_digest, "check": cmd_check,
-     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack}[args.cmd](args)
+     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link}[args.cmd](args)
 
 
 if __name__ == "__main__":
