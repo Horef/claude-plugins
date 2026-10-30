@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.6.0 (2026-10-30)
+- Slow costs need sensors: section 6 asks every unit whose cost grows with use for a measurement that becomes a check warning past a budget; section 2 makes warnings an agent did not cause into observations; section 10 runs the sensors in audits. (O10)
+
 ## 0.5.0 (2026-10-30)
 - Setup: claude.ai and Cowork add the genome as a GitHub marketplace with Sync automatically (documented in claude.com/docs/plugins), and Claude Code receives the synced skills, so hand-uploaded zips are no longer needed; strange-loop is still installed locally for its hook. Section 8 step 6: distribution follows the plugin.json version; pack remains for upload-only harnesses. (O9)
 
