@@ -31,6 +31,8 @@ Every layer has the same shape: an instruction surface, a `LEARNINGS.md` for obs
 
 **Things made *with* a skill are not the skill.** A figure drawn for one note, a report about one run, a script written for one course is an expression of the skill and belongs to the project that asked for it; only what generalises (rules, tools, reusable material, curated examples) belongs to the skill.
 
+**Artifacts remember their origin.** Some skills are used once and leave lasting artifacts that shape every later session: project-foundations writes AGENTS.md and installs `docmap.py`, a figure skill leaves scripts in a project. Later sessions follow the artifact without loading the skill, so they cannot know where a lesson about it belongs. Therefore every lasting artifact a skill installs carries (1) a provenance line naming the skill and its version, in a place agents read anyway (AGENTS.md, a file header), and (2) the note command for lessons about it, addressed to that skill. Where the artifact runs as a tool, it also compares its version with the person's genome clone and says when a newer one exists, so improvements flow back down into old projects.
+
 **Lessons flow up when they generalise and down when they specialise.** A project lesson that recurs in a second project is really a skill lesson: move it up. A skill rule that only ever matters to one project belongs in that project's `AGENTS.md`: move it down. A preference the person stated is a person-layer fact, not a skill rule, unless the skill is personal on purpose. Never put machine facts (paths, interpreters) above the project layer's `AGENTS.local.md`.
 
 ## 2. Notice: recording observations
@@ -151,9 +153,10 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 1. **Take only the genome, not its expressions.** Go through the file list `new` printed and sort every file: the instructions, tools and libraries, reusable material (with licences) and worked examples that are general come in; outputs of tasks done with the skill stay out - work made for a particular project, before/after renders, reports about past runs, scripts named or framed after one course or client, anything that writes to a task's output location. A task output that shows something no example covers is distilled into a general example named after what it shows, and verified to produce the same result.
 2. Replace the placeholder eval cases with real ones; a skill with scripts gets an `evals/run.py`.
 3. Adapt the Learning loop section's triggers to the skill (the command stays verbatim).
-4. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
-5. `loop.py check`.
-6. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
+4. If the skill installs lasting artifacts into projects (files, templates, tools), give each a provenance line and the note command, as section 1 says (project-foundations' AGENTS.md template and `docmap.py` show how).
+5. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
+6. `loop.py check`.
+7. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
 Template for the skill's own section (`loop.py new` writes exactly this; replace `<name>` and add the skill's own triggers):
 
