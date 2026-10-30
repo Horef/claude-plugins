@@ -33,7 +33,7 @@ Design and rationale: `plugins/strange-loop/README.md`; research behind it: `doc
 |---|---|
 | finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results |
 | choose between alternatives about the genome itself | the next D entry in `docs/DECISIONS.md` |
-| add a plugin | `plugin.json`, a marketplace entry, a row in `README.md`, and the unit files (strange-loop SKILL.md section 8) |
+| add a skill or mod | `loop.py new <name> --description ... --category general\|personal [--from DIR] [--mod]` creates the manifest, marketplace entry, README row and unit files; then fill the `TODO(new)` placeholders and real eval cases (strange-loop SKILL.md section 8) |
 | change what a plugin does for its users | its README and the root `README.md` table |
 | write or revise a doc in `docs/` | its `Status:` line |
 

@@ -142,17 +142,20 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 8. **Outside code enters by the owner's choice.** Skills, scripts or libraries from outside the genome are adopted only when the owner asks, pinned to a commit and read first; never absorb them automatically.
 9. **This list, the change classes and the ripeness thresholds change only with the owner's approval.**
 
-## 8. Adopting a skill or mod into the loop
+## 8. Adding a skill or mod
 
-1. Put it in the genome: `plugins/<name>/.claude-plugin/plugin.json` (name, version, description), the skill in `plugins/<name>/skills/<name>/SKILL.md`, and a line in `.claude-plugin/marketplace.json`.
-   **Take only the genome, not its expressions.** Before copying a folder in, sort every file: the instructions, tools and libraries, reusable material (with licences) and worked examples that are general come in; outputs of tasks done with the skill stay out - work made for a particular project, before/after renders, reports about past runs, scripts named or framed after one course or client, anything that writes to a task's output location. A task output that shows something no example covers is distilled into a general example named after what it shows, and verified to produce the same result.
-2. Add `LEARNINGS.md` (`loop.py note` creates it from the template), `CHANGELOG.md` whose newest `## X.Y.Z (date)` matches `plugin.json`, and `evals/` with at least one case.
-3. Add a `## Learning loop` section to the skill (template below), adapted to where its users can write.
+**A new skill.** `loop.py new <name> --description "<what it does and when to use it>" --category general|personal` creates everything the loop and the checks expect: the plugin manifest (0.1.0), the marketplace entry, a row in the README's group, `SKILL.md` with frontmatter, a skeleton and the Learning loop section, `LEARNINGS.md`, `CHANGELOG.md` and `evals/cases.md` with trigger cases. `--mod` makes a hooks-only plugin instead. Then: write the skill in place of the `TODO(new)` placeholders (`check` warns until they are gone), write real eval cases, run `check`, commit and push (a new unit is a minor change under D10). When the person's harness has a skill-writing skill (Anthropic's skill-creator), use it for the content and its evals, but create the folder with `loop.py new` in the genome, never in an installed copy. A skill made in a chat without the genome is brought in later with `--from`.
+
+**An existing skill** (a zip someone uploaded, a folder on a machine, another repository at the owner's request): `loop.py new <name> --description "..." --category ... --from <folder>` copies it in, adds the Learning loop section if missing, starts it at 1.0.0 "as found", and lists every copied file for the sort below. Then:
+
+1. **Take only the genome, not its expressions.** Go through the file list `new` printed and sort every file: the instructions, tools and libraries, reusable material (with licences) and worked examples that are general come in; outputs of tasks done with the skill stay out - work made for a particular project, before/after renders, reports about past runs, scripts named or framed after one course or client, anything that writes to a task's output location. A task output that shows something no example covers is distilled into a general example named after what it shows, and verified to produce the same result.
+2. Replace the placeholder eval cases with real ones; a skill with scripts gets an `evals/run.py`.
+3. Adapt the Learning loop section's triggers to the skill (the command stays verbatim).
 4. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
 5. `loop.py check`.
 6. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
-Template for the skill's own section (replace `<name>` and the triggers; keep the command verbatim):
+Template for the skill's own section (`loop.py new` writes exactly this; replace `<name>` and add the skill's own triggers):
 
 ````markdown
 ## Learning loop

@@ -2,6 +2,16 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-30 - Adding skills: loop.py new
+Changed: PR #6 merged. The owner asked about adding skills in future. Adding one took about eight manual edits that each drift. strange-loop 0.9.0 adds `loop.py new` (manifest, marketplace entry with category, README row, SKILL.md with the Learning loop section, LEARNINGS, CHANGELOG, evals; `--from` adopts an existing folder and lists its files for the genome/expression sort; `--mod` for hooks-only plugins). `check` now requires a category per marketplace entry (D8), warns when a Learning loop section lacks the note command, and when `TODO(new):` placeholders remain. Section 8 rewritten; a test keeps its template identical to what `new` writes. AGENTS.md points at `new`.
+
+| Verification command | Result |
+|---|---|
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop` | 16 tests OK |
+| sandbox: `loop.py new unit-converter ...`, write it, `check --base`, `claude plugin validate`, push, `claude plugin install`, note command | all pass; O1 recorded in the new skill's LEARNINGS |
+
+Next: owner sets up the Mac; paper-premark can come in with `new --from`.
+
 ## 2026-10-30 - Pre-launch end-to-end pass
 Changed: PR #5 merged. Ran the owner's Mac setup in a sandbox (fake home, `~/Programming/claude-plugins` cloned from a local bare stand-in for GitHub, config and auto_sync as the README says, the real `claude` CLI installing strange-loop from the marketplace) and walked a lesson through the whole loop. It worked, and it found three problems, fixed in strange-loop 0.8.0 and patch releases of the other skills: the skills told agents to write LEARNINGS.md next to the skill, which in an installed or synced copy is lost on update (now one canonical note command that routes to the clone); sync pushed unchecked unit commits (now only observation-only commits are pushed automatically, D10); the hook was silent about syncing. The digest also warns when the genome setting points to a folder that is not a clone (strange-loop O2). AGENTS.md notes that docmap needs Python 3.11+ to read its config.
 
