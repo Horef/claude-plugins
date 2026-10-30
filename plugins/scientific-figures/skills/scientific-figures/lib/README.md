@@ -7,14 +7,17 @@ Python toolkit for the **scientific-figures** skill. It draws figures for Sergiy
 - comes out as one-line, inline-safe SVG that DEVONthink renders,
 - and is then rendered to PNG (normal, grayscale, colour-blind) and looked at.
 
-## Setup in a new chat (cloud workspace)
+## Setup
 
-```bash
-# stage from the Mac (device_stage_files) or copy, then:
-cp -r /mnt/user-data/uploads/Scripts/ScientificFigures /home/claude/ScientificFigures
-cd /home/claude/ScientificFigures && python3 -c "import sciencefig"
+This folder is `lib/` inside the scientific-figures skill, in the genome repository `Horef/claude-plugins`; it travels with the skill (installed plugin, uploaded skill, clone). Point Python at it:
+
+```python
+import sys; sys.path.insert(0, LIB)   # LIB = <skill folder>/lib, or $SCIENCEFIG
+import sciencefig
 ```
-Requires matplotlib, numpy and scipy (preinstalled), MorphIO for real neurons (`pip install morphio --break-system-packages`), Graphviz `dot` (preinstalled), and Playwright + Chromium for `check.render` (preinstalled; paths are in `check.py`).
+Requires matplotlib, numpy, scipy and Pillow; MorphIO for real neurons (`pip install morphio`); Graphviz `dot` for `flow.graphviz`; for `check.render` and `topng`, Playwright + Chromium that node can load (`$SF_PLAYWRIGHT`, known folders, or node's own resolution) or a Chrome/Chromium/Edge binary (`$SF_CHROME`). Licences of the reused drawings and reconstructions: `LICENSES.md`.
+
+Change the library only in a clone of the genome, then run `python ../evals/run.py` (builds, lints and renders every benchmark figure in a temporary copy) and record the version with strange-loop.
 
 ## Modules
 
