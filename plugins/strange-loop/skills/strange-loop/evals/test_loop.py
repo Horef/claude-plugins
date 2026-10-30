@@ -110,6 +110,31 @@ class LoopTest(unittest.TestCase):
         code, out = run("--genome", str(self.g), "check")
         self.assertEqual(code, 0, out)
 
+    def test_rejected_and_moved_resolutions(self):
+        run("--genome", str(self.g), "note", "demo", "win", "x works")
+        base = self.learn.read_text()
+        self.learn.write_text(base + "- O7 2026-10-01 [wish] lower the threshold → rejected: owner keeps it\n"
+                              "- O8 2026-10-01 [friction] a project rule → moved: project-foundations O4\n")
+        code, out = run("--genome", str(self.g), "check")
+        self.assertEqual(code, 0, out)
+        self.learn.write_text(base + "- O7 2026-10-01 [wish] lower the threshold → maybe later\n")
+        code, out = run("--genome", str(self.g), "check")
+        self.assertEqual(code, 1)
+        self.assertIn("rejected: <reason>", out)
+
+    def test_bump_obs_last_and_pack(self):
+        import zipfile
+        run("--genome", str(self.g), "note", "demo", "failure", "first problem here")
+        run("--genome", str(self.g), "note", "demo", "failure", "second unrelated crash in export")
+        run("--genome", str(self.g), "bump", "demo", "patch", "Fix the export crash", "--obs", "last")
+        text = self.learn.read_text()
+        self.assertIn("second unrelated crash in export → 1.0.1", text)
+        self.assertNotIn("first problem here → ", text)
+        code, out = run("--genome", str(self.g), "pack", "demo", "--out", str(self.cfg / "dist"))
+        names = zipfile.ZipFile(self.cfg / "dist" / "demo-1.0.1.zip").namelist()
+        self.assertIn("demo/SKILL.md", names)
+        self.assertIn("demo/LEARNINGS.md", names)
+
     def test_inbox_when_no_genome_then_absorb(self):
         os.environ.pop("STRANGE_LOOP_GENOME", None)
         cwd, real_file = os.getcwd(), loop.__file__

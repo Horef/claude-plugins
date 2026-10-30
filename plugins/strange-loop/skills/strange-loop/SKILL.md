@@ -92,7 +92,7 @@ Do one unit per pass. Work on the genome checkout, on a branch if the repository
 4. **Change by deltas.** Edit the smallest span that carries the lesson. Keep wording that works; never rewrite a whole skill from memory in one go (summarising rewrites lose hard-won specifics: "context collapse"). New detail goes into a referenced file when the main file is near its budget.
 5. **Pay for growth.** Check the budgets (section 6). If the unit grew, find what to shrink: detail that can move to `references/`, prose a check now enforces, rules every model already follows (test by removing them on an eval case), duplicates.
 6. **Verify.** Run the evals again. For judged cases, compare old and new outputs blind: give a fresh subagent (or a second session) the case, the rubric and outputs A and B in random order, without saying which is new. Ship only when the new version is at least as good on every case and better on the cases its observations came from - per case, not on average, so a fix for one kind of task cannot quietly break another. If you cannot run a check here, say so and mark the change provisional in the CHANGELOG.
-7. **Record.** `loop.py bump <unit> minor "<what changed and why>" --obs O3,O7` (moves the observations to Resolved, prepends the CHANGELOG entry, bumps `plugin.json`). Reject or move entries by editing them into Resolved with `→ rejected: <reason>` or `→ moved: <where>`. Then `loop.py check`, commit, push or open a PR as the repository's rules say.
+7. **Record.** `loop.py bump <unit> minor "<what changed and why>" --obs O3,O7` (`--obs last` = the newest open observation) (moves the observations to Resolved, prepends the CHANGELOG entry, bumps `plugin.json`). Reject or move entries by editing them into Resolved with `→ rejected: <reason>` or `→ moved: <where>`. Then `loop.py check`, commit, push or open a PR as the repository's rules say.
 8. **Turn the loop on itself.** If the pass was awkward (a step here was unclear, the script lacked a command, the triage felt wrong), record that in this skill's own `LEARNINGS.md`.
 
 ## 5. Evals: how a unit knows it got better
@@ -142,6 +142,7 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 3. Add a `## Learning loop` section to the skill (template below), adapted to where its users can write.
 4. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
 5. `loop.py check`.
+6. For harnesses that take uploads (claude.ai), `loop.py pack <name>` writes `dist/<name>-<version>.zip`; re-upload it after every version, so the uploaded copy never drifts from the genome.
 
 Template for the skill's own section:
 

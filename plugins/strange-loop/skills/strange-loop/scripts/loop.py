@@ -16,7 +16,9 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
   python loop.py eval UNIT                   run UNIT's evals/run.py (if present) and list its cases
   python loop.py bump UNIT patch|minor|major "SUMMARY" [--obs O3,O4]
                                              bump the version, prepend a CHANGELOG entry, resolve the observations
+                                             (`--obs last` = the newest open one)
   python loop.py absorb                      move inbox lines into the genome's LEARNINGS files
+  python loop.py pack UNIT [--out DIR]       zip a skill folder for upload (claude.ai), as dist/<unit>-<version>.zip
 
 Genome resolution, first hit wins: --genome PATH, $STRANGE_LOOP_GENOME, the path in ~/.config/strange-loop/genome,
 the nearest folder above the current directory (then above this script) with .claude-plugin/marketplace.json.
@@ -42,7 +44,7 @@ SKILL_MAX_LINES = 500                    # Agent Skills guidance: keep SKILL.md 
 DESCRIPTION_MAX = 1024                   # Agent Skills spec limit for the description field
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-OBS = re.compile(r"^- (O\d+) (\d{4}-\d{2}-\d{2}) \[([a-z]+)\] (.+?)(?: ×(\d+))?(?: → (\S+))?\s*$")
+OBS = re.compile(r"^- (O\d+) (\d{4}-\d{2}-\d{2}) \[([a-z]+)\] (.+?)(?: ×(\d+))?(?: → (.+?))?\s*$")
 CHANGE_HEAD = re.compile(r"^## (\d+\.\d+\.\d+)\b")
 CONFIG = Path(os.environ.get("STRANGE_LOOP_CONFIG", Path.home() / ".config" / "strange-loop"))
 INBOX = CONFIG / "inbox.md"
@@ -389,8 +391,12 @@ def cmd_check(args):
             for _, m in L.entries("resolved"):
                 if not m.group(6):
                     errors.append(f"{rel}/LEARNINGS.md: resolved {m.group(1)} has no '→ <version>'")
-                elif SEMVER.match(m.group(6)) and m.group(6) not in vers:
-                    errors.append(f"{rel}/LEARNINGS.md: {m.group(1)} resolved in {m.group(6)}, which CHANGELOG.md lacks")
+                elif SEMVER.match(m.group(6)):
+                    if m.group(6) not in vers:
+                        errors.append(f"{rel}/LEARNINGS.md: {m.group(1)} resolved in {m.group(6)}, which CHANGELOG.md lacks")
+                elif not re.match(r"^(rejected|moved): \S", m.group(6)):
+                    errors.append(f"{rel}/LEARNINGS.md: {m.group(1)} must end '→ <version>', '→ rejected: <reason>' "
+                                  "or '→ moved: <where>'")
             opened = L.entries("open")
             stale = [m.group(1) for _, m in opened if (_dt.date.today() - _dt.date.fromisoformat(m.group(2))).days > STALE_DAYS]
             if stale:
@@ -446,6 +452,12 @@ def cmd_bump(args):
     meta["version"] = new
     write_json(pj, meta)
     ids = [i.strip() for i in (args.obs or "").split(",") if i.strip()]
+    if "last" in ids:
+        opened = [m.group(1) for _, m in Learnings(d / "LEARNINGS.md", args.unit).entries("open")]
+        if not opened:
+            sys.exit(f"strange-loop: {args.unit} has no open observation for --obs last")
+        last = max(opened, key=lambda i: int(i[1:]))
+        ids = [last if i == "last" else i for i in ids]
     cp = d / "CHANGELOG.md"
     old = cp.read_text(encoding="utf-8") if cp.exists() else f"# Changelog: {args.unit}\n\nNewest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.\n"
     head, sep, rest = old.partition("\n## ")
@@ -456,6 +468,27 @@ def cmd_bump(args):
     missing = set(ids) - set(moved)
     if missing:
         print(f"warning: not open in LEARNINGS.md: {', '.join(sorted(missing))}")
+
+
+def cmd_pack(args):
+    """Zip a skill folder for harnesses that take uploads (claude.ai): <unit>/SKILL.md at the top of the archive."""
+    import zipfile
+    g = need_genome(args)
+    d = need_unit(g, args.unit)
+    if not (d / "SKILL.md").exists():
+        sys.exit(f"strange-loop: {args.unit} is not a skill (no SKILL.md); mods install as plugins")
+    version = read_json(plugin_of(d) / ".claude-plugin" / "plugin.json").get("version", "0.0.0")
+    out = Path(args.out or g / "dist").expanduser()
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / f"{args.unit}-{version}.zip"
+    skip = {"__pycache__", ".DS_Store"}
+    n = 0
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(d.rglob("*")):
+            if f.is_file() and not skip & set(f.relative_to(d).parts) and f.suffix != ".pyc":
+                z.write(f, Path(args.unit) / f.relative_to(d))
+                n += 1
+    print(f"{target} ({n} files, {target.stat().st_size / 1e6:.1f} MB)")
 
 
 def cmd_absorb(args):
@@ -492,9 +525,10 @@ def main(argv: list[str]) -> None:
     p = sub.add_parser("bump"); p.add_argument("unit"); p.add_argument("part", choices=["patch", "minor", "major"])
     p.add_argument("summary"); p.add_argument("--obs")
     sub.add_parser("absorb")
+    p = sub.add_parser("pack"); p.add_argument("unit"); p.add_argument("--out")
     args = ap.parse_args(argv)
     {"where": cmd_where, "note": cmd_note, "status": cmd_status, "digest": cmd_digest, "check": cmd_check,
-     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb}[args.cmd](args)
+     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack}[args.cmd](args)
 
 
 if __name__ == "__main__":
