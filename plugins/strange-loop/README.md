@@ -109,6 +109,7 @@ python loop.py bump project-foundations minor "Templates move to templates/*.md"
 python loop.py check --base origin/main   # CI: manifests, versions, changelogs, learnings; changed plugins must bump
 python loop.py pack scientific-figures     # upload zip, for a harness that cannot add a marketplace
 python loop.py link ~/.kiro/skills          # live symlinks for a local harness
+python loop.py new paper-premark --description "..." --category personal --from ~/old/paper-premark   # add a skill
 python loop.py sync                         # share this machine's observations, receive everyone else's
 python loop.py absorb reply.txt             # observations from a chat reply
 ```

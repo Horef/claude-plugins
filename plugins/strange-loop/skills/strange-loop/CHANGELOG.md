@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.9.0 (2026-10-30)
+- loop.py new adds a skill (or, with --mod, a hooks-only plugin) with every file the loop and checks expect, or adopts an existing folder with --from (copies it, adds the Learning loop section, lists files for the genome/expression sort); check now requires a general/personal category per marketplace entry, warns when a Learning loop section lacks the note command and when TODO(new) placeholders remain; section 8 rewritten around new, with skill-creator for content; a test keeps the SKILL.md template identical to what new writes. 16 unit tests. (O13)
+
 ## 0.8.0 (2026-10-30)
 - From the pre-launch end-to-end run: one canonical note command (via ~/.config/strange-loop/genome) in section 2, the section 8 template and this skill's own section, with the rule never to write into installed or synced copies; sync pushes automatically only when every pending commit is observation-only (unit changes wait for checks, D10); the hook prints one line when it synced; the digest warns when ~/.config/strange-loop/genome points somewhere that is not a clone. 13 unit tests. (O12, O2)
 

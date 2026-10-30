@@ -17,6 +17,10 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
   python loop.py bump UNIT patch|minor|major "SUMMARY" [--obs O3,O4]
                                              bump the version, prepend a CHANGELOG entry, resolve the observations
                                              (`--obs last` = the newest open one)
+  python loop.py new NAME --description "..." --category general|personal [--from DIR] [--mod]
+                                             add a skill (or, with --mod, a hooks-only plugin) to the genome: manifest,
+                                             marketplace entry, README row, SKILL.md with the Learning loop section,
+                                             LEARNINGS, CHANGELOG, evals; --from DIR copies an existing skill folder in
   python loop.py absorb [FILE|-]             move inbox lines, or "Observations for <unit>" blocks pasted from a chat
                                              reply (FILE, or - for stdin), into the genome's LEARNINGS files
   python loop.py sync [--no-push]            close the loop on this machine: absorb the inbox, commit observation-only
@@ -55,6 +59,51 @@ CHANGE_HEAD = re.compile(r"^## (\d+\.\d+\.\d+)\b")
 CONFIG = Path(os.environ.get("STRANGE_LOOP_CONFIG", Path.home() / ".config" / "strange-loop"))
 INBOX = CONFIG / "inbox.md"
 TODAY = _dt.date.today().isoformat()
+
+NOTE_CMD = 'python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note'
+CATEGORIES = ("general", "personal")
+LOOP_SECTION = """## Learning loop
+
+This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line with the note command (in claude.ai, run it on the connected computer):
+
+```bash
+{cmd} {name} <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
+```
+
+It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell), end your reply with a block headed `Observations for {name}` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
+"""
+SKILL_TEMPLATE = """---
+name: {name}
+description: "{description}"
+---
+
+# {title}
+
+TODO(new): one paragraph - what this skill is for, when to use it, and what it is not for.
+
+## Steps
+
+TODO(new): the procedure, as numbered steps an agent can follow cold. Put long references in `references/` and code in `scripts/`, and name them here.
+
+""" + LOOP_SECTION
+CASES_TEMPLATE = """# Judged cases: {name}
+
+Each case: a task, the rubric a blind judge applies, and where the case came from. Replace the TODOs before the first release; add a case for every `failure` observation.
+
+## TODO(new): a typical task
+**Task:** TODO(new): what a user asks, with any inputs.
+**Good looks like:**
+- TODO(new): 3-6 observable criteria.
+**Origin:** the skill's purpose.
+
+## Trigger: should fire
+**Task:** TODO(new): two or three requests that should load this skill.
+**Good looks like:** {name} is loaded.
+
+## Trigger: should not fire
+**Task:** TODO(new): two or three nearby requests that should not.
+**Good looks like:** {name} is not loaded.
+"""
 
 LEARNINGS_TEMPLATE = """# Learnings: {name}
 
@@ -364,6 +413,8 @@ def cmd_check(args):
     try:
         for p in read_json(mk).get("plugins", []):
             listed[p.get("name")] = p
+            if p.get("category") not in CATEGORIES:
+                errors.append(f"marketplace: {p.get('name')}: category must be one of {', '.join(CATEGORIES)} (D8)")
             src = (g / p.get("source", "")).resolve()
             if not (src / ".claude-plugin" / "plugin.json").is_file():
                 errors.append(f"marketplace: {p.get('name')}: source {p.get('source')} has no .claude-plugin/plugin.json")
@@ -407,8 +458,15 @@ def cmd_check(args):
             n = len(skill.read_text(encoding="utf-8").splitlines())
             if n > SKILL_MAX_LINES:
                 warnings.append(f"{rel}/SKILL.md: {n} lines (> {SKILL_MAX_LINES}); move detail into referenced files")
-            if "## Learning loop" not in skill.read_text(encoding="utf-8"):
+            body = skill.read_text(encoding="utf-8")
+            if "## Learning loop" not in body:
                 warnings.append(f"{rel}/SKILL.md: no '## Learning loop' section, so users of the skill won't record lessons")
+            elif NOTE_CMD not in body:
+                warnings.append(f"{rel}/SKILL.md: the Learning loop section lacks the note command (template: `loop.py new`, "
+                                "strange-loop section 8); without it notes land in installed copies and are lost")
+        for f in [d / "SKILL.md", d / "evals" / "cases.md"]:
+            if f.exists() and "TODO(new):" in f.read_text(encoding="utf-8"):   # the placeholders, not prose about them
+                warnings.append(f"{f.relative_to(g)}: still has TODO(new) placeholders from `loop.py new`")
         lp, cp = d / "LEARNINGS.md", d / "CHANGELOG.md"
         if not lp.exists():
             errors.append(f"{rel}: no LEARNINGS.md (create it with `loop.py note` or the template in the skill)")
@@ -500,6 +558,75 @@ def cmd_bump(args):
     missing = set(ids) - set(moved)
     if missing:
         print(f"warning: not open in LEARNINGS.md: {', '.join(sorted(missing))}")
+
+
+def cmd_new(args):
+    """Add a skill or mod to the genome with every file the loop and the checks expect."""
+    import shutil
+    g = need_genome(args)
+    name, desc = args.name, " ".join(args.description.split())
+    if not NAME_RE.match(name) or len(name) > 64:
+        sys.exit("strange-loop: the name must be lowercase words joined by hyphens, at most 64 characters")
+    if not 0 < len(desc) <= DESCRIPTION_MAX or '"' in desc:
+        sys.exit(f"strange-loop: the description must be 1-{DESCRIPTION_MAX} characters without double quotes; "
+                 "say what the skill does and when to use it")
+    plug = g / "plugins" / name
+    if plug.exists():
+        sys.exit(f"strange-loop: {plug} exists already")
+    version = "1.0.0" if args.source else "0.1.0"
+    (plug / ".claude-plugin").mkdir(parents=True)
+    write_json(plug / ".claude-plugin" / "plugin.json", {"name": name, "version": version, "description": desc, "license": "MIT"})
+    unit = plug if args.mod else plug / "skills" / name
+    unit.mkdir(parents=True, exist_ok=True)
+    copied = []
+    if args.source:
+        src = Path(args.source).expanduser()
+        if not (src / "SKILL.md").is_file():
+            sys.exit(f"strange-loop: {src} has no SKILL.md")
+        for f in sorted(src.rglob("*")):
+            rel = f.relative_to(src)
+            if f.is_file() and "__pycache__" not in rel.parts and f.suffix != ".pyc" and f.name != ".DS_Store":
+                (unit / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, unit / rel)
+                copied.append((rel, f.stat().st_size))
+        body = (unit / "SKILL.md").read_text(encoding="utf-8")
+        if "## Learning loop" not in body:
+            (unit / "SKILL.md").write_text(body.rstrip() + "\n\n" + LOOP_SECTION.format(cmd=NOTE_CMD, name=name), encoding="utf-8")
+    elif args.mod:
+        (unit / "README.md").write_text(f"# {name}\n\n{desc}\n\nTODO(new): how it works and how to install it.\n", encoding="utf-8")
+    else:
+        title = name.replace("-", " ").capitalize()
+        (unit / "SKILL.md").write_text(SKILL_TEMPLATE.format(name=name, description=desc, title=title, cmd=NOTE_CMD), encoding="utf-8")
+    (unit / "evals").mkdir(exist_ok=True)
+    if not (unit / "evals" / "cases.md").exists():
+        (unit / "evals" / "cases.md").write_text(CASES_TEMPLATE.format(name=name), encoding="utf-8")
+    Learnings(unit / "LEARNINGS.md", name)
+    first = "Imported as found (copied with `loop.py new --from`)." if args.source else "Created with `loop.py new`."
+    (unit / "CHANGELOG.md").write_text(f"# Changelog: {name}\n\nNewest first. Each entry cites the observations (O-ids in "
+                                       f"LEARNINGS.md) or evals that justified it.\n\n## {version} ({TODAY})\n- {first}\n", encoding="utf-8")
+    mk = g / ".claude-plugin" / "marketplace.json"
+    data = read_json(mk)
+    data.setdefault("plugins", []).append({"name": name, "source": f"./plugins/{name}", "description": desc, "category": args.category})
+    write_json(mk, data)
+    readme = g / "README.md"
+    if readme.exists():
+        lines = readme.read_text(encoding="utf-8").splitlines()
+        head = next((i for i, l in enumerate(lines) if l.startswith(f"**{args.category.capitalize()}**")), None)
+        if head is not None:
+            sep = next(i for i in range(head, len(lines)) if lines[i].startswith("| ---"))   # the group's table
+            end = sep
+            while end + 1 < len(lines) and lines[end + 1].startswith("| ["):
+                end += 1
+            lines.insert(end + 1, f"| [{name}](plugins/{name}) | {desc} |")
+            readme.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"created {plug.relative_to(g)} ({'mod' if args.mod else 'skill'} {version}, {args.category}); "
+          f"listed in the marketplace{' and README' if readme.exists() else ''}")
+    if copied:
+        print(f"copied {len(copied)} file(s) - sort them now (strange-loop section 8: genome, not expressions); "
+              "remove outputs of past tasks before the first commit:")
+        for rel, size in copied:
+            print(f"  {size:>9,d}  {rel}")
+    print("next: fill the TODO(new) placeholders, write real eval cases, `loop.py check`, commit, push")
 
 
 def cmd_pack(args):
@@ -683,9 +810,12 @@ def main(argv: list[str]) -> None:
     sub.add_parser("hook")
     p = sub.add_parser("pack"); p.add_argument("unit"); p.add_argument("--out")
     p = sub.add_parser("link"); p.add_argument("target"); p.add_argument("--only")
+    p = sub.add_parser("new"); p.add_argument("name"); p.add_argument("--description", required=True)
+    p.add_argument("--category", choices=list(CATEGORIES), required=True)
+    p.add_argument("--from", dest="source"); p.add_argument("--mod", action="store_true")
     args = ap.parse_args(argv)
     {"where": cmd_where, "note": cmd_note, "status": cmd_status, "digest": cmd_digest, "check": cmd_check,
-     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link,
+     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link, "new": cmd_new,
      "sync": lambda a: sys.exit(cmd_sync(a)), "hook": cmd_hook}[args.cmd](args)
 
 

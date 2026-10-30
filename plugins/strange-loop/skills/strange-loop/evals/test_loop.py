@@ -30,7 +30,7 @@ Record lessons in LEARNINGS.md.
 def make_genome(root: Path) -> Path:
     (root / ".claude-plugin").mkdir(parents=True)
     (root / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
-        {"name": "t", "owner": {"name": "t"}, "plugins": [{"name": "demo", "source": "./plugins/demo", "description": "d"}]}))
+        {"name": "t", "owner": {"name": "t"}, "plugins": [{"name": "demo", "source": "./plugins/demo", "description": "d", "category": "general"}]}))
     plug = root / "plugins" / "demo"
     (plug / ".claude-plugin").mkdir(parents=True)
     (plug / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "demo", "version": "1.0.0", "description": "d"}))
@@ -153,6 +153,35 @@ class LoopTest(unittest.TestCase):
         self.assertIn("not a clone of the genome", run("digest")[1])
         (self.cfg / "genome").write_text(str(self.g))
         self.assertNotIn("not a clone", run("digest")[1])
+
+    def test_new_skill_passes_check_and_adopts_a_folder(self):
+        (self.g / "README.md").write_text("# Plugins\n\n**General**: for anyone.\n\n| Plugin | What it does |\n| --- | --- |\n"
+                                          "| [demo](plugins/demo) | d |\n\n**Personal**: mine.\n\n| Plugin | What it does |\n| --- | --- |\n\n## Install\n")
+        run("--genome", str(self.g), "note", "demo", "win", "x works")
+        code, out = run("--genome", str(self.g), "new", "paper-reading", "--description", "Read a paper and mark it up.", "--category", "personal")
+        self.assertEqual(code, 0, out)
+        unit = self.g / "plugins/paper-reading/skills/paper-reading"
+        self.assertIn(loop.NOTE_CMD + " paper-reading", (unit / "SKILL.md").read_text())
+        code, out = run("--genome", str(self.g), "check")
+        self.assertEqual(code, 0, out)                                   # complete and valid at once ...
+        self.assertIn("TODO(new) placeholders", out)                     # ... but the placeholders are flagged
+        readme = (self.g / "README.md").read_text()
+        self.assertLess(readme.index("**Personal**"), readme.index("[paper-reading]"))
+        self.assertEqual(run("--genome", str(self.g), "new", "paper-reading", "--description", "x", "--category", "general")[0], 1)
+        src = Path(self.tmp.name) / "old-skill"
+        (src / "scripts").mkdir(parents=True)
+        (src / "SKILL.md").write_text("---\nname: old-skill\ndescription: \"An old skill.\"\n---\n\n# Old\n")
+        (src / "scripts" / "tool.py").write_text('"""Tool."""\n')
+        code, out = run("--genome", str(self.g), "new", "old-skill", "--description", "An old skill.", "--category", "general", "--from", str(src))
+        self.assertIn("scripts/tool.py", out)                            # every copied file is listed for sorting
+        body = (self.g / "plugins/old-skill/skills/old-skill/SKILL.md").read_text()
+        self.assertIn("## Learning loop", body)
+        self.assertEqual(run("--genome", str(self.g), "check")[0], 0)
+        self.assertIn('"version": "1.0.0"', (self.g / "plugins/old-skill/.claude-plugin/plugin.json").read_text())
+
+    def test_skill_md_template_matches_what_new_writes(self):
+        text = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+        self.assertIn(loop.LOOP_SECTION.format(cmd=loop.NOTE_CMD, name="<name>").rstrip(), text)
 
     def test_absorb_reply_block(self):
         run("--genome", str(self.g), "note", "demo", "win", "x works")
