@@ -107,7 +107,7 @@ python loop.py note scientific-figures friction "§5: lint missed a label under 
 python loop.py eval project-foundations
 python loop.py bump project-foundations minor "Templates move to templates/*.md" --obs O3
 python loop.py check --base origin/main   # CI: manifests, versions, changelogs, learnings; changed plugins must bump
-python loop.py pack scientific-figures     # upload zip for claude.ai
+python loop.py pack scientific-figures     # upload zip, for a harness that cannot add a marketplace
 python loop.py link ~/.kiro/skills          # live symlinks for a local harness
 python loop.py sync                         # share this machine's observations, receive everyone else's
 python loop.py absorb reply.txt             # observations from a chat reply

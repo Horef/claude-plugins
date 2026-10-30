@@ -17,7 +17,7 @@ Design and rationale: `plugins/strange-loop/README.md`; research behind it: `doc
 ## Commands
 - Unit evals: `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval <unit>` (exit 2 = not run, e.g. a library that lives on another machine; never report that as a pass).
 - Genome check: `python plugins/strange-loop/skills/strange-loop/scripts/loop.py check --base origin/main`.
-- Docs check: `python plugins/project-foundations/skills/project-foundations/scripts/docmap.py update`, then `... check` (configuration in `docmap.toml`). The genome runs the skill's own copy of docmap; there is no `tools/docmap.py` here.
+- Docs check: `python plugins/project-foundations/skills/project-foundations/scripts/docmap.py update`, then `... check` (configuration in `docmap.toml`; Python 3.11 or newer, older versions ignore the config and report false errors). The genome runs the skill's own copy of docmap; there is no `tools/docmap.py` here.
 - Mod tests (model-router) run inside Claude Code's function-hooks test runner; they are not run in CI.
 
 ## Rules for changing a unit

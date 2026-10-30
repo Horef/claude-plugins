@@ -147,6 +147,13 @@ class LoopTest(unittest.TestCase):
         (target / "demo").unlink(); (target / "demo").mkdir()
         self.assertIn("skipped", run("--genome", str(self.g), "link", str(target))[1])
 
+    def test_digest_warns_about_a_wrong_genome_path(self):
+        self.cfg.mkdir(parents=True, exist_ok=True)
+        (self.cfg / "genome").write_text(str(Path(self.tmp.name) / "typo"))
+        self.assertIn("not a clone of the genome", run("digest")[1])
+        (self.cfg / "genome").write_text(str(self.g))
+        self.assertNotIn("not a clone", run("digest")[1])
+
     def test_absorb_reply_block(self):
         run("--genome", str(self.g), "note", "demo", "win", "x works")
         block = Path(self.tmp.name) / "reply.txt"
@@ -185,6 +192,11 @@ class LoopTest(unittest.TestCase):
             self.assertEqual(len(ids), len(set(ids)), text)
         self.assertIn("work in progress", (self.g / "plugins/demo/skills/demo/SKILL.md").read_text())
         self.assertIn("SKILL.md", git(self.g, "status", "--porcelain").stdout)
+        git(self.g, "commit", "-qam", "unfinished skill change")          # a unit change waits for checks: not auto-pushed
+        run("--genome", str(self.g), "note", "demo", "win", "a third observation after the unit commit")
+        code, out = run("--genome", str(self.g), "sync")
+        self.assertIn("not pushed", out)
+        self.assertNotIn("unfinished skill change", git(remote, "log", "--oneline", "main").stdout)
 
     def test_inbox_when_no_genome_then_absorb(self):
         os.environ.pop("STRANGE_LOOP_GENOME", None)

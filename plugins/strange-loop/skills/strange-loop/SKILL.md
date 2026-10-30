@@ -60,11 +60,11 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 - Don't stop the user's task to reflect. Note, finish the task, mention the notes in one line at the end.
 
 **Where to write** (first that works):
-1. `python <this skill>/scripts/loop.py note <unit> <kind> "<text>" --where "§5" --harness <name> --context "<project>"`. It finds the writable source checkout (the *genome*: `$STRANGE_LOOP_GENOME`, `~/.config/strange-loop/genome`, or the marketplace repo you are in), deduplicates, and falls back to `~/.config/strange-loop/inbox.md`.
-2. Without a shell but with file access: edit the genome's `LEARNINGS.md` directly in the format above.
+1. **The note command**, the same in every skill, project and harness (in claude.ai, run it on the connected computer): `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note <unit> <kind> "<section>: <text>" --harness <name> --context "<project>"`. It writes into the person's clone of the genome (`$STRANGE_LOOP_GENOME` overrides the config file), deduplicates, and falls back to `~/.config/strange-loop/inbox.md` when no clone is found.
+2. Inside the genome clone itself, or with file access but no shell: edit the genome's `LEARNINGS.md` directly in the format above.
 3. With neither (a chat-only harness, a cloud session on another repository, a read-only uploaded skill): end your reply with a block headed `Observations for <unit>` and the lines in the format above, one block per unit. `loop.py absorb <file>` (or `-` for pasted text) adds such blocks to the genome later, so the person can paste a reply into any session that has the genome.
 
-Installed copies (`~/.claude/plugins/…`, uploaded skill zips) are overwritten on update: never treat them as the place to write.
+Installed and synced copies (`~/.claude/plugins/…`, skills synced from claude.ai, uploaded zips) are replaced on update: never write there, even though the files are writable.
 
 A note in a clone is local until it is shared: `loop.py sync` commits observation-only changes, pulls everyone else's and pushes (section 11). If you wrote notes into a clone and auto-sync is off, run it at the end of the session.
 
@@ -152,13 +152,19 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 5. `loop.py check`.
 6. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
-Template for the skill's own section:
+Template for the skill's own section (replace `<name>` and the triggers; keep the command verbatim):
 
-```markdown
+````markdown
 ## Learning loop
 
-This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or clearly pays off, add one line to `LEARNINGS.md` next to this file - `- O<n> <date> [failure|friction|misled|missing|workaround|win|wish] <section>: <what happened, what would have helped> (<harness>, <context>)` - or run `loop.py note <name> <kind> "<text>"` from the strange-loop skill when this copy is read-only, or list them at the end of your reply under "Observations for <name>". Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
+This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line with the note command (in claude.ai, run it on the connected computer):
+
+```bash
+python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note <name> <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
 ```
+
+It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell), end your reply with a block headed `Observations for <name>` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
+````
 
 ## 9. Growing a new capability
 
@@ -183,7 +189,7 @@ The genome is the GitHub repository; every other copy is either a clone that can
 
 **Upward, from use to the genome.**
 - Local agents (Claude Code, Kiro, Copilot, Codex on a machine with a clone): `loop.py note` writes into the clone; `loop.py sync` commits observation-only changes, pulls (LEARNINGS files merge as a union through `.gitattributes`, so two machines never conflict; ids both machines used are renumbered) and pushes. With `~/.config/strange-loop/auto_sync` set to `on`, Claude Code's session-start hook does this by itself.
-- claude.ai with the computer connected: the agent edits `LEARNINGS.md` in the clone through the connector; the next sync on that machine shares it.
+- claude.ai with the computer connected: the agent runs the note command on that computer through the connector; the next sync there shares it.
 - Chat-only and cloud sessions without the genome: the `Observations for <unit>` block at the end of the reply; `loop.py absorb` brings it in from any session that has the genome.
 
 **Inward, from the genome to every copy.** A reflection pass (section 4) changes a unit, bumps its version and pushes to the genome's main branch as its AGENTS.md allows. From there: claude.ai and Cowork re-sync the marketplace (Sync automatically), Claude Code receives the synced skills or updates its installed plugins, symlinked local agents read the clone after its next sync (pull), and CI checks every push.
@@ -192,4 +198,10 @@ What closes the loop is therefore one routine per machine (sync) and one rule pe
 
 ## Learning loop
 
-This skill observes itself like any other unit: its `LEARNINGS.md` is next to this file and `loop.py` is in `scripts/`. When a step of a reflection was unclear or the script lacked something, record it here with the kinds above. Changes to section 7 (Kernel), section 3 (change classes) and the ripeness thresholds in `loop.py` need the owner's approval.
+This skill observes itself like any other unit. When a step of a reflection was unclear, the script lacked something, or a lesson got lost on its way, record it with the note command (section 2):
+
+```bash
+python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note strange-loop <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
+```
+
+or, without a clone or a shell, in an `Observations for strange-loop` block at the end of your reply. Changes to section 7 (Kernel), section 3 (change classes) and the ripeness thresholds in `loop.py` need the owner's approval.

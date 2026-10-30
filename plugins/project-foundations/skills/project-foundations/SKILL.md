@@ -480,8 +480,10 @@ Run Step 5 and `python tools/docmap.py docs` (the audit queue: oldest verificati
 
 ## Learning loop
 
-This skill improves itself from use (the strange-loop framework, `plugins/strange-loop` in `Horef/claude-plugins`). While you work, when a step here misleads you, is missing, needs a workaround, or `docmap.py` gets something wrong, add one line to `LEARNINGS.md` next to this file:
+This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or `docmap.py` gets something wrong (a check that is noisy, a lookup that costs too much), record one line with the note command (in claude.ai, run it on the connected computer):
 
-`- O<next id> <YYYY-MM-DD> [failure|friction|misled|missing|workaround|win|wish] <section>: <what happened and what would have helped> (<harness>, <project>)`
+```bash
+python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note project-foundations <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
+```
 
-If this copy is read-only (an installed plugin, an uploaded skill), use `python <strange-loop>/scripts/loop.py note project-foundations <kind> "<text>"`, which finds the writable source, or put the line in your final message under "Observations for project-foundations". Fix only plain errors on the spot (a wrong command, a broken example), and only when you have just verified the fix; everything else waits for a reflection pass (strange-loop skill), which changes the skill from evidence and checks it against `evals/`.
+It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell), end your reply with a block headed `Observations for project-foundations` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
