@@ -17,7 +17,7 @@ export const DEFAULT_SETTINGS: Settings = {
     skill: 'herdr-delegate',
     use: 'long',
     tiers: {
-      light: 'agy-light,copilot-light,kiro-light',
+      light: 'kiro-light,copilot-light,agy-light',
       standard: 'kiro-standard,copilot-standard,agy-standard',
       deep: 'kiro-deep,copilot-deep,agy-deep',
     },

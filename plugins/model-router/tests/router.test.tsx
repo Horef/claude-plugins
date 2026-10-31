@@ -338,7 +338,7 @@ test('with helpers on the rules name the skill and the tier orders, and a helper
   const rules = lastRow(rows)
   expect(rules).toContain('runs a step on an agent from another subscription')
   expect(rules).toContain('herdr-delegate')
-  expect(rules).toContain('agy-light,copilot-light,kiro-light')
+  expect(rules).toContain('kiro-light,copilot-light,agy-light')
   expect(rules).toContain('kiro-standard,copilot-standard,agy-standard')
   expect(rules).toContain('kiro-deep,copilot-deep,agy-deep')
   expect(rules).toContain('over ~15 tool calls')
