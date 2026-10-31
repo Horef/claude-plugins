@@ -1,6 +1,6 @@
 {
   "name": "scientific-figures",
-  "version": "7.0.1",
+  "version": "7.0.2",
   "description": "Draw scientific figures for study notes, papers and slides: circuits, anatomy, data plots, flows, phase portraits, geometry, 3D surfaces. Lint-render-look loop, inline-safe SVG for Markdown notes, journal export; a personal profile sets audience and targets",
   "license": "MIT"
 }
