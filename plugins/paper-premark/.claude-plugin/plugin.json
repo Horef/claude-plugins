@@ -1,0 +1,6 @@
+{
+  "name": "paper-premark",
+  "version": "1.0.0",
+  "description": "Pre-read a scientific paper in DEVONthink and mark it up in Sergiy's colour scheme (whole logical units, comments, skim-safe markers) plus a linked reading-map note. Works with or without a project.",
+  "license": "MIT"
+}

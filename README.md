@@ -19,6 +19,7 @@ This repository is also the **genome** of the skills: their source copy, which t
 | Plugin | What it does |
 | --- | --- |
 | [course-lecture-notes](plugins/course-lecture-notes) | Turns a lecture or tutorial (slides in DEVONthink) into complete, self-contained, Anki-ready teaching notes with figures; written for one person's courses and setup. |
+| [paper-premark](plugins/paper-premark) | Pre-read a scientific paper in DEVONthink and mark it up in Sergiy's colour scheme (whole logical units, comments, skim-safe markers) plus a linked reading-map note. Works with or without a project. |
 
 ## Install
 
