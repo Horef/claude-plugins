@@ -2,6 +2,10 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.3.0 (2026-10-31)
+- Workflow step 7 (new): send the finished blocks to Anki with the pipeline's anki_blocks.py batch script (one Gemini run per block, no clipboard, resumable; test one block, then the rest in the background); deck name from AGENTS.local.md. Owner request, 2026-10-31; first used on 76901 Lecture 3. The reply step (now 8) reports blocks and cards. New judged case.
+- Step 5: corrected "Anki cannot show it" (owner: cards show images fine); the real reason figures must be described in prose is that the pipeline builds cards from text only.
+
 ## 1.2.2 (2026-10-31)
 - Learning loop: the reply-block fallback is opt-in (only when the person takes part in improving their skills), so people who installed this skill without strange-loop see no observation blocks.
 
