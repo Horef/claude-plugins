@@ -9,20 +9,35 @@ export type Usage = { input: number; cacheWrite: number; cacheRead: number; outp
 
 export type TierSetting = { model: Model; effort: Effort; scopeNote: boolean }
 
+/** Where a step runs: 'agent' a Claude subagent, 'here' the main chat, 'helper' an agent on another subscription. */
+export type Where = 'agent' | 'here' | 'helper'
+
+/** Optional helpers: agents on other subscriptions, started through a delegation skill. */
+export type HelperSettings = {
+  enabled: boolean
+  /** The delegation skill the main chat loads to start a helper. */
+  skill: string
+  /** 'long': only long self-contained steps; 'all': every self-contained step. */
+  use: 'long' | 'all'
+  /** Per tier, the helper templates to try in order, comma-separated. */
+  tiers: Record<Tier, string>
+}
+
 export type Settings = {
   tiers: Record<Tier, TierSetting>
   /** Skills that run in a subagent on a tier instead of in the main chat. */
   skills: Record<string, Tier>
   /** Open the router pane when a chat starts. */
   openPane: boolean
+  helpers: HelperSettings
 }
 
 export type Step = {
   id: string
   title: string
   tier: Tier
-  /** 'agent': delegated to a subagent; 'here': done by the main conversation. */
-  where: 'agent' | 'here'
+  /** 'agent': delegated to a subagent; 'here': done by the main conversation; 'helper': an agent on another subscription. */
+  where: Where
   /** Overrides set from the pane or a rerun; absent means the tier's setting. */
   model?: Model
   effort?: Effort

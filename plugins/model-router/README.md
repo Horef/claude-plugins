@@ -20,7 +20,7 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
   - **All time**: what delegating saved, what the subagents cost and what they would have cost on the main model, steps and plans by tier, since the first use or the last reset. Remembered across chats as a handful of numbers.
   Every view moves together: cost is counted per model response as it arrives, not when a step finishes. Saved also shows as a share of what the same work would have cost without routing (the main chat plus the subagents' tokens at the main model's prices).
   All amounts are estimates from list prices (`hooks/tiers.ts`) and the token counts the API reports; savings compare each step with the main chat's model doing the same tokens.
-- **Steps**: a card per step with pickers for where, tier, model and thinking level (buttons on mobile), its cost and tokens, and a warning when a step was mostly subagent start-up cost. A "here" step is done by this chat on its own model; its tier is only a label until you send it to a subagent, and its card says so.
+- **Steps**: a card per step with pickers for where (subagent, here, or helper when Helpers are on), tier, model and thinking level (buttons on mobile), its cost and tokens, and a warning when a step was mostly subagent start-up cost. A "here" step is done by this chat on its own model; its tier is only a label until you send it to a subagent, and its card says so.
 - **Rerun one rung up**: a finished step that came back weak can be redone on the next rung of the ladder (Haiku low → medium → high → Sonnet medium → high → Opus high → xhigh → Fable). The main agent is asked to delegate it again.
 - **What the history says**: runs, reruns and average cost per model and thinking level, remembered across chats. When a tier's steps often need reruns, it suggests raising that tier; when none ever did, it suggests trying a cheaper rung. One click applies it.
 - **Settings** (opens right under its button, closes with Done):
@@ -34,6 +34,18 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
 All settings and the history are remembered across chats.
 
 **In the terminal** the pane scrolls with the keyboard: ctrl+x tab (or a click) gives it the keys, ↑↓ scroll, Esc returns to the prompt; the mouse wheel works where the terminal passes it through. A line at the top says so. The layout is compact there: the cost is one line, and while a plan awaits approval the steps come first and the cost after them.
+
+## Helpers (other subscriptions)
+
+Off by default; while off, nothing in the rules, the plan tool or the pane changes. When on, a plan step can run in a third place, **helper**: an agent on another subscription (Kiro, Copilot, agy) that the main chat starts through a delegation skill.
+
+- **Needs**: the delegation skill (default `herdr-delegate`; the name and each tier's helper order are stored settings under `helpers`, shown but not editable in the pane), herdr-core `hc`, and at least one helper CLI. The mod runs no shell commands, so it never checks that they exist; it only shapes the plan and the rules.
+- **Turn it on**: Settings → Helpers → "Helpers (other subscriptions)". The plan tool offers `helper` from then on: switching registers the tool again, which replaces its schema at once (and costs the chat one prompt-cache refresh).
+- **Use for** (Settings): *long steps* sends only long self-contained steps (research, code to a spec, sweeps, over ~15 tool calls) to helpers and leaves shorter ones to subagents; *all steps* sends every self-contained step that would otherwise be a subagent step.
+- **Order**: each tier lists the helpers to try, e.g. deep: `kiro-deep → copilot-deep → agy-deep`. The plan and the step cards show it.
+- **Without helpers**: when none is usable (no `hc`, no CLI, nothing the picker finds), the main chat runs the step as a normal subagent and says so. A helper step run that way becomes a subagent step, routed and costed like any other.
+- Helper steps have no Claude subagent usage, so they show no cost and are not counted in the subagent totals. The main chat marks them done itself.
+- With helpers off, a `helper` step in a plan is treated as a subagent step.
 
 ## Keeping the rules in front of the model
 

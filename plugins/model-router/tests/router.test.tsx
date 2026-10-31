@@ -1,5 +1,6 @@
 // Engine tests for model-router: planning, routing, costs, reruns, skill routing, rule delivery, all surfaces.
 import { expect, mock, test } from 'claude-code/testing'
+import type { TestBody } from 'claude-code/testing'
 
 const PLAN = 'mcp__model-router__plan'
 const PANE = {
@@ -252,4 +253,185 @@ test('in the desktop app the rules are written into the chat, and return with th
   const status = await $.tool.call({ tool: PLAN, status: true } as never)
   expect(String(status.result)).toContain('"via":"message"')
   expect(String(status.result)).toContain('"inChat":true')
+})
+
+// --- Helpers (other subscriptions) and plan reuse -------------------------------------
+
+type Registered = { inputSchema?: { properties?: { steps?: { items?: { properties?: { where?: { enum?: string[] } } } } } } }
+
+/** The engine mocks the tests below share; `init` is what the store holds when the chat starts. */
+const boot = async (
+  $: Parameters<TestBody>[0],
+  on: Parameters<TestBody>[1],
+  init: [string, unknown][],
+  agents: { id: string; description: string }[] = [],
+) => {
+  const store = new Map<string, unknown>([['autoApprove', true], ...init])
+  const registered: Registered[] = []
+  const calls: Call[] = []
+  const usageFor: Record<string, unknown> = {}
+
+  on('command.register', () => ({ value: { command: 'router' } }))
+  on('tool.register', (_, e) => {
+    registered.push(e as Registered)
+    return { value: { tool: PLAN } }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('store.get', (_, e) => ({ value: store.get((e as { key: string }).key) }))
+  on('store.set', (_, e) => {
+    store.set((e as { key: string }).key, (e as { value: unknown }).value)
+    return { value: undefined }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('ui.status', () => ({ value: undefined }))
+  on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
+  on('agent.list', () => ({ value: agents.map(a => ({ ...a, type: 'general-purpose', status: 'running' })) }))
+  on('turn.step', async function* (_, e) {
+    const x = e as { turnId: string; index: number }
+    return { turnId: x.turnId, index: x.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: usageFor[x.turnId] ?? null } as never
+  })
+  const rows = mock.session(on)
+  on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }))
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
+  on('tool.call', (_, e) => {
+    calls.push(e as Call)
+    return { result: { agentId: 'a1' } }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  const step = async (turnId: string, usage: unknown, agentId: string) => {
+    usageFor[turnId] = usage
+    const st = $.turn.step({ turnId, index: 0, model: 'x', messageCount: 1, agentId } as never)
+    for await (const _ of st) void _
+    return st.result
+  }
+
+  return { store, registered, calls, rows, step }
+}
+
+const wheres = (r: Registered | undefined) => r?.inputSchema?.properties?.steps?.items?.properties?.where?.enum
+
+test('with helpers off the rules and the plan tool are those of 0.9.3, and a helper step becomes an agent step', async ($, on) => {
+  const { registered, rows } = await boot($, on, [])
+
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('# Model routing')
+  expect(lastRow(rows).toLowerCase()).not.toContain('helper')
+  expect(lastRow(rows)).not.toContain('herdr-delegate')
+
+  const planned = await $.tool.call({
+    tool: PLAN,
+    steps: [{ id: 'h1', title: 'Survey the field', tier: 'deep', where: 'helper' }],
+  } as never)
+  expect(String(planned.result)).toContain('[h1] Survey the field: deep, opus/high, planned')
+  expect(String(planned.result)).not.toContain('helper')
+})
+
+test('with helpers on the rules name the skill and the tier orders, and a helper step keeps its place', async ($, on) => {
+  // Settings stored by an older version have no `helpers` key beyond what the user set.
+  const { registered, rows } = await boot($, on, [['settings', { helpers: { enabled: true } }]])
+
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here', 'helper'])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const rules = lastRow(rows)
+  expect(rules).toContain('runs a step on an agent from another subscription')
+  expect(rules).toContain('herdr-delegate')
+  expect(rules).toContain('agy-light,copilot-light,kiro-light')
+  expect(rules).toContain('kiro-standard,copilot-standard,agy-standard')
+  expect(rules).toContain('kiro-deep,copilot-deep,agy-deep')
+  expect(rules).toContain('over ~15 tool calls')
+  expect(rules).toContain('If no helper is usable')
+
+  const planned = await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'h1', title: 'Survey the field', tier: 'deep', where: 'helper' },
+      { id: 'l1', title: 'List files', tier: 'light', where: 'agent' },
+    ],
+  } as never)
+  expect(String(planned.result)).toContain('[h1] Survey the field: deep, helper (kiro-deep → copilot-deep → agy-deep), planned')
+  expect(String(planned.result)).toContain('[l1] List files: light, haiku/low, planned')
+})
+
+test('with helpers set to all steps the rules say so, and the pane switches helpers off', async ($, on) => {
+  const { store, rows } = await boot($, on, [['settings', { helpers: { enabled: true, use: 'all', skill: 'my-delegate' } }]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('my-delegate')
+  expect(lastRow(rows)).toContain('every self-contained step')
+  expect(lastRow(rows)).not.toContain('over ~15 tool calls')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helpers' })
+  await pane.unmount()
+  expect((store.get('settings') as { helpers: { enabled: boolean; use: string } }).helpers.enabled).toBe(false)
+  expect((store.get('settings') as { helpers: { use: string } }).helpers.use).toBe('all')
+})
+
+test('ids reused after a finished plan start the new plan as planned', async ($, on) => {
+  const { store } = await boot($, on, [])
+  const steps = [
+    { id: 's1', title: 'Read', tier: 'light', where: 'here' },
+    { id: 's2', title: 'Write', tier: 'standard', where: 'here' },
+  ]
+
+  await $.tool.call({ tool: PLAN, steps } as never)
+  const finished = await $.tool.call({ tool: PLAN, done: ['s1', 's2'] } as never)
+  expect(String(finished.result)).toContain('[s1] Read: light, here, done')
+
+  const again = await $.tool.call({ tool: PLAN, steps } as never)
+  expect(String(again.result)).toContain('[s1] Read: light, here, planned')
+  expect(String(again.result)).toContain('[s2] Write: standard, here, planned')
+  expect(String(again.result)).not.toContain(', done')
+  expect((store.get('lifetime') as { plans: number }).plans).toBe(2)
+
+  // A revision of an unfinished plan still keeps its steps' edits.
+  await $.tool.call({ tool: PLAN, done: ['s1'] } as never)
+  const revised = await $.tool.call({ tool: PLAN, steps } as never)
+  expect(String(revised.result)).toContain('[s1] Read: light, here, done')
+  expect((store.get('lifetime') as { plans: number }).plans).toBe(2)
+})
+
+test('helper steps add no agent cost or steps; one run through the Agent tool becomes a subagent step', async ($, on) => {
+  const { store, calls, step } = await boot(
+    $,
+    on,
+    [['settings', { helpers: { enabled: true } }]],
+    [
+      { id: 'x1', description: '[h2] survey' },
+      { id: 'x2', description: '[h1] list files' },
+    ],
+  )
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'h1', title: 'List files', tier: 'light', where: 'helper' },
+      { id: 'h2', title: 'Survey', tier: 'deep', where: 'helper' },
+    ],
+  } as never)
+  const usage = { model: 'claude-haiku-5-5', input_tokens: 2, cache_creation_input_tokens: 4000, cache_read_input_tokens: 37000, output_tokens: 1000 }
+
+  // A subagent's tokens on a step still planned as a helper are not counted.
+  await step('t1', usage, 'x1')
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'x1' } as never)
+  const none = store.get('lifetime') as { agentCost: number; steps: number; byTier: { deep: number } }
+  expect(none.agentCost).toBe(0)
+  expect(none.steps).toBe(0)
+  expect(none.byTier.deep).toBe(0)
+
+  // Marking a helper step done through the plan tool counts nothing either.
+  await $.tool.call({ tool: PLAN, done: ['h2'] } as never)
+  expect((store.get('lifetime') as { steps: number }).steps).toBe(0)
+
+  // The fallback: the main chat runs h1 with the Agent tool. It is a subagent step from then on.
+  await $.tool.call({ tool: 'Agent', description: '[h1] list files', prompt: 'go' })
+  expect(calls.at(-1)?.model).toBe('haiku')
+  await step('t2', usage, 'x2')
+  const some = store.get('lifetime') as { agentCost: number }
+  expect(some.agentCost).toBeGreaterThan(0)
+  const text = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(text.result)).toContain('[h1] List files: light, haiku/low, running')
+  expect(String(text.result)).toContain('[h2] Survey: deep, helper (kiro-deep → copilot-deep → agy-deep), done')
 })
