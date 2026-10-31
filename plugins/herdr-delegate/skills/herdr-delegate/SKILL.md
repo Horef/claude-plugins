@@ -28,7 +28,7 @@ Run `scripts/helpers.py pick <tier>` (light, standard, deep, argon), or `pick a,
 
 ## Steps
 
-1. **Check.** `echo $HC_TERMINAL_ID` is your address (the helpers report to it). If it's empty, you're not in an hc terminal and helpers can't reach you: tell the person and use the harness's subagents. Then pick a template (above).
+1. **Check.** `echo $HC_TERMINAL_ID` is your address (the helpers report to it). If it's empty, you're not in an hc terminal and helpers can't reach you: tell the person and use the harness's subagents. Then pick a template (above). For a model-router plan step with where = "helper", pass the order the router's rules give for that tier: `helpers.py pick <a,b,c>`; when it finds none, run the step with the Agent tool as the rules say.
 2. **Brief.** Self-contained: goal, exact scope (files and folders it may touch), what to return, and where (a file path for anything over a few lines). Include "Report to the lead (<your address>) with hc send". For code: a branch or worktree of its own, and whether it may commit. The template body already covers the reporting protocol, scope discipline and honesty.
 3. **Launch.** `hc run --json --bg --name <short-name> --cwd <dir> <template> "<brief>"`. Check `first_message.sent`. If false, `hc read <name>`: a first-run dialog is probably showing (see CLI quirks). Answer it, then `hc send <name> "<brief>"`. Never relaunch blindly. Copilot always shows false (see quirks).
 4. **Keep working.** Then `hc wait --children any` (or `all`). `reason: message` means a report arrived as your next input. `timeout` is a check-in, so wait again. Never sleep or poll.
