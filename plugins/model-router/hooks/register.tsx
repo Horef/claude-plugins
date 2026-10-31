@@ -1,3 +1,4 @@
+// The model-router mod: plan tool, routing of tagged Agent calls, cost accounting, rules delivery and the pane.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
@@ -287,7 +288,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
   // A settings row: what the switch does on the left, On/Off on the right.
   const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void) => (
-    <Box key={`row:${key}`} flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="sm">
+    <Box key={`row:${key}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
       <Box flexDirection="column" flexShrink={1}>
         <Text weight="medium">{label}</Text>
         <Text dimColor size="footnote" wrap="wrap">{help}</Text>
@@ -306,15 +307,15 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   )
 
   const section = (title: string, aside?: string) => (
-    <Box flexDirection="row" justifyContent="space-between" alignItems="center" marginTop="xs">
+    <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" marginTop="xs">
       <Text weight="semibold">{title}</Text>
       {aside ? <Text dimColor size="footnote">{aside}</Text> : null}
     </Box>
   )
 
   const stat = (label: string, value: string, color?: string, sub?: string) => (
-    <Box flexDirection="column" flexGrow={1}>
-      <Text dimColor size="caption">{label}</Text>
+    <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={12}>
+      <Text dimColor size="caption" wrap="wrap">{label}</Text>
       <Text weight="semibold" tabular color={color}>{value}</Text>
       {sub ? <Text size="caption" tabular color={color}>{sub}</Text> : null}
     </Box>
@@ -346,19 +347,19 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     const lifeSaved = savedOf(life)
     const body =
       view === 'plan' ? (
-        <Box flexDirection="row" columnGap="md">
+        <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
           {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, `≈${fmtUsd(planMain)}`)}
           {stat('Subagents', `≈${fmtUsd(agentCost)}`)}
           {savedStat(saved, planMain, list.reduce((n, x) => n + x.mainCost, 0))}
         </Box>
       ) : view === 'chat' ? (
-        <Box flexDirection="row" columnGap="md">
+        <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
           {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, `≈${fmtUsd(m.cost)}`)}
           {stat('Subagents', `≈${fmtUsd(chat.agentCost)}`)}
           {savedStat(chatSaved, m.cost, chat.mainEquivalent)}
         </Box>
       ) : (
-        <Box flexDirection="row" columnGap="md">
+        <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
           {savedStat(lifeSaved, life.mainCost, life.mainEquivalent)}
           {stat('Subagents cost', `≈${fmtUsd(life.agentCost)}`)}
           {stat('On main model', `≈${fmtUsd(life.mainEquivalent)}`)}
@@ -372,7 +373,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           : `Since ${since(life.since)}: ${life.steps} delegated steps in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
     return (
       <Box flexDirection="column" rowGap="xs" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
-        <Box flexDirection="row" columnGap="xs">
+        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
           {VIEWS.map(v => (
             <Button key={`cost-view:${v.value}`} plain={v.value !== view ? true : undefined} variant={v.value === view ? 'primary' : undefined} onPress={() => void update($, costView, () => v.value)}>
               {v.label}
@@ -490,7 +491,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               void editSettings($, s => ({ ...s, tiers: { ...s.tiers, [t]: { ...s.tiers[t], ...patch } } }))
             return (
               <Box key={`tierset:${t}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={TIER_COLOR[t]} paddingX="sm" paddingY="xs">
-                <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+                <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
                   <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
                   <Button key={`set-scope:${t}`} plain dimColor={!ts.scopeNote} onPress={() => edit({ scopeNote: !ts.scopeNote })}>
                     {ts.scopeNote ? '✓ Scope note' : 'Scope note off'}
@@ -513,8 +514,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             <Text dimColor size="footnote" wrap="wrap">None yet. Skills you use in a chat appear here, or add one by name.</Text>
           )}
           {[...mapped.map(([n]) => n), ...unmapped].map(name => (
-            <Box key={`skill:${name}`} flexDirection="row" justifyContent="space-between" alignItems="center" columnGap="sm">
-              <Text mono size="footnote" wrap="truncate">{name}</Text>
+            <Box key={`skill:${name}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
+              <Box flexShrink={1}>
+                <Text mono size="footnote" wrap="truncate">{name}</Text>
+              </Box>
               {pick(
                 `skill-tier:${name}`,
                 set.skills[name] ?? 'off',
@@ -541,8 +544,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             />
           )}
 
-          <Box flexDirection="row" justifyContent="space-between" alignItems="center" marginTop="xs">
-            <Box flexDirection="row" columnGap="xs">
+          <Box flexDirection="column" rowGap="xs" marginTop="xs">
+            <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
               <Button key="reset-tiers" plain dimColor onPress={() => void editSettings($, s => ({ ...s, tiers: DEFAULT_SETTINGS.tiers }))}>
                 Reset tiers
               </Button>
@@ -553,9 +556,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                 Reset statistics
               </Button>
             </Box>
-            <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
-              Done
-            </Button>
+            <Box flexDirection="row" justifyContent="flex-end">
+              <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
+                Done
+              </Button>
+            </Box>
           </Box>
         </Box>
       )}
@@ -600,7 +605,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         </Box>
       ))}
       {stats.map(r => (
-        <Box key={`rung:${r.label}`} flexDirection="row" justifyContent="space-between">
+        <Box key={`rung:${r.label}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" columnGap="sm">
           <Text mono size="footnote">{r.label}</Text>
           <Text dimColor size="footnote" tabular>
             {r.n} runs · {r.reruns} reruns · ≈{fmtUsd(r.avgCost)} each{r.setupHeavy ? ` · ${r.setupHeavy} start-up heavy` : ''}

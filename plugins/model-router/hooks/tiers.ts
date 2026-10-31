@@ -1,3 +1,4 @@
+// Default tiers, model prices, the escalation ladder and other constants of model-router.
 import type { Effort, Model, Settings, Tier } from '../types'
 
 // Defaults only: the pane's Settings change them, remembered across sessions.

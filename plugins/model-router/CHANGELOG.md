@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.9.2 (2026-10-30)
+- settings and cost rows wrap in a narrow pane; purpose headers on code files (O2)
+
 ## 0.9.1 (2026-10-28)
 - live cost in every view; percentage saved
 
