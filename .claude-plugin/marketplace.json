@@ -46,6 +46,12 @@
       "source": "./plugins/paper-premark",
       "description": "Pre-read a scientific paper in DEVONthink and mark it up in Sergiy's colour scheme (whole logical units, comments, skim-safe markers) plus a linked reading-map note. Works with or without a project.",
       "category": "personal"
+    },
+    {
+      "name": "session-status-line",
+      "source": "./plugins/session-status-line",
+      "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, cost, last turn, compactions and files edited; one line, or two when narrow",
+      "category": "general"
     }
   ]
 }

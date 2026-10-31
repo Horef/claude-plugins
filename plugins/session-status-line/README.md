@@ -1,0 +1,44 @@
+# session-status-line
+
+A compact status line above the prompt that shows the state of a session at a glance. It adds no network calls, writes no files of its own and reads only what Claude Code already exposes to mods.
+
+```
+✅ ◆ Opus 5.5 (H) │ 🟢 ▰▰▱▱▱▱ 23% 227k/1M │ $7.62
+5h 4% ⟳4h54m │ 7d 21% ⟳5d14h │ ⏱8s │ 🗜0 │ 12 turns · 1h20m
+```
+
+## What it shows
+
+| Part | Source |
+|---|---|
+| ⏳ working / ✅ idle | the band's own "a turn is running" flag |
+| model and effort `(H)` | `$.session.model()`, re-read each turn, after `/model` and once a minute; the effort each main-loop request actually runs with. A model switch shows `⇄` in magenta for three turns |
+| context bar, %, used/total | `$.session.usage()` and `session.measure`; green under 50%, then yellow, orange, red from 90% with a `/compact` hint |
+| `5h` / `7d` limits | the rate-limit windows Claude Code reports (subscription accounts only), with time to reset; `⚠` appears only when the average pace would hit the limit well before the reset |
+| cost | the session's running cost, as `/cost` totals it |
+| ⏱ last turn | duration of the last main-loop turn |
+| 🗜 compactions | how many times this chat was compacted (manual or automatic; precomputed and vetoed ones are not counted). Saved per chat in `$.store`, so a resumed chat keeps it; turns orange from 3 |
+| ✎ files | distinct files successfully edited or written this session |
+| turns · age | completed turns and session length |
+
+A part with no data is hidden. When the row does not fit, it becomes two lines ("now", then "budget"), and a line that is still too long drops parts from the least important end (`dropOrder` in `CONFIG`).
+
+## Commands
+
+- `/status-line`: toggle; `on` / `off`.
+- `/status-line auto|one|two`: layout. `auto` (default) uses one line when it fits.
+- `/status-line debug`: version, surface, measured band width and the width of each drawn line.
+
+The choices are remembered across chats. `NO_COLOR=1` drops colours; `SESSION_STATUS_ASCII=1` uses plain ASCII glyphs.
+
+## Install
+
+From this marketplace: `/plugin install session-status-line@horef-claude-plugins`. To load it from a folder instead, set `CLAUDE_CODE_PLUGIN_DIRS` to the plugin's path in `~/.claude/settings.json` (an `env` entry) and add `CLAUDE_CODE_PLUGIN_DIR_WATCH=1` to reload it on edits.
+
+Colours, thresholds, icons, widths, drop order and the first-line split are in the `CONFIG` object at the top of `hooks/register.tsx`.
+
+## Known limits
+
+- Claude Code does not announce a model or effort change between turns, so those update at the next request (model: at most a minute).
+- Chats compacted before this mod was loaded start at 0; `/clear` starts a new conversation and resets the count.
+- Tests (`tests/render.test.tsx`) run in Claude Code's function-hooks test runner: `claude plugin test plugins/session-status-line`. They are not run in CI.

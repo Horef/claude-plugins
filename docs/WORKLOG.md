@@ -2,6 +2,19 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-31 - session-status-line 0.3.0 adopted
+Changed: session-status-line (general mod) added at 0.3.0 from the owner's own `~/.claude/mods` copy, built in a chat 2026-10-04..11: a status band above the prompt with model and effort, context fill, 5h and weekly limits with reset and pace, cost, last-turn time, a per-chat compaction counter and files edited; one line, or two when narrow. `loop.py new --mod` made the unit; the code was copied in, the test moved to `tests/` as in model-router, the CHANGELOG reconstructed from the chat, and 5 judged cases written (a mod has no trigger cases). `loop.py new --from` refused the folder (it wants a SKILL.md) and left a stray `plugin.json`, recorded as strange-loop O17. Not verified in CI: the mod's test only runs in Claude Code's function-hooks runner.
+
+| Verification command | Result |
+|---|---|
+| `loop.py check` | 0 errors, 0 warnings |
+| `docmap.py update`, then `check` | 0 errors |
+| `claude plugin validate plugins/session-status-line` | passed (only the missing-author warning every plugin has) |
+| `claude plugin test plugins/session-status-line` | 1 test passed (both surfaces, wide, two-line and narrow draws, compaction counting) |
+| `git diff --check` | clean |
+
+Next: install it from the marketplace and retire the hand-placed copy in `~/.claude/mods`; the desktop-app width detection is confirmed only by the owner's screenshots and `/status-line debug`.
+
 ## 2026-10-31 - course-lecture-notes 1.3.0: blocks go to Anki automatically
 Changed: course-lecture-notes gains Workflow step 7 at the owner's request: finished blocks are sent to his Anki pipeline with its new `anki_blocks.py` (one generation per block, no clipboard, resumable), deck name from the course's `AGENTS.local.md`; the reply step is now 8 and a judged case covers the new step. Also corrected step 5's "Anki cannot show it" (owner: cards show images; the pipeline builds cards from text only). First used on 76901 Lecture 3: 47 blocks, 70 new notes; one block failed generator validation and was added by hand.
 
