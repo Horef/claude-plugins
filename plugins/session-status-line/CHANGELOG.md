@@ -2,6 +2,11 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.4.0 (2026-10-31)
+- Outside budgets on the budget line: Kiro credits with overage charges and reset, Copilot premium credits and reset, Claude extra usage once credits are spent or a window is full; `Kiro log in` when its login is stale
+- Read every five minutes in the background, shared across chats; `/status-line quotas on|off`; `debug` shows the readings
+- Owner's request (2026-10-31); sources found by probing each CLI and API read-only
+
 ## 0.3.0 (2026-10-11)
 - Two-line layout when one line does not fit (`/status-line auto|one|two`, remembered); `/status-line debug` reports version, surface and measured width
 - Dedicated compaction counter, shown from 0, saved per chat so a resumed chat keeps it; precomputed and vetoed compactions are not counted

@@ -63,3 +63,87 @@ test('renders and drops segments when narrow', async ($, on) => {
     expect(narrow).toContain('5h 24%')
   }
 })
+
+// Outside budgets: Kiro over its limit with overage, Copilot used up, Claude's
+// 5h window full so its extra usage shows. The test's hooks stand for sqlite3,
+// gh and the two HTTP services; no real call leaves the test.
+const quotaEngine = (on: any, opts: { kiroStatus?: number; whoamiFails?: boolean; tokenExpired?: boolean } = {}) => {
+  const now = Date.parse('2026-10-31T12:00:00Z')
+  mock.clock(on, { now })
+  mock.store(on)
+  on('session.measure', ($: any, e: any) => ({ changed: e.changed }))
+  on('env.get', ($: any, e: any) => ({ value: e.name === 'HOME' ? '/Users/test' : undefined }))
+  on('session.authorize', () => ({ value: { handle: 'h1', kind: 'bearer' } }))
+  const run = (e: any): any => {
+    const [cmd, , , sql] = e.argv
+    if (cmd === 'sqlite3' && String(sql).includes('auth_kv')) {
+      const expires = new Date(now + (opts.tokenExpired ? -60_000 : 3_600_000)).toISOString()
+      return { exitCode: 0, stdout: JSON.stringify({ access_token: 'tok', expires_at: expires }), stderr: '' }
+    }
+    if (cmd === 'sqlite3') return { exitCode: 0, stdout: JSON.stringify({ arn: 'arn:aws:codewhisperer:us-east-1:1:profile/X' }), stderr: '' }
+    if (cmd === 'kiro-cli') return { exitCode: opts.whoamiFails ? 1 : 0, stdout: '', stderr: '' }
+    if (cmd === 'gh') {
+      return {
+        exitCode: 0, stderr: '',
+        stdout: JSON.stringify({
+          quota_reset_date_utc: '2026-11-01T00:00:00.000Z',
+          quota_snapshots: { premium_interactions: { entitlement: 30000, credits_used: 30000, remaining: 0, unlimited: false } },
+        }),
+      }
+    }
+    return { exitCode: 127, stdout: '', stderr: 'not found' }
+  }
+  on('process.run', ($: any, e: any) => ({ value: run(e) }))
+  const fetch = (e: any): any => {
+    if (e.url.includes('codewhisperer.us-east-1')) {
+      if (e.init?.headers?.authorization !== 'Bearer tok') return { status: 400, ok: false, headers: {}, text: '' }
+      const status = opts.kiroStatus ?? 200
+      return {
+        status, ok: status === 200, headers: {},
+        text: JSON.stringify({
+          nextDateReset: Date.parse('2026-11-01T00:00:00Z') / 1000,
+          usageBreakdownList: [{ resourceType: 'CREDIT', currency: 'USD', currentUsageWithPrecision: 2059.35, usageLimitWithPrecision: 2000, overageCharges: 2.374 }],
+        }),
+      }
+    }
+    if (e.url === 'https://api.anthropic.com/api/oauth/usage' && e.init?.auth === 'h1') {
+      return { status: 200, ok: true, headers: {}, text: JSON.stringify({ extra_usage: { is_enabled: true, monthly_limit: 5000, used_credits: 1240, currency: 'USD' } }) }
+    }
+    return { status: 404, ok: false, headers: {}, text: '' }
+  }
+  on('http.fetch', ($: any, e: any) => ({ value: fetch(e) }))
+}
+
+test('shows Kiro, Copilot and Claude extra usage', async ($, on) => {
+  quotaEngine(on)
+  await $.session.measure({ context: { tokens: 10_000, window: 200_000, percent: 5 }, rateLimits: [
+    { kind: 'five_hour', percentUsed: 100, resetsAt: '2026-10-31T13:00:00Z' },
+  ], changed: ['context'] } as any)
+  await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const wide = await draw($, surface, 220)
+    console.log(surface, 'quotas:', wide)
+    expect(wide).toContain('Kiro 103% +$2.37 ⟳12h00m')
+    expect(wide).toContain('Copilot 100% ⟳12h00m')
+    expect(wide).toContain('extra $12.40/$50')
+  }
+  const off = await $.command.run({ command: 'status-line', args: 'quotas off' } as any)
+  expect((off as any).text).toContain('off')
+  expect(await draw($, 'terminal', 220)).not.toContain('Kiro')
+})
+
+test('a stale Kiro login asks to log in', async ($, on) => {
+  quotaEngine(on, { tokenExpired: true, whoamiFails: true })
+  await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
+  const line = await draw($, 'terminal', 220)
+  expect(line).toContain('Kiro log in')
+  expect(line).toContain('Copilot 100%')
+  // No Claude window is full here, but credits were spent this month, so extra usage shows.
+  expect(line).toContain('extra $12.40')
+})
+
+test('a rejected Kiro token also asks to log in', async ($, on) => {
+  quotaEngine(on, { kiroStatus: 403 })
+  await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
+  expect(await draw($, 'terminal', 220)).toContain('Kiro log in')
+})

@@ -50,7 +50,7 @@
     {
       "name": "session-status-line",
       "source": "./plugins/session-status-line",
-      "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, cost, last turn, compactions and files edited; one line, or two when narrow",
+      "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, Kiro and Copilot quotas and Claude extra usage, cost, last turn, compactions and files edited; one line, or two when narrow",
       "category": "general"
     },
     {
