@@ -1,0 +1,6 @@
+{
+  "name": "herdr-delegate",
+  "version": "0.1.0",
+  "description": "Delegate self-contained steps to helper agents on other subscriptions (Kiro, Antigravity/agy, GitHub Copilot) through Herdr's herdr-core (hc): pick a helper by tier, launch it with a brief, act as its approval judge, collect its report, review it, clean up. Use when the person asks to offload or delegate work, when Claude's limits are tight, or when a router plan marks a step for herdr. Needs hc on PATH.",
+  "license": "MIT"
+}
