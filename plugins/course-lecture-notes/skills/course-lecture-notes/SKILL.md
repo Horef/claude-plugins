@@ -9,7 +9,7 @@ Use this skill when Sergiy asks for help learning a lecture or tutorial for one 
 
 ## Goals (his stated preferences)
 1. **Complete teaching text, not pointers.** He must be able to learn everything the lecture taught from the notes alone. Explain every slide's content in full prose, with definitions, mechanisms, worked examples and numbers. Links to the textbook or slides are only optional "Deeper:" reading at the end of a block.
-2. **Logical, self-contained blocks.** He pastes single blocks into his Anki generator (~/Scripts/GeminiAnkiCards). Its prompt creates one note per concept, and it requires every note to be understandable without the source. Therefore:
+2. **Logical, self-contained blocks.** Every block goes into his Anki generator (~/Scripts/GeminiAnkiCards) on its own: Workflow step 7 sends them one by one. Its prompt creates one note per concept, and it requires every note to be understandable without the source. Therefore:
    - Split the notes into Parts (`# Part N – …`) and numbered blocks (`### N.M Title`), with `---` between blocks.
    - Each block covers ONE concept and must make sense when copied alone. Re-state the minimal context, and never write "see block X", "as above" or "in the figure". Describe in prose whatever a figure shows.
    - Use bold for key terms, plus short lists and worked examples. Prefer prose or lists over large tables, because the generator converts tables into separate cards.
@@ -32,7 +32,7 @@ Rules:
 - Derivations go step by step. Put each step as its own display line, followed by a short reason ("substituting...", "integrating both sides..."). Never jump to the result.
 - Give each major formula at least one worked numerical example.
 - For math-heavy courses, a block may hold one equation together with its explanation, so that each equation can become its own Anki card. His Anki pipeline converts the LaTeX to Anki's `\( \)` notation itself.
-- He should copy blocks into the Anki pipeline from DEVONthink's Markdown source (edit view), not from the rendered preview. Copying rendered MathJax produces garbled text.
+- The batch script (Workflow step 7) reads the Markdown source. When he copies a block by hand, he should copy it from DEVONthink's Markdown source (edit view), not from the rendered preview: copying rendered MathJax produces garbled text.
 - The cloud workspace cannot load MathJax (no CDN access), so math rendering cannot be previewed there. Stick to the tested forms above, and in the reply ask him to spot-check one block with a matrix or derivation.
 
 ## Visual plan (do this before writing the blocks)
@@ -66,13 +66,18 @@ Menu of figures that teach well (pick what the lecture supports):
    - Run the loop: lint must be clean (`P.finish(fig)` returns svg and problems) → render → look at the PNG → fix. Check that each figure agrees with the numbers in the text. Iterate on batches of 4–6 figures per render sheet, without `cvd`; do one `cvd=True` pass at the end for the colour-coded figures.
    - Insert the figures with `devonthink.substitute(md, {name: (svg, caption)})`. This keeps each SVG on one line, uses rgb() colours (hex colours become DEVONthink tags on import), and puts a blank line before the italic caption.
    - Simulate rather than sketch when the figure shows model behaviour (traces, flows, fixed points), so the figure matches the numbers in the text.
-   - The block's prose must still describe what the figure shows (Anki cannot show it).
+   - The block's prose must still describe what the figure shows: his Anki pipeline builds cards from the block's text only (Anki itself shows images, but the pipeline does not upload them), so a figure that is not described in words is lost from the cards.
    - Only when he wants figures as image files (e.g., to attach to Anki cards): render single-figure PNGs, copy them to /mnt/user-data/outputs/, device_commit_files them to ~/Downloads/<course>-figures/, import_file into the course's "Figures" subgroup, reset the tags to [<course number>, figure], and embed them with `![Figure](x-devonthink-item://<UUID>)`.
 6. **Save:**
    - DEVONthink: a markdown record named "<Lecture/Tutorial N> - <title> - Study Guide" in the same group as the slides (e.g. the course's Lectures subgroup), tagged `[<course number>, study-guide, lecture-N]` (or `tutorial-N`), matching the earlier guides. Notes with figures are large (0.3–0.7 MB): copy the file to /mnt/user-data/outputs/, device_commit_files it into a connected folder (a `_to_delete/` staging folder in any connected folder, e.g. `~/Scripts/_to_delete/`), and import_file it, rather than pasting a huge string. If it already exists, update it: use patch mode for small edits and replace mode for rewrites. After import, **reset the tags** (import brings stray auto-tags such as "test", "water", "figure").
    - Add an annotation on the lecture PDF that links to the notes and the main book sections (set_record_annotation). Do not change the PDF's own tags.
    - Write a copy to the claude.ai project with project_write (local_path) so future chats can build on it.
-7. **Reply briefly:** what was created and where, the number of blocks and figures, which content is beyond the lecture, anything he should spot-check, the suggested chat name, and what comes next in the course schedule.
+7. **Send the blocks to Anki** (owner preference, 2026-10-31: automatic instead of pasting blocks by hand). Use `anki_blocks.py` in his Anki pipeline folder (the project's `anki_pipeline` key in `AGENTS.local.md`, else ~/Scripts/GeminiAnkiCards), run with that folder's own `gemini_api/bin/python`. It sends each `### N.M` block through the generator exactly as his Keyboard Maestro macro would (auto-apply, `--quiet`), drops inline `<svg>` lines, keeps captions as text, never touches the clipboard, and remembers finished blocks so a rerun resumes.
+   - It needs Anki open (AnkiConnect) and the course's deck name: the project's `anki_deck` key in `AGENTS.local.md`, else ask him once and record it there.
+   - `anki_blocks.py NOTE.md "DECK" --list` shows the blocks and what is done. If he already processed some blocks by hand, start after the last one with `--from N.M`.
+   - Run one block first with `--only N.M`, read the new cards back through AnkiConnect (`findNotes "deck:DECK" added:1`, then `notesInfo`) and check that they are sensible and the LaTeX survived; then run the rest in the background (about a minute per block).
+   - It stops at the first failed block; rerunning the same command continues from there. Never pass `--force` unless he asks: it re-sends finished blocks and creates duplicates.
+8. **Reply briefly:** what was created and where, the number of blocks and figures, how many blocks went to Anki and how many cards they made (and any block that failed), which content is beyond the lecture, anything he should spot-check, the suggested chat name, and what comes next in the course schedule.
 
 ## Learning loop
 

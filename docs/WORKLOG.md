@@ -2,6 +2,15 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-31 - course-lecture-notes 1.3.0: blocks go to Anki automatically
+Changed: course-lecture-notes gains Workflow step 7 at the owner's request: finished blocks are sent to his Anki pipeline with its new `anki_blocks.py` (one generation per block, no clipboard, resumable), deck name from the course's `AGENTS.local.md`; the reply step is now 8 and a judged case covers the new step. Also corrected step 5's "Anki cannot show it" (owner: cards show images; the pipeline builds cards from text only). First used on 76901 Lecture 3: 47 blocks, 70 new notes; one block failed generator validation and was added by hand.
+
+| Verification command | Result |
+|---|---|
+| `loop.py check --base origin/main` | 0 errors, 0 warnings |
+| `loop.py eval course-lecture-notes` | 4 judged cases listed (none scripted) |
+| `docmap.py update`, then `check` | 0 errors |
+
 ## 2026-10-31 - paper-premark adopted
 Changed: paper-premark 1.0.0 (personal) copied in from the owner's claude.ai upload with `loop.py new --from`. One file (SKILL.md), kept as found; the Learning loop triggers are adapted, 4 judged cases written (2 tasks, 2 trigger cases), 5 observations seeded as wish/friction (O1-O5), and a worktree pitfall of `loop.py new` recorded as strange-loop O16. The calibration history stays in SKILL.md for now (O4). No `evals/run.py`: every step needs DEVONthink (O1).
 
