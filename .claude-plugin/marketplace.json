@@ -40,6 +40,12 @@
       "source": "./plugins/model-routing",
       "description": "Portable model routing as a skill for agents without the model-router mod (Copilot, Kiro, Codex, Cursor, claude.ai): plan steps by tier, get approval, run each on the cheapest model that does it well",
       "category": "general"
+    },
+    {
+      "name": "paper-premark",
+      "source": "./plugins/paper-premark",
+      "description": "Pre-read a scientific paper in DEVONthink and mark it up in Sergiy's colour scheme (whole logical units, comments, skim-safe markers) plus a linked reading-map note. Works with or without a project.",
+      "category": "personal"
     }
   ]
 }

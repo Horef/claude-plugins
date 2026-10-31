@@ -1,5 +1,5 @@
 # Status
-Updated 2026-10-30. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-10-31. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -26,7 +26,7 @@ Updated 2026-10-30. Snapshot only - overwrite each session; history is in `docs/
 1a. Owner: save the figure profile to `~/.config/scientific-figures/profile.md` (sent in chat) and add one line to claude.ai's standing instructions so chats without Mac access know it (D9).
 2. Use the skills normally; real observations are what the loop needs.
 2b. Existing projects: run project-foundations' Upgrade (step 6b) once each, so their AGENTS.md routes scaffolding lessons to the skill and their docmap warns about newer versions.
-2a. To add a skill (e.g. paper-premark from its claude.ai upload): `loop.py new <name> --description ... --category ... --from <folder>` (strange-loop section 8).
+2a. To add a skill: `loop.py new <name> --description ... --category ... --from <folder>` (strange-loop section 8); run it with the global `--genome "$PWD"` when working in a git worktree. paper-premark 1.0.0 is adopted on branch `paper-premark-skill` (PR open, not merged); its judged cases have never been run and it needs the owner's Mac with DEVONthink.
 3. Reflection passes when units turn ripe: scientific-figures O5; project-foundations O3 (templates on demand, which also fixes the line budget).
 
 ## Blockers

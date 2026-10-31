@@ -2,6 +2,19 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-31 - paper-premark adopted
+Changed: paper-premark 1.0.0 (personal) copied in from the owner's claude.ai upload with `loop.py new --from`. One file (SKILL.md), kept as found; the Learning loop triggers are adapted, 4 judged cases written (2 tasks, 2 trigger cases), 5 observations seeded as wish/friction (O1-O5), and a worktree pitfall of `loop.py new` recorded as strange-loop O16. The calibration history stays in SKILL.md for now (O4). No `evals/run.py`: every step needs DEVONthink (O1).
+
+| Verification command | Result |
+|---|---|
+| `python3 plugins/strange-loop/skills/strange-loop/scripts/loop.py --genome "$PWD" check --base origin/main` | 0 errors, 0 warnings |
+| `python3 plugins/strange-loop/skills/strange-loop/scripts/loop.py --genome "$PWD" eval paper-premark` | 4 judged cases listed (none scripted) |
+| `python3 plugins/project-foundations/skills/project-foundations/scripts/docmap.py update`, then `check` | 0 errors |
+| `claude plugin validate .` and `claude plugin validate plugins/paper-premark` | passed (only the missing-author warning every plugin has) |
+| `git diff --check` | clean |
+
+Next: owner reviews and merges the PR (new unit, personal); first real use on a paper turns O1-O3 into evidence.
+
 ## 2026-10-31 - Direct invocation; skills without strange-loop
 Changed: the owner asked what happens when strange-loop is invoked by hand, and when someone installs the other skills without it. strange-loop 0.11.0 defines direct invocation (sync, status, offer next steps) and makes the reply-block fallback opt-in, so people without strange-loop see no observation blocks; its README explains partial installs and taking part by forking. The other three skills get the same fallback wording (patch releases).
 
