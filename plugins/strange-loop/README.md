@@ -99,6 +99,14 @@ Sessions without the clone (claude.ai without the computer connected, cloud sess
 
 Claude Code updates an installed plugin only when its `plugin.json` `version` changes (the docs do not say whether claude.ai's sync also needs that), which is one reason every change to a plugin bumps it (`loop.py bump`, enforced by `loop.py check --base`). Remove older copies of the same skills (folders in `~/.claude/skills/`, zips uploaded to claude.ai by hand) once the synced ones work, or agents see two versions and may load the stale one. `loop.py pack <name>` still builds an upload zip for a harness that cannot add a marketplace.
 
+## With only some of the skills
+
+Every skill works on its own; strange-loop is what lets it learn. A skill's Learning loop section calls the note command, which needs a clone of the genome and `~/.config/strange-loop/genome`, not the strange-loop plugin itself. So:
+
+- **Clone and config, strange-loop not installed:** lessons are still recorded in the clone, but nothing syncs them automatically and no digest appears; run `loop.py sync` yourself, and ask for a reflection when you want one (the strange-loop skill is in the clone).
+- **Neither (someone who installed one skill from this marketplace):** nothing extra happens. The skill works, the note command fails quietly, and no observation blocks appear unless the person's standing instructions say they take part in improving their skills. The version check in project-foundations' `docmap.py` stays silent too.
+- **To take part:** fork this repository, clone the fork, point `~/.config/strange-loop/genome` at it and install strange-loop: the fork becomes your own genome, evolving with your use. Lessons worth sharing upstream go back as pull requests or issues (an "Observations for <name>" block pastes straight into an issue).
+
 ## Commands
 
 ```bash

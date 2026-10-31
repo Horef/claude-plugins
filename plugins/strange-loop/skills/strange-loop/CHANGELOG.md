@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.11.0 (2026-10-31)
+- The reply-block fallback is opt-in: only when the person takes part in improving their skills (a clone, or their standing instructions say so); otherwise nothing, except one line when the skill clearly failed. 'Invoked directly' now has a defined behaviour (sync, status, offer next steps). README: what happens with only some skills installed, and how others take part by forking. (O15)
+
 ## 0.10.0 (2026-10-30)
 - Section 1: artifacts remember their origin - every lasting artifact a skill installs into projects carries a provenance line and the note command, and tools compare their version with the genome; section 8 adds it to adoption. (O14)
 
