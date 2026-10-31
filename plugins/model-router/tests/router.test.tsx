@@ -182,6 +182,12 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   // A narrow pane with settings open still draws every control, Done included.
   const narrow = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 28 }, surface: 'terminal' } as never)
   expect((await narrow.find({ type: 'Button', key: 'settings-done' } as never))).toBeTruthy()
+  // The terminal draws no Select (its list opens inline and shifts the row): pickers
+  // are buttons that cycle to the next option on Enter.
+  expect(await narrow.find({ type: 'Select' } as never)).toBeFalsy()
+  const tierBtn = await narrow.find({ type: 'Button', key: 'set-model:light' } as never)
+  expect(String((tierBtn as any)?.text ?? JSON.stringify(tierBtn))).toContain('⇄')
+  await narrow.press({ key: 'set-model:light' })
   await narrow.unmount()
 
   // The whole pane, settings open, draws on every surface.
