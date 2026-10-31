@@ -2,6 +2,10 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.10.1 (2026-10-31)
+- Terminal pane: pickers are buttons that cycle on Enter (marked ⇄) instead of Selects, whose list opened inline, shifted the row and could not be closed without picking (owner's report)
+- Helper order rows drawn as one aligned line per tier
+
 ## 0.10.0 (2026-10-31)
 - Helpers (other subscriptions), off by default: a third place a step can run, `helper`, started by a delegation skill (default `herdr-delegate`); rules, plan tool schema and pane are unchanged while off
 - Default helper order at every tier: Kiro, then Copilot, then agy

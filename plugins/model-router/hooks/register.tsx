@@ -324,7 +324,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   // The terminal gives the pane few rows and scrolls only with the keyboard: draw it compact.
   const tty = e.surface === 'terminal'
   const site = e.props as { isFocused?: boolean; scroll?: { offset: number } }
-  const Select = hasFields && 'Select' in ui ? ui.Select : undefined
+  // The terminal draws a Select's list inline, pushing its neighbours about, and only a
+  // pick closes it: there a button that cycles to the next option on Enter reads better.
+  const Select = hasFields && !tty && 'Select' in ui ? ui.Select : undefined
   const Input = hasFields && 'Input' in ui ? ui.Input : undefined
 
   const list = await read($, steps)
@@ -353,7 +355,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       <Select key={key} value={value} options={options} onSelect={v => onPick(v)} />
     ) : (
       <Button key={key} onPress={() => onPick(cycle(options.map(o => o.value), value))}>
-        {options.find(o => o.value === value)?.label ?? value}
+        {`${options.find(o => o.value === value)?.label ?? value}${tty ? ' ⇄' : ''}`}
       </Button>
     )
 
@@ -603,7 +605,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             void editSettings($, s => ({ ...s, openPane: !s.openPane })),
           )}
 
-          {group('Tiers', 'Model and thinking level for steps sent to a subagent. "Here" steps always use this chat\'s model.')}
+          {group('Tiers', `Model and thinking level for steps sent to a subagent. "Here" steps always use this chat's model.${tty ? ' ⇄ buttons: Enter picks the next option.' : ''}`)}
           {TIER_ORDER.map(t => {
             const ts = set.tiers[t]
             const edit = (patch: Partial<typeof ts>) =>
@@ -650,11 +652,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   v => void editHelpers($, { use: v === 'all' ? 'all' : 'long' }),
                 )}
               </Box>
+              <Text dimColor size="footnote" wrap="wrap">Helper order per tier, first usable wins:</Text>
               {TIER_ORDER.map(t => (
-                <Box key={`helper-order:${t}`} flexDirection="row" flexWrap="wrap" columnGap="sm">
-                  <Text color={TIER_COLOR[t]} size="footnote" weight="semibold">{t}</Text>
-                  <Text dimColor size="footnote" wrap="wrap">{helperOrder(set, t)}</Text>
-                </Box>
+                <Text key={`helper-order:${t}`} size="footnote" wrap="wrap">
+                  <Text color={TIER_COLOR[t]} weight="semibold">{t.padEnd(9)}</Text>
+                  <Text dimColor>{helperOrder(set, t).split(`-${t}`).join('')}</Text>
+                </Text>
               ))}
             </Box>
           )}
