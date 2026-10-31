@@ -33,6 +33,8 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
 
 All settings and the history are remembered across chats.
 
+**In the terminal** the pane scrolls with the keyboard: ctrl+x tab (or a click) gives it the keys, ↑↓ scroll, Esc returns to the prompt; the mouse wheel works where the terminal passes it through. A line at the top says so. The layout is compact there: the cost is one line, and while a plan awaits approval the steps come first and the cost after them.
+
 ## Keeping the rules in front of the model
 
 - **In every chat** the mod writes the rules into the conversation as a hidden note at the start of the first turn after it loads. It also adds them to the system prompt, but some hosts (the desktop app among them) supply their own system prompt and drop added sections without a trace, so only the note counts as delivered.

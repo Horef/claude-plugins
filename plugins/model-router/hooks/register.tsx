@@ -253,6 +253,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const ui = $.ui.resolve(e)
   const { Box, Text, Button } = ui
   const hasFields = e.surface !== 'mobile'
+  // The terminal gives the pane few rows and scrolls only with the keyboard: draw it compact.
+  const tty = e.surface === 'terminal'
+  const site = e.props as { isFocused?: boolean; scroll?: { offset: number } }
   const Select = hasFields && 'Select' in ui ? ui.Select : undefined
   const Input = hasFields && 'Input' in ui ? ui.Input : undefined
 
@@ -365,6 +368,39 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {stat('On main model', `≈${fmtUsd(life.mainEquivalent)}`)}
         </Box>
       )
+    const viewSwitch = (
+      <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
+        {VIEWS.map(v => (
+          <Button key={`cost-view:${v.value}`} plain={v.value !== view ? true : undefined} variant={v.value === view ? 'primary' : undefined} onPress={() => void update($, costView, () => v.value)}>
+            {v.label}
+          </Button>
+        ))}
+      </Box>
+    )
+    if (tty) {
+      // Two rows: the switch, then main · subagents · saved on one line.
+      const [mainSpent, agents, savedNow, equivalent] =
+        view === 'plan'
+          ? [planMain, agentCost, saved, list.reduce((n, x) => n + x.mainCost, 0)]
+          : view === 'chat'
+            ? [m.cost, chat.agentCost, chatSaved, chat.mainEquivalent]
+            : [life.mainCost, life.agentCost, lifeSaved, life.mainEquivalent]
+      return (
+        <Box flexDirection="column">
+          {viewSwitch}
+          <Text size="footnote" tabular wrap="wrap">
+            <Text dimColor>{`main${m.model && view !== 'all' ? ` (${m.model})` : ''} `}</Text>
+            {`≈${fmtUsd(mainSpent)}`}
+            <Text dimColor> · subagents </Text>
+            {`≈${fmtUsd(agents)}`}
+            <Text dimColor> · saved </Text>
+            <Text color={savedNow > 0 ? 'success' : undefined}>
+              {savedNow > 0 ? `≈${fmtUsd(savedNow)} (${pct(savedNow, mainSpent + equivalent)})` : '—'}
+            </Text>
+          </Text>
+        </Box>
+      )
+    }
     const foot =
       view === 'plan'
         ? `Since this plan was posted${base.at ? ` (${new Date(base.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })})` : ''}. A new plan starts a new count.`
@@ -373,13 +409,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           : `Since ${since(life.since)}: ${life.steps} delegated steps in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
     return (
       <Box flexDirection="column" rowGap="xs" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
-        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
-          {VIEWS.map(v => (
-            <Button key={`cost-view:${v.value}`} plain={v.value !== view ? true : undefined} variant={v.value === view ? 'primary' : undefined} onPress={() => void update($, costView, () => v.value)}>
-              {v.label}
-            </Button>
-          ))}
-        </Box>
+        {viewSwitch}
         {body}
         <Text dimColor size="caption" wrap="wrap">{foot}</Text>
       </Box>
@@ -399,7 +429,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         borderStyle="round"
         borderColor={s.status === 'running' ? 'warning' : 'subtle'}
         paddingX="sm"
-        paddingY="xs"
+        paddingY={tty ? undefined : 'xs'}
       >
         <Box flexDirection="row" columnGap="sm" alignItems="center">
           <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
@@ -430,7 +460,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         </Box>
         {s.where === 'here' && (
           <Text dimColor size="footnote">
-            {`Done in this chat, on ${m.model ?? "this chat's model"}. The tier only picks a model if you send the step to a subagent.`}
+            {tty
+              ? `Runs in this chat on ${m.model ?? 'its model'}; the tier counts only for a subagent.`
+              : `Done in this chat, on ${m.model ?? "this chat's model"}. The tier only picks a model if you send the step to a subagent.`}
           </Text>
         )}
         {s.cost > 0 && (
@@ -459,7 +491,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const unmapped = seen.filter(n => !(n in set.skills))
 
   return (
-    <Box flexDirection="column" rowGap="md" padding="sm">
+    <Box flexDirection="column" rowGap={tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
+      {tty && (
+        <Text dimColor size="caption" wrap="wrap">
+          {site.isFocused
+            ? '↑↓ scroll · Tab buttons · Esc back to the prompt'
+            : `${(site.scroll?.offset ?? 0) > 0 ? '↑ scrolled · ' : ''}ctrl+x tab, then ↑↓ to scroll${status === 'pending' ? ' (after answering the plan question)' : ''}`}
+        </Text>
+      )}
       <Box flexDirection="row" justifyContent="space-between" alignItems="center">
         <Box flexDirection="column">
           <Text size="heading" weight="semibold">Model router</Text>
@@ -565,15 +604,20 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         </Box>
       )}
 
-      {costCard()}
+      {!(tty && status === 'pending') && costCard()}
 
-      {status === 'pending' && (
-        <Box borderStyle="round" borderColor="warning" paddingX="sm" paddingY="xs">
-          <Text color="warning" size="footnote">
-            Change tiers, models or where steps run below, then pick "Run it" in the chat. To add, drop or reword steps, pick "Change the steps".
+      {status === 'pending' &&
+        (tty ? (
+          <Text color="warning" size="footnote" wrap="wrap">
+            Edit steps below, then pick "Run it" in the chat; "Change the steps" to add, drop or reword.
           </Text>
-        </Box>
-      )}
+        ) : (
+          <Box borderStyle="round" borderColor="warning" paddingX="sm" paddingY="xs">
+            <Text color="warning" size="footnote">
+              Change tiers, models or where steps run below, then pick "Run it" in the chat. To add, drop or reword steps, pick "Change the steps".
+            </Text>
+          </Box>
+        ))}
       {hint && (
         <Box borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY="xs">
           <Text color="suggestion" size="footnote">{hint}</Text>
@@ -590,6 +634,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Button key="clear" plain dimColor onPress={() => void clearPlan($)}>Clear plan</Button>
         </Box>
       )}
+      {tty && status === 'pending' && costCard()}
 
       {(stats.length > 0 || advice.length > 0) && section('What the history says', `${past.length} runs`)}
       {advice.map(a => (
