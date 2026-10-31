@@ -17,6 +17,8 @@ Work happens at three speeds:
 | **Fix** | A plain error you have just verified (wrong path, renamed API, broken example) | Correct it, patch version, CHANGELOG line | Minutes |
 | **Reflect** | Lessons are ripe (session digest, `loop.py status`) or the user asks | Turn observations into rules, code, checks or evals; prune; verify; version | One focused session |
 
+**Invoked directly** (the person types `/strange-loop`, or asks "how are my skills doing?"): run `loop.py where`, then `loop.py sync` if there is a clone, then `loop.py status`. Report in a few lines: the units with ripe lessons, open lessons older than six months, anything waiting in the inbox. Offer the next steps (a reflection pass on a ripe unit, adding a skill, an audit, absorbing a pasted reply) and do the one the person picks. With an argument (`/strange-loop reflect scientific-figures`, `/strange-loop new ...`), go straight to that section. Without a clone (no `~/.config/strange-loop/genome`), explain the setup in two lines instead (README, Setup). Nobody has to invoke this skill for the loop to run: every skill carries its own Learning loop section, and in Claude Code the session-start hook syncs and shows the digest.
+
 ## 1. The hierarchy: where a lesson belongs
 
 Every layer has the same shape: an instruction surface, a `LEARNINGS.md` for observations, a history (CHANGELOG, WORKLOG or DECISIONS) and, where possible, checks.
@@ -64,7 +66,7 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 **Where to write** (first that works):
 1. **The note command**, the same in every skill, project and harness (in claude.ai, run it on the connected computer): `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note <unit> <kind> "<section>: <text>" --harness <name> --context "<project>"`. It writes into the person's clone of the genome (`$STRANGE_LOOP_GENOME` overrides the config file), deduplicates, and falls back to `~/.config/strange-loop/inbox.md` when no clone is found.
 2. Inside the genome clone itself, or with file access but no shell: edit the genome's `LEARNINGS.md` directly in the format above.
-3. With neither (a chat-only harness, a cloud session on another repository, a read-only uploaded skill): end your reply with a block headed `Observations for <unit>` and the lines in the format above, one block per unit. `loop.py absorb <file>` (or `-` for pasted text) adds such blocks to the genome later, so the person can paste a reply into any session that has the genome.
+3. With neither (a chat-only harness, a cloud session on another repository, a read-only uploaded skill), and only when the person takes part in improving their skills (a genome clone on their machine, or their standing instructions say so): end your reply with a block headed `Observations for <unit>` and the lines in the format above, one block per unit. `loop.py absorb <file>` (or `-` for pasted text) adds such blocks to the genome later, so the person can paste a reply into any session that has the genome.
 
 Installed and synced copies (`~/.claude/plugins/…`, skills synced from claude.ai, uploaded zips) are replaced on update: never write there, even though the files are writable.
 
@@ -169,7 +171,7 @@ This skill improves itself from use (strange-loop). When a step here misleads yo
 python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note <name> <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
 ```
 
-It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell), end your reply with a block headed `Observations for <name>` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
+It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell) and the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for <name>` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; otherwise add nothing about it, except one line when the skill clearly failed. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
 ````
 
 ## 9. Growing a new capability
@@ -210,4 +212,4 @@ This skill observes itself like any other unit. When a step of a reflection was 
 python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note strange-loop <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
 ```
 
-or, without a clone or a shell, in an `Observations for strange-loop` block at the end of your reply. Changes to section 7 (Kernel), section 3 (change classes) and the ripeness thresholds in `loop.py` need the owner's approval.
+or, without a clone or a shell and when the person takes part (section 2), in an `Observations for strange-loop` block at the end of your reply. Changes to section 7 (Kernel), section 3 (change classes) and the ripeness thresholds in `loop.py` need the owner's approval.
