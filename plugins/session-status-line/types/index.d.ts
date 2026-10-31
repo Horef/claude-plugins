@@ -36,8 +36,32 @@ export type Usage = {
   limits?: Limit[]
 }
 
+/**
+ * One outside budget read by the mod itself: Kiro credits, Copilot premium
+ * credits, or Claude's extra usage (the paid credits used past the 5h / weekly limits).
+ */
+export type Quota = {
+  id: 'kiro' | 'copilot' | 'extra'
+  /** Share of the period's allowance used; may pass 100 (overage). */
+  percent?: number
+  /** When the allowance resets (ISO). */
+  resetsAt?: string
+  /** Money spent past the allowance (Kiro overage charges, Claude extra usage), in `currency`. */
+  spent?: number
+  /** Claude extra usage: the monthly cap, in `currency`. */
+  cap?: number
+  currency?: string
+  /** The service's login has gone stale: ask the person to log in again. */
+  login?: boolean
+  /** When this reading was taken (epoch ms). */
+  at: number
+}
+
+/** The last readings, and whether the mod reads them at all (`/status-line quotas on|off`). */
+export type Quotas = { on: boolean; at: number; items: Quota[] }
+
 declare module 'claude-code' {
   interface PluginState {
-    'session-status-line': { enabled: boolean; layout: Layout; stats: Stats; usage: Usage; tick: number }
+    'session-status-line': { enabled: boolean; layout: Layout; stats: Stats; usage: Usage; tick: number; quotas: Quotas }
   }
 }
