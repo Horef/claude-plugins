@@ -2,6 +2,16 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-10-31 - Direct invocation; skills without strange-loop
+Changed: the owner asked what happens when strange-loop is invoked by hand, and when someone installs the other skills without it. strange-loop 0.11.0 defines direct invocation (sync, status, offer next steps) and makes the reply-block fallback opt-in, so people without strange-loop see no observation blocks; its README explains partial installs and taking part by forking. The other three skills get the same fallback wording (patch releases).
+
+| Verification command | Result |
+|---|---|
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval strange-loop` | 16 tests OK (template still identical to what `new` writes) |
+| `python plugins/strange-loop/skills/strange-loop/scripts/loop.py check --base origin/main` | 0 errors |
+
+Next: owner adds "I take part in improving my skills" to claude.ai's standing instructions, so chats without the Mac still return observation blocks.
+
 ## 2026-10-30 - Artifacts remember their origin
 Changed: the owner asked how lessons reach a skill that is used once but shapes a project for good (project-foundations). project-foundations 5.3.0: the AGENTS.md template names the scaffolding's source and sends lessons about the scaffolding to the skill with the note command; `docmap.py check` warns when the person's genome clone has a newer docmap, so old projects learn about upgrades. strange-loop 0.10.0 states the general rule (section 1) and adds it to adoption (section 8).
 
