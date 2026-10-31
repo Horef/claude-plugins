@@ -4,7 +4,7 @@ import { EFFORTS, LADDER, MODELS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tier
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.9.3'
+export const VERSION = '0.10.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -66,10 +66,19 @@ export const newStep = (id: string, title: string, tier: Tier, where: Step['wher
 
 export const isTier = (v: unknown): v is Tier => TIER_ORDER.includes(v as Tier)
 
+/** A tier's helper templates in the order they are tried, e.g. "kiro-deep → copilot-deep". */
+export const helperOrder = (set: Settings, tier: Tier) =>
+  set.helpers.tiers[tier]
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean)
+    .join(' → ')
+
+const placeOf = (s: Step, set: Settings) =>
+  s.where === 'here' ? 'here' : s.where === 'helper' ? `helper (${helperOrder(set, s.tier)})` : rungLabel(runsOn(s, set))
+
 export const planText = (list: readonly Step[], set: Settings) =>
-  list
-    .map(s => `[${s.id}] ${s.title}: ${s.tier}, ${s.where === 'here' ? 'here' : rungLabel(runsOn(s, set))}, ${s.status}`)
-    .join('\n')
+  list.map(s => `[${s.id}] ${s.title}: ${s.tier}, ${placeOf(s, set)}, ${s.status}`).join('\n')
 
 // --- What the history says ------------------------------------------------------
 

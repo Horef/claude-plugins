@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, HistoryEntry, Lifetime, Settings, Step, Tier, Totals, Usage } from '../types'
+import type { CostView, HistoryEntry, Lifetime, Settings, Step, Tier, Totals, Usage, Where } from '../types'
 import {
   EMPTY_USAGE,
   PANE,
@@ -14,6 +14,7 @@ import {
   costOf,
   fmtTok,
   fmtUsd,
+  helperOrder,
   isSetupHeavy,
   isTier,
   modelHint,
@@ -63,6 +64,12 @@ async function loadRemembered($: EngineInterface) {
     tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
     skills: { ...(stored?.skills ?? {}) },
     openPane: stored?.openPane ?? DEFAULT_SETTINGS.openPane,
+    // Settings stored by older versions have no `helpers`: fill from the defaults.
+    helpers: {
+      ...DEFAULT_SETTINGS.helpers,
+      ...(stored?.helpers ?? {}),
+      tiers: { ...DEFAULT_SETTINGS.helpers.tiers, ...(stored?.helpers?.tiers ?? {}) },
+    },
   }))
   await update($, autoApprove, () => false)
   if ((await $.store.get(STORE.auto)) === true) await update($, autoApprove, () => true)
@@ -160,6 +167,55 @@ async function applySuggestion($: EngineInterface, s: Suggestion) {
   await editSettings($, set => ({ ...set, tiers: { ...set.tiers, [s.tier]: { ...set.tiers[s.tier], ...s.to } } }))
 }
 
+// --- The plan tool ---------------------------------------------------------------
+
+/**
+ * Registers the plan tool. The schema offers where = 'helper' only while Helpers are on,
+ * so with them off it is the 0.9.3 schema exactly. It is registered when the chat starts
+ * and again when Helpers are switched in the pane: a name registered again is replaced
+ * (the engine's documented behaviour). The tool call also stores 'helper' as 'agent' while off.
+ */
+async function registerPlanTool($: EngineInterface) {
+  const wheres = (await read($, settings)).helpers.enabled ? ['agent', 'here', 'helper'] : ['agent', 'here']
+  await $.tool.register({
+    name: 'plan',
+    description:
+      'Model router: set the plan for the current task (steps replaces the plan and waits for the user to approve it; overrides the user set are kept for step ids that stay) and/or mark steps done.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Short id, e.g. s1' },
+              title: { type: 'string', description: 'A few words' },
+              tier: { type: 'string', enum: TIER_ORDER },
+              where: { type: 'string', enum: wheres },
+            },
+            required: ['id', 'title', 'tier', 'where'],
+          },
+        },
+        done: { type: 'array', items: { type: 'string' }, description: 'Step ids now done' },
+        status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
+      },
+    },
+    isDeferred: false,
+  })
+}
+
+async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers']>) {
+  const wasOn = (await read($, settings)).helpers.enabled
+  await editSettings($, s => ({ ...s, helpers: { ...s.helpers, ...patch } }))
+  if ((await read($, settings)).helpers.enabled === wasOn) return
+  try {
+    await registerPlanTool($)
+  } catch {
+    // Keep the first registration; see registerPlanTool.
+  }
+}
+
 // --- Money ---------------------------------------------------------------------
 
 // Which plan step a subagent runs, by the tag its Agent call's description starts with.
@@ -172,7 +228,10 @@ async function stepOfAgent($: EngineInterface, agentId: string) {
     id = agent ? STEP_TAG.exec(agent.description)?.[1] : undefined
     if (id) stepByAgent.set(agentId, id)
   }
-  return id ? (await read($, steps)).find(s => s.id === id) : undefined
+  const step = id ? (await read($, steps)).find(s => s.id === id) : undefined
+
+  // A helper step has no Claude subagent: nothing is counted for it.
+  return step?.where === 'helper' ? undefined : step
 }
 
 /** Adds one model response's cost to the chat, the step it belongs to, and the totals. */
@@ -201,7 +260,16 @@ const policy = (set: Settings) => {
   const tiers = TIER_ORDER.map(t => `- ${t} (${rungLabel(set.tiers[t])}): ${TIER_USE[t]}`).join('\n')
   const skills = Object.entries(set.skills)
   const skillRule = skills.length
-    ? `\n6. These skills run in a subagent on a tier: ${skills.map(([n, t]) => `${n} (${t})`).join(', ')}. To use one, delegate with the Agent tool, its description starting "[${SKILL_TAG}<name>]", and a brief that tells the subagent to invoke that skill with everything it needs from this conversation.`
+    ? `\n${set.helpers.enabled ? 7 : 6}. These skills run in a subagent on a tier: ${skills.map(([n, t]) => `${n} (${t})`).join(', ')}. To use one, delegate with the Agent tool, its description starting "[${SKILL_TAG}<name>]", and a brief that tells the subagent to invoke that skill with everything it needs from this conversation.`
+    : ''
+
+  const h = set.helpers
+  const helperRule = h.enabled
+    ? `\n6. where = "helper" runs a step on an agent from another subscription, through the ${h.skill} skill. ${
+        h.use === 'all'
+          ? 'Use it for every self-contained step that would otherwise be "agent".'
+          : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
+      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${h.tiers[t]}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. Review the helper's result yourself, then mark the step done with ${PLAN_TOOL} (done: [ids]).`
     : ''
 
   return `# Model routing (model-router mod)
@@ -213,7 +281,7 @@ The user installed this mod so that each step of a task runs on the cheapest mod
 ${tiers}
 3. where = "here" for steps that need this conversation's accumulated context or back-and-forth with the user, and for small steps (under ~5 tool calls: a subagent costs ~15-40k tokens just to start). where = "agent" for self-contained steps, above all ones that read a lot.
 4. Delegate an "agent" step with the Agent tool, its description starting with "[<step id>]". Do not set model or effort: the router sets them from the plan. Never use subagent_type "fork" for a routed step, since a fork ignores the model. Write a self-contained brief: goal, files, what to return. Light-tier briefs ask for a findings list, not fixes; spot-check surprising findings. If a light result is weak, say so: the user can rerun the step one rung higher from the pane.
-5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them.${skillRule}`
+5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them.${helperRule}${skillRule}`
 }
 
 const REMINDER = `Model router: "Always plan" is on. Before any tool call for this message, call ${PLAN_TOOL} with the steps (one step is fine), unless the current approved plan already covers it. Answer without a plan only if no tools are needed.`
@@ -227,7 +295,7 @@ const usageOf = (u: ModelUsage): Usage => ({
 
 type PlanInput = {
   status?: boolean
-  steps?: { id: string; title: string; tier: Tier; where?: 'agent' | 'here' }[]
+  steps?: { id: string; title: string; tier: Tier; where?: Where }[]
   done?: string[]
 }
 
@@ -437,8 +505,15 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
-          {pick(`where:${s.id}`, s.where, [{ value: 'agent', label: 'subagent' }, { value: 'here', label: 'here' }], v =>
-            void editStep($, s.id, x => ({ ...x, where: v as Step['where'] })),
+          {pick(
+            `where:${s.id}`,
+            s.where,
+            [
+              { value: 'agent', label: 'subagent' },
+              { value: 'here', label: 'here' },
+              ...(set.helpers.enabled || s.where === 'helper' ? [{ value: 'helper', label: 'helper' }] : []),
+            ],
+            v => void editStep($, s.id, x => ({ ...x, where: v as Where })),
           )}
           {pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
             void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
@@ -463,6 +538,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             {tty
               ? `Runs in this chat on ${m.model ?? 'its model'}; the tier counts only for a subagent.`
               : `Done in this chat, on ${m.model ?? "this chat's model"}. The tier only picks a model if you send the step to a subagent.`}
+          </Text>
+        )}
+        {s.where === 'helper' && (
+          <Text dimColor size="footnote" wrap="wrap">
+            {`Runs on another subscription's agent (${helperOrder(set, s.tier)}); a subagent if none is usable.`}
           </Text>
         )}
         {s.cost > 0 && (
@@ -547,6 +627,37 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text dimColor size="footnote" wrap="wrap">
             Scope note: one line added to that tier's briefs, asking the subagent to stay on its task and not start sessions or load extra tools.
           </Text>
+
+          {group('Helpers', 'Run long self-contained steps on agents from other subscriptions (Kiro, Copilot, agy), started by a delegation skill. Needs that skill and herdr-core hc; with none usable, steps run as subagents.')}
+          {switchRow('helpers', 'Helpers (other subscriptions)', 'Let plans send steps to a helper.', set.helpers.enabled, () =>
+            void editHelpers($, { enabled: !set.helpers.enabled }),
+          )}
+          {set.helpers.enabled && (
+            <Box key="helpers-detail" flexDirection="column" rowGap="xs">
+              <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
+                <Box flexDirection="column" flexShrink={1}>
+                  <Text weight="medium">Use helpers for</Text>
+                  <Text dimColor size="footnote" wrap="wrap">
+                    {set.helpers.use === 'long'
+                      ? 'Long self-contained steps only; shorter ones stay subagents.'
+                      : 'Every self-contained step that would otherwise be a subagent.'}
+                  </Text>
+                </Box>
+                {pick(
+                  'helpers-use',
+                  set.helpers.use,
+                  [{ value: 'long', label: 'long steps' }, { value: 'all', label: 'all steps' }],
+                  v => void editHelpers($, { use: v === 'all' ? 'all' : 'long' }),
+                )}
+              </Box>
+              {TIER_ORDER.map(t => (
+                <Box key={`helper-order:${t}`} flexDirection="row" flexWrap="wrap" columnGap="sm">
+                  <Text color={TIER_COLOR[t]} size="footnote" weight="semibold">{t}</Text>
+                  <Text dimColor size="footnote" wrap="wrap">{helperOrder(set, t)}</Text>
+                </Box>
+              ))}
+            </Box>
+          )}
 
           {group('Skills', 'Skills listed here run in a subagent on the tier you pick.')}
           {mapped.length + unmapped.length === 0 && (
@@ -676,32 +787,7 @@ export const register: Register = on => {
       }))
     }
     await $.command.register({ name: 'router', description: 'Show the model-router pane' })
-    await $.tool.register({
-      name: 'plan',
-      description:
-        'Model router: set the plan for the current task (steps replaces the plan and waits for the user to approve it; overrides the user set are kept for step ids that stay) and/or mark steps done.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          steps: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                id: { type: 'string', description: 'Short id, e.g. s1' },
-                title: { type: 'string', description: 'A few words' },
-                tier: { type: 'string', enum: TIER_ORDER },
-                where: { type: 'string', enum: ['agent', 'here'] },
-              },
-              required: ['id', 'title', 'tier', 'where'],
-            },
-          },
-          done: { type: 'array', items: { type: 'string' }, description: 'Step ids now done' },
-          status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
-        },
-      },
-      isDeferred: false,
-    })
+    await registerPlanTool($)
     await refreshStatus($)
     if ((await read($, settings)).openPane) void $.ui.open({ id: PANE, title: 'Model router' })
 
@@ -742,16 +828,19 @@ export const register: Register = on => {
     if (!input.steps) return withNotes(planText(await read($, steps), set))
 
     const old = await read($, steps)
-    // A plan that shares no step with the last one starts its own cost count.
-    const isNewPlan = !old.some(o => input.steps!.some(s => s.id === o.id))
+    // A plan that shares no step with the last one, or follows a finished one (ids may
+    // repeat), starts its own cost count and its own steps.
+    const isNewPlan = (old.length > 0 && old.every(o => o.status === 'done')) || !old.some(o => input.steps!.some(s => s.id === o.id))
     if (isNewPlan) {
       const mainCost = (await read($, main)).cost
       await update($, planBase, () => ({ mainCost, at: new Date().toISOString() }))
     }
     await update($, steps, () =>
       input.steps!.map(s => {
-        const was = old.find(o => o.id === s.id)
-        return was ? { ...was, title: s.title, tier: s.tier, where: s.where ?? 'agent' } : newStep(s.id, s.title, s.tier, s.where ?? 'agent')
+        const was = isNewPlan ? undefined : old.find(o => o.id === s.id)
+        // With Helpers off, a helper step is a normal subagent step.
+        const where: Where = s.where === 'helper' && !set.helpers.enabled ? 'agent' : (s.where ?? 'agent')
+        return was ? { ...was, title: s.title, tier: s.tier, where } : newStep(s.id, s.title, s.tier, where)
       }),
     )
     void $.ui.open({ id: PANE, title: 'Model router' })
@@ -825,8 +914,13 @@ export const register: Register = on => {
         await update($, steps, list => [...list, newStep(tag, `Skill ${tag.slice(SKILL_TAG.length)}`, tier, 'agent')])
       }
     }
-    const step = (await read($, steps)).find(s => s.id === tag)
+    let step = (await read($, steps)).find(s => s.id === tag)
     if (!step) return next(e)
+    // A helper step run through the Agent tool is the fallback: it is a subagent step now.
+    if (step.where === 'helper') {
+      await editStep($, step.id, s => ({ ...s, where: 'agent' }))
+      step = { ...step, where: 'agent' }
+    }
 
     const { model, effort } = runsOn(step, set)
     const prompt = set.tiers[step.tier].scopeNote ? `${e.prompt}\n\n${SCOPE_NOTE}` : e.prompt

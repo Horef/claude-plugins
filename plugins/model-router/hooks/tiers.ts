@@ -11,6 +11,17 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   skills: {},
   openPane: false,
+  // Off by default: without it the rules, the plan tool and the pane are those of 0.9.3.
+  helpers: {
+    enabled: false,
+    skill: 'herdr-delegate',
+    use: 'long',
+    tiers: {
+      light: 'kiro-light,copilot-light,agy-light',
+      standard: 'kiro-standard,copilot-standard,agy-standard',
+      deep: 'kiro-deep,copilot-deep,agy-deep',
+    },
+  },
 }
 
 export const TIER_USE: Record<Tier, string> = {

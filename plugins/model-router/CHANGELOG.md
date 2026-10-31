@@ -2,6 +2,12 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.10.0 (2026-10-31)
+- Helpers (other subscriptions), off by default: a third place a step can run, `helper`, started by a delegation skill (default `herdr-delegate`); rules, plan tool schema and pane are unchanged while off
+- Default helper order at every tier: Kiro, then Copilot, then agy
+- With helpers off, a `helper` step is stored as `agent`; a helper step run through the Agent tool becomes a subagent step; helper steps are never counted as agent steps or costed
+- Fix: a new `steps` call after every step of the old plan is done is a new plan; reused ids no longer arrive already done
+
 ## 0.9.3 (2026-10-31)
 - Terminal pane: compact cost line, plan first while awaiting approval, scroll hint
 
