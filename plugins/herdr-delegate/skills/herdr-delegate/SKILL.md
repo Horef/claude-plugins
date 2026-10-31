@@ -24,7 +24,11 @@ Tiers are the model-router's: light = mechanical with a clear rule, standard = f
 
 ### Which helper: quotas
 
-Run `scripts/helpers.py pick <tier>` (light, standard, deep, argon), or `pick a,b,c` for your own order. It prints the first template whose CLI is installed and whose provider has quota, or exits 1 when there is none: then use the harness's own subagent and say so. The default order puts Kiro and Copilot first, since they have bigger monthly quotas that reset on the 1st. agy is a small personal plan, so it comes last, except for light, where its Flash model is cheap. When a helper hits a quota error ("exceeded your monthly quota", credits used up), run `helpers.py out <provider>`: it marks the provider out until the 1st of next month, and the mark clears by itself. `helpers.py status` shows everything. `back <provider>` clears a mark early.
+Run `scripts/helpers.py pick <tier>` (light, standard, deep, argon), or `pick a,b,c` for your own order. It prints the first template whose CLI is installed and whose provider has quota, or exits 1 when there is none: then use the harness's own subagent and say so. The default order at every tier is Kiro, then Copilot, then agy: Kiro and Copilot have bigger monthly quotas that reset on the 1st, and agy is a small personal plan, used only when both others are out. When a helper hits a quota error ("exceeded your monthly quota", credits used up), run `helpers.py out <provider>`: it marks the provider out until the 1st of next month, and the mark clears by itself. `helpers.py status` shows everything. `back <provider>` clears a mark early.
+
+**Kiro's login goes stale** after about 8 to 12 hours; that is expected, not a fault. Signs: hc shows the helper `blocked (auth)` and waiting once doesn't clear it, or its screen asks to log in or says the token expired. Then:
+- If the person is around, ask them in one line to log in (`! kiro-cli login` at your prompt), wait, then `helpers.py back kiro` if you had marked it and carry on with the same helper.
+- If they are away (asleep, or they said they're AFK), don't wait: `hc kill`/`hc rm` the helper, run `helpers.py login kiro` (a mark with no expiry, so `pick` skips Kiro), and relaunch with the next pick. Tell them when they're back; `helpers.py back kiro` after they log in.
 
 ## Steps
 
@@ -35,7 +39,7 @@ Run `scripts/helpers.py pick <tier>` (light, standard, deep, argon), or `pick a,
 5. **Judge prompts.** Kiro and Copilot run their own judge, so prompts reach you mostly from agy, or when a judge is unsure. When hc says a helper is `blocked (permission)`, `hc read <name> --lines 30` and read the exact command.
    - **Approve yourself** (`hc keys <name> enter` on the "Yes" option) when it's inside the brief's scope and reversible: reads, builds, tests, writes inside its scope, `hc send` to you. For `hc send`, pick the "always allow in this conversation" option so it asks once.
    - **Ask the person** when it's outside scope, irreversible or outward-facing (push, delete outside scope, network writes, credentials, installs), or you're unsure. Quote the command in one line.
-   - `blocked (auth)` often clears by itself (token refresh): wait once, then read.
+   - `blocked (auth)` often clears by itself (token refresh): wait once, then read. For Kiro, if it persists, its login has gone stale: see "Kiro's login goes stale" above.
    - Never `hc send --force` past a prompt.
 6. **Answer questions.** Questions arrive as `<hc from="tN name">` messages. Answer from what you know with `hc send <name> "..."`. Bring the person only decisions that are theirs.
 7. **Review.** A report is a claim. Read the actual files or diff before telling the person it worked, and spot-check light-tier results. Example (2026-10-31): a Kiro helper sent "wc -l prints 3" before running `wc`, then corrected itself. If the result is weak, rerun one tier up.

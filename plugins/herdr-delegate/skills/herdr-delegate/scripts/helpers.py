@@ -4,13 +4,14 @@
   helpers.py pick light|standard|deep|argon     first usable template for a tier (default order)
   helpers.py pick kiro-deep,copilot-deep,...    first usable template from your own order
   helpers.py out <provider> [--until YYYY-MM-DD] mark a provider out of quota (default: 1st of next month)
-  helpers.py back <provider>                    clear that mark
+  helpers.py login <provider>                   mark a provider as needing a fresh login (no expiry)
+  helpers.py back <provider>                    clear either mark
   helpers.py status                             providers, installed or not, quota marks
 
 A template is usable when its file is in ~/.config/herdr-core/templates, its CLI is on
-PATH, and its provider (the name before the first '-') has no quota mark still in force.
-Marks expire on their date by themselves. `pick` prints the template name, or nothing and
-exit code 1 when none is usable (then run the step with the harness's own subagent).
+PATH, and its provider (the name before the first '-') has no quota or login mark in force.
+Quota marks expire on their date by themselves; login marks last until `back`. `pick`
+prints the template name, or nothing and exit code 1 when none is usable (then run the step with the harness's own subagent).
 """
 import datetime as dt
 import json
@@ -23,10 +24,10 @@ CFG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
 TEMPLATES = CFG / "herdr-core" / "templates"
 STATE = CFG / "herdr-delegate" / "quota.json"
 
-# Kiro and Copilot first (bigger quotas, monthly reset); agy is a small personal plan.
-# Light starts with agy's Flash: cheap there, and it keeps Kiro/Copilot for bigger steps.
+# Kiro, then Copilot (bigger quotas, monthly reset), then agy (a small personal plan),
+# at every tier: agy only when both others are out.
 ORDER = {
-    "light": ["agy-light", "copilot-light", "kiro-light"],
+    "light": ["kiro-light", "copilot-light", "agy-light"],
     "standard": ["kiro-standard", "copilot-standard", "agy-standard"],
     "deep": ["kiro-deep", "copilot-deep", "agy-deep"],
     "argon": ["copilot-argon", "agy-argon"],
@@ -51,6 +52,8 @@ def first_of_next_month(today):
 
 def is_out(state, provider, today):
     until = state.get(provider)
+    if until == "login":
+        return True
     return bool(until) and today < dt.date.fromisoformat(until)
 
 
@@ -89,6 +92,11 @@ def main(argv, today=None):
         save(state)
         print(f"{args[0]} out of quota until {until}")
         return 0
+    if cmd == "login" and args:
+        state[args[0]] = "login"
+        save(state)
+        print(f"{args[0]} needs a fresh login; `back {args[0]}` once the person has logged in")
+        return 0
     if cmd == "back" and args:
         state.pop(args[0], None)
         save(state)
@@ -100,7 +108,11 @@ def main(argv, today=None):
             mine = [n for n in names if n.split("-")[0] == provider]
             cli = command_of(mine[0]) if mine else None
             where = "installed" if cli and shutil.which(cli) else "not installed"
-            quota = f"out until {state[provider]}" if is_out(state, provider, today) else "ok"
+            quota = "ok"
+            if state.get(provider) == "login":
+                quota = "needs login"
+            elif is_out(state, provider, today):
+                quota = f"out until {state[provider]}"
             print(f"{provider:10} {where:14} quota {quota:22} {', '.join(mine)}")
         return 0
     print(__doc__)
