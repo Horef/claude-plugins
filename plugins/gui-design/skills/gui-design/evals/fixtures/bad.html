@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bad on purpose</title>
+<!-- Every fault below is planted so that lint_ui.py can be tested against it. -->
+<style>
+  body { margin: 0; padding: 16px; font: 15px/1.5 sans-serif; background: #ffffff; color: #111; }
+  .notice { border: 1px solid #c9a227; background: #fff6d6; padding: 8px 12px; margin: 0 0 8px; }
+  .fixed { width: 120px; border: 1px solid #888; padding: 4px; white-space: nowrap; }       /* text-overflow */
+  .cut { width: 100px; overflow: hidden; white-space: nowrap; border: 1px solid #888; }     /* text-clipped */
+  .tiny { font-size: 10px; }                                                                /* small-text */
+  .grey { background: #aaaaaa; color: #999999; padding: 6px; }                              /* low-contrast */
+  .wide { width: 600px; height: 24px; background: #ddd; }                                   /* page-hscroll at 390px */
+  .stack { position: relative; height: 40px; }
+  .stack span { position: absolute; left: 0; }
+  .icon { width: 20px; height: 20px; padding: 0; }                                          /* no name, small target */
+</style>
+</head>
+<body>
+  <div class="notice" role="alert">Notice one: your session expires soon.</div>
+  <div class="notice">Notice two: a newer version is available.</div>
+  <div class="notice">Notice three: three notices stack up on the first screen.</div>
+
+  <div class="fixed">Supercalifragilisticexpialidocious_filename.txt</div>
+  <p></p>
+  <div class="cut">Another very long label that cannot fit in its box</div>
+  <p class="tiny">Ten pixel text that is hard to read.</p>
+  <div class="grey">Grey text on a grey background</div>
+  <p><button class="icon" type="button"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 1 L11 11 M11 1 L1 11" stroke="black" stroke-width="2"/></svg></button></p>
+  <div class="stack"><span>Overlapping text, first line</span><span style="top:6px">Overlapping text, second line</span></div>
+  <div class="wide"></div>
+<script>
+  console.error("planted console error");
+  thisFunctionDoesNotExist();
+</script>
+</body>
+</html>

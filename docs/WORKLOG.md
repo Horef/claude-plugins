@@ -2,6 +2,16 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-01 - gui-design 0.1.0: a skill for GUIs at the right density
+
+Changed: new skill **gui-design** 0.1.0, so GUIs come out neither overwhelming nor thin (owner's request, with screenshots of the simple_complex_v1 replay viewer as the main negative example). SKILL.md (about 135 lines): job, task inventory, posture and surfaces first; the layer rule with budgets; pattern table; visual calm; wording; surfaces; build-lint-shoot-look loop; rework procedure; handover. References were distilled by Kiro and Copilot helpers from the owner's DEVONthink copies of Refactoring UI, Designing Interfaces, About Face, Few, Strategic Writing for UX, NN/g, Pajamas, Distill, Victor and CLIG, then reviewed and deduplicated. Tools: `scripts/shot.py` and `scripts/lint_ui.py` drive Chrome over the DevTools protocol with the standard library only. The owner's profile is at `~/.config/gui-design/profile.md` (outside the repo). Not verified: judged cases never run, no live Streamlit app shot yet, mod panes cannot be seen (O1-O3).
+
+| Verification command | Result |
+|---|---|
+| `loop.py eval gui-design` | pass, 34 scripted checks (good and bad fixtures, light and dark, URL path, --click, --full) |
+| `lint_ui.py .../replay_component.html --widths 1280` | 23 problems (small targets) and 20 controls on the first screen |
+| `loop.py check --base origin/main` | 0 errors |
+
 ## 2026-11-01 - herdr-delegate 0.3.0: leads catch Copilot permission prompts
 
 - Owner: a session using a Copilot helper left many approvals to them by hand while the Claude lead sat waiting. Copilot session 10465407 showed 14 prompts: 11 decided by its assisted judge, 3 compound shell scripts (heredoc writes, `curl` loops) passed up as `human_response`. Copilot reports no status to hc, so the lead's wait could not see them.
