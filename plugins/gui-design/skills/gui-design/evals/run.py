@@ -5,6 +5,10 @@ Runs scripts/lint_ui.py and scripts/shot.py against the fixtures in evals/fixtur
   - bad.html reports every planted fault (overflow, clipping, 10px text, low contrast, unnamed icon button,
     small target, horizontal scroll at 390 only, console error, uncaught exception, overlap, 3 notices);
   - the --max-* limits turn density into problems;
+  - host.html (a clean page embedding three frames): faults inside its srcdoc frame are reported with the frame
+    prefix and in the frame's own density line, nothing is blamed on the host, a frame below the fold has zero
+    first-screen density, --max-* limits apply per frame; a file:// host cannot read the file:// frame (a note,
+    not a pass), but over http:// the good.html frame is checked, clean, and follows the dark theme;
   - shot.py writes the expected PNGs (right size, light differs from dark, --click and --full change the image,
     a missed --click selector exits 1), plus sheet.png when Pillow is installed;
   - the same works over http:// (fixtures served on a free local port), including delayed.html, which only
@@ -117,6 +121,35 @@ def main():
     code, out, _ = run("lint_ui.py", bad, "--widths", "390", "--themes", "light")
     check("390 light: page-hscroll: div.wide:" in out, "text output uses `width theme: kind: selector: detail`", out[:300])
 
+    print("lint host.html (iframes)")
+    host = str(FIX / "host.html")
+    code, data, err = lint_json(host, "--widths", "390,1280", "--themes", "light,dark")
+    f1 = [p for p in data["problems"] if p.get("frame", "") and p["frame"].startswith("iframe#1 ")]
+    got = {(p["kind"], p["selector"].split(".")[0] + "." + p["selector"].split(".")[-1]) for p in f1}
+    for kind, sel in (("text-overflow", "div.fixed"), ("low-contrast", "p.grey"), ("no-accessible-name", "button.icon"),
+                      ("small-target", "button.icon")):
+        check((kind, sel) in got, "host.html: %s on %s reported inside the srcdoc frame" % (kind, sel), str(sorted(got)))
+    check(all(p.get("frame") for p in data["problems"]), "host.html: no problem is blamed on the host page itself",
+          str([p for p in data["problems"] if not p.get("frame")][:2]))
+    check({(p["width"], p["theme"]) for p in f1} >= {(w, t) for w in (390, 1280) for t in ("light", "dark")},
+          "host.html: frame faults found at every width x theme")
+    code, out, _ = run("lint_ui.py", host, "--widths", "390", "--themes", "light")
+    check("390 light: low-contrast: iframe#1 (Faulty embed) > p.grey:" in out, "host.html: text output puts the frame before the selector", out[:300])
+    fd = {d["frame"]: d for d in data["density"] if d["width"] == 1280 and d["theme"] == "light"}
+    check(set(fd) == {None, "iframe#1 (Faulty embed)", "iframe#3 (Far embed)"}, "host.html: one density line per readable frame", str(sorted(map(str, fd))))
+    f1d, far = fd.get("iframe#1 (Faulty embed)", {}), fd.get("iframe#3 (Far embed)", {})
+    check(f1d.get("controls") == 1 and f1d.get("words", 0) >= 4, "host.html: frame density counts the frame's own controls and words", str(f1d.get("controls")))
+    check(far.get("onFirstScreen") is False and far.get("controls") == 0 and far.get("words") == 0,
+          "host.html: a frame below the fold has zero first-screen density", str(far))
+    skipped = [n for n in data["notes"] if n["kind"] == "frame-skipped"]
+    check(any("Good embed" in n["selector"] for n in skipped), "host.html (file://): the unreadable file:// frame is a frame-skipped note", str(skipped[:1]))
+    code, data, _ = lint_json(host, "--widths", "1280", "--themes", "light", "--max-controls", "0", "--max-words", "1")
+    dens = [(p["frame"], p["detail"]) for p in data["problems"] if p["kind"] == "density"]
+    check({f for f, _ in dens} == {None, "iframe#1 (Faulty embed)"} and any("controls" in d for f, d in dens if f),
+          "host.html: --max-* limits apply to each frame separately", str(dens))
+    check(not any(p["frame"] == "iframe#3 (Far embed)" for p in data["problems"] if p["kind"] == "density"),
+          "host.html: a frame below the fold never breaks a first-screen limit")
+
     print("shot.py")
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -155,6 +188,17 @@ def main():
             check(code == 0 and not data["problems"], "URL: good.html lints clean", "exit %s %s" % (code, data["problems"][:3]))
             code, data, err = lint_json(base_url + "/bad.html", "--widths", "390", "--themes", "light")
             check(code == 1 and {"text-overflow", "console-error"} <= {p["kind"] for p in data["problems"]}, "URL: bad.html faults reported")
+            code, data, err = lint_json(base_url + "/host.html", "--widths", "390,1280")
+            frames_seen = {d["frame"] for d in data["density"]}
+            check("iframe#2 (Good embed)" in frames_seen, "URL: host.html reads the same-origin frame pointing to good.html", str(sorted(map(str, frames_seen))))
+            check(not [n for n in data["notes"] if n["kind"] == "frame-skipped"], "URL: no frame is skipped over http://", str(data["notes"][:1]))
+            check(not [p for p in data["problems"] if (p.get("frame") or "").startswith("iframe#2")],
+                  "URL: the good.html frame adds no problems", str([p for p in data["problems"] if (p.get("frame") or "").startswith("iframe#2")][:2]))
+            check({p["frame"] for p in data["problems"]} == {"iframe#1 (Faulty embed)"}, "URL: only the faulty frame has problems",
+                  str({p["frame"] for p in data["problems"]}))
+            gd = {d["theme"]: d for d in data["density"] if d["frame"] == "iframe#2 (Good embed)" and d["width"] == 1280}
+            check(len(gd) == 2 and gd["light"]["controls"] >= 3 and gd["light"]["textColors"] != gd["dark"]["textColors"],
+                  "URL: the good.html frame has its own density and follows the dark theme", str(gd.get("light", {}).get("textColors")))
             code, data, err = lint_json(base_url + "/delayed.html", "--widths", "800", "--themes", "light")
             d = data["density"][0] if data["density"] else {}
             check(code == 0 and d.get("controls") == 3, "URL: waits for JS-rendered controls (delayed.html)", str(d.get("controls")) + " " + err[-200:])

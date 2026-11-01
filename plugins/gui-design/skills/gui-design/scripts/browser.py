@@ -195,17 +195,28 @@ def _xor(payload, mask):
 
 
 _INSTALL_OBSERVER = """
-window.__guiLast = performance.now();
-new MutationObserver(function () { window.__guiLast = performance.now(); })
+window.__guiLast = performance.timeOrigin + performance.now();    // absolute, so frames compare
+new MutationObserver(function () { window.__guiLast = performance.timeOrigin + performance.now(); })
   .observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
 """
 
 # resolves once the DOM has been quiet for `quiet` ms (and waitFor, if given, is visible); gives up after maxMs
 _SETTLE = """
 (function (quiet, maxMs, waitFor) {
-  var t0 = performance.now();
-  function busy() {
-    return !!document.querySelector('[data-teststate="running"],[aria-busy="true"]');
+  var t0 = performance.now(), abs0 = performance.timeOrigin + t0;
+  function wins() {                       // this window and every reachable (same-origin) frame below it
+    var out = [window];
+    (function walk(w, depth) {
+      var fr = w.document.querySelectorAll('iframe');
+      for (var i = 0; i < fr.length && depth < 3; i++) {
+        try { var cw = fr[i].contentWindow; if (cw && cw.document) { out.push(cw); walk(cw, depth + 1); } } catch (e) {}
+      }
+    })(window, 0);
+    return out;
+  }
+  function busy(ws) {
+    return ws.some(function (w) { return !!w.document.querySelector('[data-teststate="running"],[aria-busy="true"]'); }) ||
+      ws.some(function (w) { return w.document.readyState === 'loading'; });
   }
   function textual() { return document.body && document.body.innerText.trim().length > 0; }
   function found() {
@@ -215,9 +226,10 @@ _SETTLE = """
   }
   return new Promise(function (resolve) {
     (function tick() {
-      var now = performance.now();
-      var quietFor = now - (window.__guiLast || t0);
-      var done = quietFor >= quiet && found() && !busy() && (textual() || now - t0 > maxMs / 2);
+      var now = performance.now(), ws = wins();
+      var last = Math.max.apply(null, ws.map(function (w) { return w.__guiLast || abs0; }));
+      var quietFor = performance.timeOrigin + now - last;
+      var done = quietFor >= quiet && found() && !busy(ws) && (textual() || now - t0 > maxMs / 2);
       if (done || now - t0 > maxMs) {
         resolve({timedOut: !done, waitFor: waitFor ? found() : null, ms: Math.round(now - t0)});
       } else setTimeout(tick, 50);

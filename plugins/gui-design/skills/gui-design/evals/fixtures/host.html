@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Host page with embedded frames</title>
+<!-- A clean host page that embeds three frames, the way a Streamlit components.html viewer does:
+     1. a srcdoc frame with planted faults (text-overflow, low-contrast, no-accessible-name, small-target);
+     2. a frame that points to good.html (must add no problems);
+     3. a clean srcdoc frame far below the first screen (its first-screen density must be zero).
+     The host itself must lint clean. -->
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 16px; font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  iframe { display: block; width: 100%; border: 1px solid #888; margin: 0 0 12px; }
+  .space { height: 1200px; }
+</style>
+</head>
+<body>
+<h1>Embedded viewers</h1>
+<iframe title="Faulty embed" height="170" srcdoc="<style>body{margin:0;padding:8px;font:15px sans-serif;background:#fff;color:#111}.fixed{width:90px;border:1px solid #888;white-space:nowrap}.grey{background:#aaa;color:#999;padding:4px}.icon{width:20px;height:20px;padding:0}</style><div class=fixed>Supercalifragilisticexpialidocious.txt</div><p class=grey>Grey on grey</p><button class=icon type=button><svg width=12 height=12 viewBox='0 0 12 12'><path d='M1 1L11 11M11 1L1 11' stroke=black stroke-width=2 /></svg></button>"></iframe>
+<iframe title="Good embed" src="good.html" height="620"></iframe>
+<div class="space"></div>
+<iframe title="Far embed" height="120" srcdoc="<body style='margin:8px;font:15px sans-serif;background:#fff;color:#111'><p>Far below the first screen.</p><button type=button style='min-height:32px'>Open</button>"></iframe>
+</body>
+</html>
