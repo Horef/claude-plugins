@@ -11,6 +11,7 @@ Updated 2026-11-01. Snapshot only - overwrite each session; history is in `docs/
 | `docmap.py` from its new home | `loop.py eval project-foundations` → 8/8 OK, 2026-10-30 |
 | `sciencefig` in the skill: all 31 worked-example figures build, lint and render outside the Mac | `loop.py eval scientific-figures` → pass (31 figures, 0 problems, one render sheet), 2026-10-30; the examples' output is byte-identical to the scripts they came from |
 | docmap reading cost at scale | synthetic projects (15-400 decisions, 40-1500 modules): session start ~4k-12k tokens with `find`/`get` instead of 9k-66k; `loop.py eval project-foundations` 13/13, 2026-10-30 |
+| docmap 5.4.0: `worklog` entries, merge conflicts in generated content | `loop.py eval project-foundations` 21/21 (6 new: conflicts heal on `update`, hand-written ones named, `check` fails on markers, `worklog` ISO and long dates, rotation, `--status`), 2026-11-01; the genome's own WORKLOG entry written with it |
 | Genome docs check | `docmap.py check` → 0 errors, 2026-10-30 |
 | session-status-line 0.3.0 (mod): validates, test passes, genome and docs checks clean | `claude plugin validate` and `claude plugin test plugins/session-status-line` → pass; `loop.py check` → 0 errors, 2026-10-31. Seen working in the desktop app by the owner (screenshots, 2026-10-11) |
 | model-router 0.11.0 (mod): minimal view and Settings restyle, tests pass, genome and docs checks clean | `claude plugin test plugins/model-router` → 9 pass; `loop.py check` → 0 errors, 2026-11-01. Layout not yet seen in the real terminal |

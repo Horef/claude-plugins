@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.4.0 (2026-11-01)
+- docmap worklog TITLE BODY|- [--status] inserts a dated WORKLOG entry in the project's date style, rotates earlier months and sets STATUS's Updated date; update now names merge conflicts it cannot heal (hand-written text) and reports the generated ones it healed (map, README tables, indexes: these already healed on update, which was undocumented), and check fails on leftover conflict markers; the parallel-agents rule says branches may run update. DOCMAP_VERSION 5.4.0. Owner request on 1 Nov 2026 (single friction observations, not yet ripe by count). Evals: 6 new checks, committed first (5 failed on 5.3.1), all pass. (O9, O10)
+
 ## 5.3.1 (2026-10-31)
 - Learning loop: the reply-block fallback is opt-in (only when the person takes part in improving their skills), so people who installed this skill without strange-loop see no observation blocks.
 
