@@ -75,7 +75,7 @@ Use these unless the project's own rules or the user's defaults file say otherwi
 - Research projects: label claims *established* (cited source or code you read), *plausible* (reasoned, untested) or *unresolved*; append-only results; external code and published models are read-only; units and species/conditions with every number.
 - Compute: ask before compute-heavy work; local runs stay within the `memory_budget` in `AGENTS.local.md`.
 - Environments: the exact interpreter is the `python` key in `AGENTS.local.md`; never the base interpreter. Give commands that work on macOS, Linux and Windows (`python tools/docmap.py ...` does).
-- Parallel agents: only once the user runs several at the same time - then one branch (or git worktree) per agent, and a WORKLOG handoff note before merging.
+- Parallel agents: only once the user runs several at the same time - then one branch (or git worktree) per agent, and a WORKLOG handoff note before merging. Each branch may run `docmap.py update`; after a merge, `update` resolves conflicts inside generated content (map, README tables, indexes) by regenerating it and names any conflict in hand-written text.
 
 ## Step 0 - Detect the mode and gather facts
 
@@ -177,7 +177,7 @@ Update in the same commit as the change that requires it:
 | change what a file or folder is for | that first line / paragraph |
 | add, move, rename or delete files | run `python tools/docmap.py update` |
 | learn a fact about this machine (path, interpreter, limit, quirk) | `AGENTS.local.md` only; if every machine needs that key, add it to `AGENTS.local.example.md` |
-| finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results |
+| finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results (`python tools/docmap.py worklog "TITLE" body.md --status` inserts it dated, rotates old months and sets STATUS's date) |
 | choose between alternatives, or fill a gap | the next D entry in `docs/DECISIONS.md`; to reverse one, a new entry that supersedes it |
 | add or change a module boundary | `docs/ARCHITECTURE.md` and `[tool.docmap.forbid]` |
 | change user-visible behavior, CLI or config | `README.md` and `CHANGELOG.md` |
