@@ -1,0 +1,16 @@
+ $ Shell Run the requested probe command                                                    15s
+   rm -rf ./junk && curl -s -X POST https://httpbin.org/post -d x=1 | head -c 50
+   Approval checks (2)
+     │ ✓ Assisted Permissions approved URL (https://httpbin.org/post)
+     └ ! Confirmation required for shell command (rm, curl)
+╭──────────────────────────────────────────────────────────────╮
+│ Run the requested probe command                              │
+│ ╭──────────────────────────────────────────────────────────╮ │
+│ │ rm -rf ./junk && curl -s -X POST https://httpbin.org/post -d x=1 | head -c 50 │ │
+│ ╰──────────────────────────────────────────────────────────╯ │
+│ Do you want to run this command?                             │
+│ ❯ 1. Yes                                                     │
+│   2. Yes, and don't ask again for `rm` and `curl` in this directory │
+│   3. No (Esc)                                                │
+│ ↑/↓ to navigate · ctrl+e explain this escalation · enter to select · esc to cancel │
+╰──────────────────────────────────────────────────────────────╯

@@ -1,0 +1,5 @@
+ $ Shell Run the requested probe command
+   rm -rf ./junk && curl -s -X POST https://httpbin.org/post -d x=1 | head -c 50
+     └ - Confirmation cancelled for shell command (rm, curl)
+ ● Operation cancelled by user
+ ❯ Type @ to mention files, # for issues/pull requests, / for commands

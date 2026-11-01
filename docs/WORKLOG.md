@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-01 - herdr-delegate 0.3.0: leads catch Copilot permission prompts
+
+- Owner: a session using a Copilot helper left many approvals to them by hand while the Claude lead sat waiting. Copilot session 10465407 showed 14 prompts: 11 decided by its assisted judge, 3 compound shell scripts (heredoc writes, `curl` loops) passed up as `human_response`. Copilot reports no status to hc, so the lead's wait could not see them.
+- Not fixed by flags: only `--allow-all-tools` pre-approves such scripts, which would turn the judge off.
+- 0.3.0: `helpers.py prompt <name>...` reads each screen and prints a pending approval (exit 0) or nothing (exit 1); SKILL.md step 4: with a Copilot helper, wait `--timeout 60` and check at every check-in; step 5: Copilot's "don't ask again" options, keys to decline. First scripted eval (`evals/run.py`, three captured screens) and a judged case.
+- Commands: live probe on `copilot-light` (rm + curl POST) → trust dialog, URL prompt and idle screen each detected correctly, prompt declined with `escape` (nothing deleted); `loop.py eval herdr-delegate` 3/3; `loop.py check --base origin/main` 0/0; `docmap.py check` 0/0.
+
 ## 2026-11-01 - herdr-delegate 0.2.0, model-router 0.12.0: Copilot Fusion as an opt-in helper
 
 - Owner asked whether Copilot Fusion (GitHub's model router) fits the router's helper tiers, believing Fusion High ≈ Sonnet 5.5 high and Max ≈ Opus 5.5 medium/high. Research offloaded to a Kiro helper (kiro-standard); I spot-checked the CLI claims myself.

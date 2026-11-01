@@ -7,16 +7,21 @@
   helpers.py login <provider>                   mark a provider as needing a fresh login (no expiry)
   helpers.py back <provider>                    clear either mark
   helpers.py status                             providers, installed or not, quota marks
+  helpers.py prompt <name> [<name> ...]         print any permission prompt a helper's screen is waiting on
 
 A template is usable when its file is in ~/.config/herdr-core/templates, its CLI is on
 PATH, and its provider (the name before the first '-') has no quota or login mark in force.
 Quota marks expire on their date by themselves; login marks last until `back`. `pick`
 prints the template name, or nothing and exit code 1 when none is usable (then run the step with the harness's own subagent).
+`prompt` reads each screen with `hc read` (Copilot reports no status to hc, so a wait cannot
+see it blocked) and exits 0 when at least one is waiting on an approval, 1 when none is.
 """
 import datetime as dt
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -77,6 +82,42 @@ def usable(name, state, today):
     return bool(cli) and shutil.which(cli) is not None and not is_out(state, name.split("-")[0], today)
 
 
+# A pending approval box: a question, then a numbered option list and the key help line.
+QUESTION = re.compile(r"Do you want to |Allow this |Do you trust ")
+KEYS = re.compile(r"enter to select|esc to cancel")
+BOX = str.maketrans("", "", "│╭╮╰╯─")
+
+
+def pending_prompt(screen):
+    """The prompt's lines (command, checks, question, options) if the screen is waiting on one."""
+    lines = screen.splitlines()
+    ask = max((i for i, l in enumerate(lines) if QUESTION.search(l)), default=None)
+    if ask is None or not any(KEYS.search(l) for l in lines[ask:]):
+        return None
+    start = max(0, ask - 14)
+    for i in range(ask, start - 1, -1):  # from the tool header (Copilot: "$ Shell ...") if near
+        if lines[i].lstrip().startswith(("$ ", "Approval checks")):
+            start = i
+    out = [l.translate(BOX).strip() for l in lines[start:] if not KEYS.search(l)]
+    return [l for l in out if l and not set(l) <= set("▄▀ ")]
+
+
+def prompts(names):
+    found = False
+    for name in names:
+        r = subprocess.run(["hc", "read", name], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"{name}: hc read failed: {(r.stderr or r.stdout).strip()}")
+            continue
+        got = pending_prompt(r.stdout)
+        if got:
+            found = True
+            print(f"{name}: waiting on approval\n  " + "\n  ".join(got))
+        else:
+            print(f"{name}: no prompt")
+    return 0 if found else 1
+
+
 def main(argv, today=None):
     today = today or dt.date.today()
     if not argv:
@@ -107,6 +148,8 @@ def main(argv, today=None):
         save(state)
         print(f"{args[0]} back")
         return 0
+    if cmd == "prompt" and args:
+        return prompts(args)
     if cmd == "status":
         names = sorted(p.stem for p in TEMPLATES.glob("*.md")) if TEMPLATES.is_dir() else []
         for provider in sorted({n.split("-")[0] for n in names} | set(state)):
