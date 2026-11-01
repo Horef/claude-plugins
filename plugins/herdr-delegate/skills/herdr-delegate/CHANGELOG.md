@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.3.0 (2026-11-01)
+- helpers.py prompt finds approvals a Copilot helper waits on; leads check at 60-second check-ins
+
 ## 0.2.0 (2026-11-01)
 - Copilot Fusion High and Max templates (opt-in, pick fusion); helpers.py and the installer read past VAR=value prefixes
 

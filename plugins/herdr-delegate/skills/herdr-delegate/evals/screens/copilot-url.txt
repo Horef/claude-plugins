@@ -1,0 +1,9 @@
+│ Run the requested shell command                              │
+│ Copilot is attempting to access the following URL:           │
+│ https://httpbin.org/post                                      │
+│ Do you want to allow this access?                             │
+│ ❯ 1. Yes                                                      │
+│   2. Yes, and approve all URLs from "https://httpbin.org" for the rest of the running session │
+│   3. Yes, and approve all URLs from "https://httpbin.org" permanently │
+│   4. No (Esc)                                                 │
+│ ↑/↓ to navigate · enter to select · esc to cancel             │
