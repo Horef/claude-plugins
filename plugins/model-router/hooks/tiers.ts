@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   skills: {},
   openPane: false,
+  compact: false,
   // Off by default: without it the rules, the plan tool and the pane are those of 0.9.3.
   helpers: {
     enabled: false,

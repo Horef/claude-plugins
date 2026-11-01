@@ -2,6 +2,19 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-01 - model-router 0.11.0: minimal view and a clearer Settings
+Changed: model-router gets a **Minimal view** (new `compact` setting, a header button and a Settings row): two lines per step with no card, notice or explanatory text, so a long plan fits the terminal pane without scrolling (the owner could not scroll while the plan question was open, so most steps were out of reach). Settings groups now start with a coloured band, rows are spaced by a blank line, Done moved to the top of Settings, and in Minimal view the help texts go too. Owner's report with two screenshots, 2026-11-01. Not verified: how it looks in the real terminal; the test harness cannot dump the drawn text, so the layout was checked only by assertions on what is and is not drawn.
+
+| Verification command | Result |
+|---|---|
+| `claude plugin test plugins/model-router` | 9 passed (2 new: minimal view toggles, is remembered and keeps every picker) |
+| `claude plugin validate plugins/model-router` | passed with warnings |
+| `loop.py check --base origin/main` | 0 errors, 0 warnings |
+| `docmap.py update`, then `check` | 0 errors, 1 warning (worklog has older months) |
+| `git diff --check` | clean |
+
+Next: owner to look at it live (`/reload-plugins`, then the Minimal button); adjust spacing from what the real terminal shows. Uncommitted.
+
 ## 2026-10-31 - session-status-line 0.3.0 adopted
 Changed: session-status-line (general mod) added at 0.3.0 from the owner's own `~/.claude/mods` copy, built in a chat 2026-10-04..11: a status band above the prompt with model and effort, context fill, 5h and weekly limits with reset and pace, cost, last-turn time, a per-chat compaction counter and files edited; one line, or two when narrow. `loop.py new --mod` made the unit; the code was copied in, the test moved to `tests/` as in model-router, the CHANGELOG reconstructed from the chat, and 5 judged cases written (a mod has no trigger cases). `loop.py new --from` refused the folder (it wants a SKILL.md) and left a stray `plugin.json`, recorded as strange-loop O17. Not verified in CI: the mod's test only runs in Claude Code's function-hooks runner.
 

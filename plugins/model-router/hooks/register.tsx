@@ -64,6 +64,7 @@ async function loadRemembered($: EngineInterface) {
     tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
     skills: { ...(stored?.skills ?? {}) },
     openPane: stored?.openPane ?? DEFAULT_SETTINGS.openPane,
+    compact: stored?.compact ?? DEFAULT_SETTINGS.compact,
     // Settings stored by older versions have no `helpers`: fill from the defaults.
     helpers: {
       ...DEFAULT_SETTINGS.helpers,
@@ -346,7 +347,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const chat = await read($, chatTotals)
   const base = await read($, planBase)
   const life = await read($, lifetime)
-  const hint = modelHint(list, m.model)
+  // Minimal view: only the steps and their settings, no explanatory text, so a long plan fits.
+  const mini = set.compact
+  const hint = mini ? undefined : modelHint(list, m.model)
   const advice = suggestions(past, set)
 
   // A picker where the surface has one, else a button that cycles.
@@ -361,10 +364,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
   // A settings row: what the switch does on the left, On/Off on the right.
   const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void) => (
-    <Box key={`row:${key}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
+    <Box key={`row:${key}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs" marginTop={mini ? 0 : 1}>
       <Box flexDirection="column" flexShrink={1}>
         <Text weight="medium">{label}</Text>
-        <Text dimColor size="footnote" wrap="wrap">{help}</Text>
+        {!mini && <Text dimColor size="footnote" wrap="wrap">{help}</Text>}
       </Box>
       <Button key={key} variant={isOn ? 'primary' : 'secondary'} onPress={onPress}>
         {isOn ? 'On' : 'Off'}
@@ -372,15 +375,18 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     </Box>
   )
 
+  // A settings group starts with a coloured band, so the groups tell apart at a glance.
   const group = (title: string, help?: string) => (
-    <Box flexDirection="column" marginTop="xs">
-      <Text size="footnote" weight="semibold" color="subtle">{title.toUpperCase()}</Text>
-      {help ? <Text dimColor size="footnote" wrap="wrap">{help}</Text> : null}
+    <Box key={`group:${title}`} flexDirection="column" marginTop={1}>
+      <Box flexDirection="row">
+        <Text backgroundColor="suggestion" color="inverseText" weight="semibold">{` ${title.toUpperCase()} `}</Text>
+      </Box>
+      {help && !mini ? <Text dimColor size="footnote" wrap="wrap">{help}</Text> : null}
     </Box>
   )
 
   const section = (title: string, aside?: string) => (
-    <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" marginTop="xs">
+    <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" marginTop={mini ? 1 : 'xs'}>
       <Text weight="semibold">{title}</Text>
       {aside ? <Text dimColor size="footnote">{aside}</Text> : null}
     </Box>
@@ -447,7 +453,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ))}
       </Box>
     )
-    if (tty) {
+    if (tty || mini) {
       // Two rows: the switch, then main · subagents · saved on one line.
       const [mainSpent, agents, savedNow, equivalent] =
         view === 'plan'
@@ -486,10 +492,70 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     )
   }
 
+  // The four pickers of a step: where it runs, tier, and (for a subagent) model and thinking.
+  const stepPickers = (s: Step) => {
+    const tierSet = set.tiers[s.tier]
+    return [
+      pick(
+        `where:${s.id}`,
+        s.where,
+        [
+          { value: 'agent', label: 'subagent' },
+          { value: 'here', label: 'here' },
+          ...(set.helpers.enabled || s.where === 'helper' ? [{ value: 'helper', label: 'helper' }] : []),
+        ],
+        v => void editStep($, s.id, x => ({ ...x, where: v as Where })),
+      ),
+      pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
+        void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
+      ),
+      s.where === 'agent' &&
+        pick(
+          `model:${s.id}`,
+          s.model ?? 'tier',
+          [{ value: 'tier', label: `${tierSet.model} (tier)` }, ...MODELS.map(x => ({ value: x, label: x }))],
+          v => void editStep($, s.id, x => ({ ...x, model: v === 'tier' ? undefined : (v as Step['model']) })),
+        ),
+      s.where === 'agent' &&
+        pick(
+          `effort:${s.id}`,
+          s.effort ?? 'tier',
+          [{ value: 'tier', label: `${tierSet.effort} (tier)` }, ...EFFORTS.map(x => ({ value: x, label: x }))],
+          v => void editStep($, s.id, x => ({ ...x, effort: v === 'tier' ? undefined : (v as Step['effort']) })),
+        ),
+    ]
+  }
+
+  // Minimal view: two lines a step, no border and no explanation. The title, then the
+  // pickers with the cost and any rerun beside them.
+  const miniCard = (s: Step) => {
+    const up = s.where === 'agent' && s.status === 'done' ? nextRung(runsOn(s, set)) : undefined
+
+    return (
+      <Box key={`card:${s.id}`} flexDirection="column">
+        <Box flexDirection="row" columnGap="sm">
+          <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
+          <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+          <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
+        </Box>
+        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
+          {stepPickers(s)}
+          {s.cost > 0 && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
+          {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
+          {up && (
+            <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
+              {`↑ ${rungLabel(up)}`}
+            </Button>
+          )}
+        </Box>
+      </Box>
+    )
+  }
+
   const card = (s: Step) => {
+    if (mini) return miniCard(s)
     const now = runsOn(s, set)
     const up = s.where === 'agent' && s.status === 'done' ? nextRung(now) : undefined
-    const tierSet = set.tiers[s.tier]
     const tokens = s.usage.input + s.usage.cacheWrite + s.usage.output
     return (
       <Box
@@ -507,33 +573,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
-          {pick(
-            `where:${s.id}`,
-            s.where,
-            [
-              { value: 'agent', label: 'subagent' },
-              { value: 'here', label: 'here' },
-              ...(set.helpers.enabled || s.where === 'helper' ? [{ value: 'helper', label: 'helper' }] : []),
-            ],
-            v => void editStep($, s.id, x => ({ ...x, where: v as Where })),
-          )}
-          {pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
-            void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
-          )}
-          {s.where === 'agent' &&
-            pick(
-              `model:${s.id}`,
-              s.model ?? 'tier',
-              [{ value: 'tier', label: `${tierSet.model} (tier)` }, ...MODELS.map(x => ({ value: x, label: x }))],
-              v => void editStep($, s.id, x => ({ ...x, model: v === 'tier' ? undefined : (v as Step['model']) })),
-            )}
-          {s.where === 'agent' &&
-            pick(
-              `effort:${s.id}`,
-              s.effort ?? 'tier',
-              [{ value: 'tier', label: `${tierSet.effort} (tier)` }, ...EFFORTS.map(x => ({ value: x, label: x }))],
-              v => void editStep($, s.id, x => ({ ...x, effort: v === 'tier' ? undefined : (v as Step['effort']) })),
-            )}
+          {stepPickers(s)}
         </Box>
         {s.where === 'here' && (
           <Text dimColor size="footnote">
@@ -573,12 +613,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const unmapped = seen.filter(n => !(n in set.skills))
 
   return (
-    <Box flexDirection="column" rowGap={tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
+    <Box flexDirection="column" rowGap={mini ? 0 : tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
       {tty && (
         <Text dimColor size="caption" wrap="wrap">
           {site.isFocused
             ? '↑↓ scroll · Tab buttons · Esc back to the prompt'
-            : `${(site.scroll?.offset ?? 0) > 0 ? '↑ scrolled · ' : ''}ctrl+x tab, then ↑↓ to scroll${status === 'pending' ? ' (after answering the plan question)' : ''}`}
+            : `${(site.scroll?.offset ?? 0) > 0 ? '↑ scrolled · ' : ''}ctrl+x tab, then ↑↓ to scroll${status === 'pending' && !mini ? ' (after answering the plan question)' : ''}`}
         </Text>
       )}
       <Box flexDirection="row" justifyContent="space-between" alignItems="center">
@@ -589,16 +629,29 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             {status === 'pending' ? ' · awaiting your approval' : ''}
           </Text>
         </Box>
-        <Button key="settings" plain onPress={() => void update($, showSettings, v => !v)}>
-          {isSettingsOpen ? 'Settings ▾' : 'Settings ▸'}
-        </Button>
+        <Box flexDirection="row" flexWrap="wrap" justifyContent="flex-end" columnGap="sm">
+          <Button key="minimal" plain onPress={() => void editSettings($, x => ({ ...x, compact: !x.compact }))}>
+            {mini ? 'Minimal ✓' : 'Minimal'}
+          </Button>
+          <Button key="settings" plain onPress={() => void update($, showSettings, v => !v)}>
+            {isSettingsOpen ? 'Settings ▾' : 'Settings ▸'}
+          </Button>
+        </Box>
       </Box>
 
       {isSettingsOpen && (
-        <Box key="settings-panel" flexDirection="column" rowGap="sm" borderStyle="round" borderColor="subtle" paddingX="md" paddingY="sm">
-          <Text size="heading" weight="semibold">Settings</Text>
+        <Box key="settings-panel" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX="md" paddingY={mini ? 0 : 'sm'}>
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+            <Text size="heading" weight="semibold">Settings</Text>
+            <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
+              Done
+            </Button>
+          </Box>
 
           {group('Behaviour')}
+          {switchRow('compact', 'Minimal view', 'Show only the steps and their settings, with no explanatory text, so a long plan fits without scrolling.', mini, () =>
+            void editSettings($, x => ({ ...x, compact: !x.compact })),
+          )}
           {switchRow('always', 'Always plan', 'Plan before any message that needs tools, not only multi-step ones.', always, () => void setAlways($, !always))}
           {switchRow('auto', 'Auto-approve', 'Run new plans without asking first.', auto, () => void setAuto($, !auto))}
           {switchRow('open-pane', 'Open pane on start', 'Open this pane in every new chat.', set.openPane, () =>
@@ -611,14 +664,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             const edit = (patch: Partial<typeof ts>) =>
               void editSettings($, s => ({ ...s, tiers: { ...s.tiers, [t]: { ...s.tiers[t], ...patch } } }))
             return (
-              <Box key={`tierset:${t}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={TIER_COLOR[t]} paddingX="sm" paddingY="xs">
+              <Box key={`tierset:${t}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={TIER_COLOR[t]} paddingX="sm" paddingY={mini ? 0 : 'xs'} marginTop={mini ? 0 : 1}>
                 <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
                   <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
                   <Button key={`set-scope:${t}`} plain dimColor={!ts.scopeNote} onPress={() => edit({ scopeNote: !ts.scopeNote })}>
                     {ts.scopeNote ? '✓ Scope note' : 'Scope note off'}
                   </Button>
                 </Box>
-                <Text dimColor size="footnote" wrap="wrap">{TIER_USE[t]}</Text>
+                {!mini && <Text dimColor size="footnote" wrap="wrap">{TIER_USE[t]}</Text>}
                 <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
                   {pick(`set-model:${t}`, ts.model, MODELS.map(x => ({ value: x, label: x })), v => edit({ model: v as typeof ts.model }))}
                   {pick(`set-effort:${t}`, ts.effort, EFFORTS.map(x => ({ value: x, label: `${x} thinking` })), v => edit({ effort: v as typeof ts.effort }))}
@@ -626,24 +679,26 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               </Box>
             )
           })}
-          <Text dimColor size="footnote" wrap="wrap">
+          {!mini && <Text dimColor size="footnote" wrap="wrap">
             Scope note: one line added to that tier's briefs, asking the subagent to stay on its task and not start sessions or load extra tools.
-          </Text>
+          </Text>}
 
           {group('Helpers', 'Run long self-contained steps on agents from other subscriptions (Kiro, Copilot, agy), started by a delegation skill. Needs that skill and herdr-core hc; with none usable, steps run as subagents.')}
           {switchRow('helpers', 'Helpers (other subscriptions)', 'Let plans send steps to a helper.', set.helpers.enabled, () =>
             void editHelpers($, { enabled: !set.helpers.enabled }),
           )}
           {set.helpers.enabled && (
-            <Box key="helpers-detail" flexDirection="column" rowGap="xs">
+            <Box key="helpers-detail" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
               <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
                 <Box flexDirection="column" flexShrink={1}>
                   <Text weight="medium">Use helpers for</Text>
-                  <Text dimColor size="footnote" wrap="wrap">
-                    {set.helpers.use === 'long'
-                      ? 'Long self-contained steps only; shorter ones stay subagents.'
-                      : 'Every self-contained step that would otherwise be a subagent.'}
-                  </Text>
+                  {!mini && (
+                    <Text dimColor size="footnote" wrap="wrap">
+                      {set.helpers.use === 'long'
+                        ? 'Long self-contained steps only; shorter ones stay subagents.'
+                        : 'Every self-contained step that would otherwise be a subagent.'}
+                    </Text>
+                  )}
                 </Box>
                 {pick(
                   'helpers-use',
@@ -663,7 +718,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           )}
 
           {group('Skills', 'Skills listed here run in a subagent on the tier you pick.')}
-          {mapped.length + unmapped.length === 0 && (
+          {!mini && mapped.length + unmapped.length === 0 && (
             <Text dimColor size="footnote" wrap="wrap">None yet. Skills you use in a chat appear here, or add one by name.</Text>
           )}
           {[...mapped.map(([n]) => n), ...unmapped].map(name => (
@@ -697,7 +752,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             />
           )}
 
-          <Box flexDirection="column" rowGap="xs" marginTop="xs">
+          <Box flexDirection="column" rowGap="xs" marginTop={1}>
             <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
               <Button key="reset-tiers" plain dimColor onPress={() => void editSettings($, s => ({ ...s, tiers: DEFAULT_SETTINGS.tiers }))}>
                 Reset tiers
@@ -709,18 +764,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                 Reset statistics
               </Button>
             </Box>
-            <Box flexDirection="row" justifyContent="flex-end">
-              <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
-                Done
-              </Button>
-            </Box>
           </Box>
         </Box>
       )}
 
       {!(tty && status === 'pending') && costCard()}
 
-      {status === 'pending' &&
+      {status === 'pending' && !mini &&
         (tty ? (
           <Text color="warning" size="footnote" wrap="wrap">
             Edit steps below, then pick "Run it" in the chat; "Change the steps" to add, drop or reword.
@@ -739,10 +789,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
 
       {section('Plan', list.length > 0 ? `${list.length} steps` : undefined)}
-      {list.length === 0 && (
+      {list.length === 0 && !mini && (
         <Text dimColor size="footnote">The main agent posts a plan here for multi-step tasks. Turn on Always plan in Settings to plan every message.</Text>
       )}
-      {list.map(card)}
+      <Box flexDirection="column" rowGap={mini ? 0 : tty ? 'sm' : 'md'}>
+        {list.map(card)}
+      </Box>
       {list.length > 0 && (
         <Box flexDirection="row">
           <Button key="clear" plain dimColor onPress={() => void clearPlan($)}>Clear plan</Button>
@@ -750,7 +802,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
       {tty && status === 'pending' && costCard()}
 
-      {(stats.length > 0 || advice.length > 0) && section('What the history says', `${past.length} runs`)}
+      {(stats.length > 0 || advice.length > 0) && section('What the history says', mini ? undefined : `${past.length} runs`)}
       {advice.map(a => (
         <Box key={`advice:${a.tier}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={a.isRaise ? 'warning' : 'success'} paddingX="sm" paddingY="xs">
           <Text size="footnote">
@@ -763,7 +815,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Box>
         </Box>
       ))}
-      {stats.map(r => (
+      {!mini && stats.map(r => (
         <Box key={`rung:${r.label}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" columnGap="sm">
           <Text mono size="footnote">{r.label}</Text>
           <Text dimColor size="footnote" tabular>

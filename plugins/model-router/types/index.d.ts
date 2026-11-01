@@ -29,6 +29,8 @@ export type Settings = {
   skills: Record<string, Tier>
   /** Open the router pane when a chat starts. */
   openPane: boolean
+  /** Minimal view: the pane draws only steps and their settings, with no explanatory text. */
+  compact: boolean
   helpers: HelperSettings
 }
 

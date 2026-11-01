@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.11.0 (2026-11-01)
+- Minimal view (header button or Settings): the pane draws only steps and their pickers, no explanatory text, so a long plan fits without scrolling; settings groups get a coloured band and spacing, Done moves to the top of Settings
+
 ## 0.10.1 (2026-10-31)
 - Terminal pane: pickers are buttons that cycle on Enter (marked ⇄) instead of Selects, whose list opened inline, shifted the row and could not be closed without picking (owner's report)
 - Helper order rows drawn as one aligned line per tier

@@ -441,3 +441,47 @@ test('helper steps add no agent cost or steps; one run through the Agent tool be
   expect(String(text.result)).toContain('[h1] List files: light, haiku/low, running')
   expect(String(text.result)).toContain('[h2] Survey: deep, helper (kiro-deep → copilot-deep → agy-deep), done')
 })
+
+test('minimal view: steps and their pickers only, no explanatory text; kept across chats', async ($, on) => {
+  const { store } = await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Read', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Write', tier: 'standard', where: 'agent' },
+    ],
+  } as never)
+  const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
+  const TERMINAL = { ...PANE, surface: 'terminal' } as never
+
+  // Full view first: the explanation under a here step, and the switch row's help.
+  const full = await $.ui.mount(TERMINAL)
+  expect(await full.find(text(/Runs in this chat on/))).toBeTruthy()
+  await full.press({ key: 'settings' })
+  expect(await full.find(text(/Plan before any message/))).toBeTruthy()
+  expect(await full.find(text(/^ BEHAVIOUR $/))).toBeTruthy()
+  await full.unmount()
+
+  // The header button turns Minimal on and remembers it.
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'minimal' })
+  expect((store.get('settings') as { compact: boolean }).compact).toBe(true)
+  expect(await pane.find(text(/Runs in this chat on/))).toBeFalsy()
+  expect(await pane.find(text(/Plan before any message/))).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'where:s1' } as never)).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'effort:s2' } as never)).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'settings-done' } as never)).toBeTruthy()
+  // Still editable: a picker cycles.
+  await pane.press({ key: 'tier:s1' })
+  await pane.unmount()
+  await $.tool.call({ tool: PLAN, done: [] } as never)
+})
+
+test('a chat that starts with the minimal view stored draws it', async ($, on) => {
+  await boot($, on, [['settings', { compact: true }]])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Read', tier: 'light', where: 'here' }] } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await pane.find({ type: 'Text', text: /Runs in this chat on/ } as never)).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'where:s1' } as never)).toBeTruthy()
+  await pane.unmount()
+})
