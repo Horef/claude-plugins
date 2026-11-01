@@ -110,6 +110,64 @@ def main() -> int:
         p = subprocess.run([sys.executable, "tools/docmap.py", "check"], cwd=root, capture_output=True, text=True, env=env)
         expect("the project-foundations skill has 99.0.0" in p.stdout, "check points an older project at the newer skill", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # parallel branches: conflicts in generated content heal on `update` (O9)
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        for a in (("init", "-q", "-b", "main"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        docmap(root, "update")
+        sh(root, "git", "add", "-A"); sh(root, "git", "commit", "-qm", "base")
+        sh(root, "git", "checkout", "-qb", "side")
+        (root / "demo/extra_a.py").write_text('"""Side branch module."""\n', encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo - agent instructions\n\nSide wording.\n", encoding="utf-8")
+        docmap(root, "update")
+        sh(root, "git", "add", "-A"); sh(root, "git", "commit", "-qm", "side")
+        sh(root, "git", "checkout", "-q", "main")
+        (root / "demo/extra_b.py").write_text('"""Main branch module."""\n', encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo - agent instructions\n\nMain wording.\n", encoding="utf-8")
+        docmap(root, "update")
+        sh(root, "git", "add", "-A"); sh(root, "git", "commit", "-qm", "main")
+        m = sh(root, "git", "merge", "side")
+        readme = (root / "demo/README.md").read_text()
+        expect(m.returncode != 0 and "<<<<<<<" in readme, "fixture: both branches regenerated, so the merge conflicts", m)
+        p = docmap(root, "check")
+        expect(p.returncode == 1 and "merge conflict" in p.stdout + p.stderr, "check fails on unresolved merge conflict markers", p)
+        p = docmap(root, "update")
+        readme = (root / "demo/README.md").read_text()
+        expect("<<<<<<<" not in readme and "extra_a.py" in readme and "extra_b.py" in readme
+               and "<<<<<<<" not in (root / "docs/MAP.md").read_text(),
+               "update resolves conflicts inside generated content and regenerates it", p)
+        expect("<<<<<<<" in (root / "AGENTS.md").read_text() and "AGENTS.md" in p.stdout,
+               "update leaves a conflict in hand-written text and names the file", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # `worklog` adds a dated entry in the project's style (O10)
+        import datetime
+        today = datetime.date.today()
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        p = subprocess.run([sys.executable, str(DOCMAP), "worklog", "Second step", "-", "--status"], cwd=root,
+                           input="- Changed: x.\n- Next: y.\n", capture_output=True, text=True)
+        wl = (root / "docs/WORKLOG.md").read_text()
+        first = wl.split("\n## ", 1)[1] if "\n## " in wl else ""
+        expect(p.returncode == 0 and first.startswith(f"{today.isoformat()} - Second step\n") and "- Next: y." in first,
+               "worklog inserts a dated entry at the top (ISO style kept)", p)
+        expect("Updated " + today.isoformat() in (root / "docs/STATUS.md").read_text(), "worklog --status bumps STATUS's date", p)
+        expect((root / "docs/worklog/2026-10.md").exists() and "## 2026-10-30 - start" not in wl,
+               "worklog rotates entries of earlier months", p)
+        long = f"{today.day} {today.strftime('%B')} {today.year}"
+        (root / "docs/WORKLOG.md").write_text(f"# Work log\n\n## {long} - first\n- a\n", encoding="utf-8")
+        body = root / "body.md"
+        body.write_text("- b\n", encoding="utf-8")
+        p = docmap(root, "worklog", "Second", str(body))
+        wl = (root / "docs/WORKLOG.md").read_text()
+        expect(f"## {long} - Second" in wl and wl.index(f"## {long} - Second") < wl.index(f"## {long} - first"),
+               "worklog keeps a long-date style", p)
+
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
 
