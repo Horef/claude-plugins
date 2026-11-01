@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pick a helper template by priority and track provider quotas (stdlib only).
 
-  helpers.py pick light|standard|deep|argon     first usable template for a tier (default order)
+  helpers.py pick light|standard|deep|argon|fusion first usable template for a tier (default order)
   helpers.py pick kiro-deep,copilot-deep,...    first usable template from your own order
   helpers.py out <provider> [--until YYYY-MM-DD] mark a provider out of quota (default: 1st of next month)
   helpers.py login <provider>                   mark a provider as needing a fresh login (no expiry)
@@ -31,6 +31,9 @@ ORDER = {
     "standard": ["kiro-standard", "copilot-standard", "agy-standard"],
     "deep": ["kiro-deep", "copilot-deep", "agy-deep"],
     "argon": ["copilot-argon", "agy-argon"],
+    # Opt-in only (the owner's choice, 2026-11-01): Copilot Fusion is a router, not a
+    # pinned model, and its quality per tier is unmeasured; never in the tier orders above.
+    "fusion": ["copilot-fusion-max", "copilot-fusion-high"],
 }
 
 
@@ -61,7 +64,9 @@ def command_of(name):
     try:
         for line in (TEMPLATES / f"{name}.md").read_text().splitlines():
             if line.startswith("command:"):
-                return line.split(":", 1)[1].split()[0]
+                # Skip leading VAR=value assignments (the Fusion templates set feature flags).
+                words = [w for w in line.split(":", 1)[1].split() if "=" not in w]
+                return words[0] if words else None
     except OSError:
         return None
     return None

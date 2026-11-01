@@ -376,6 +376,33 @@ test('with helpers set to all steps the rules say so, and the pane switches help
   expect((store.get('settings') as { helpers: { use: string } }).helpers.use).toBe('all')
 })
 
+test('Copilot Fusion is off by default and, when picked in the pane, goes before the pinned Copilot helper', async ($, on) => {
+  const { store, rows } = await boot($, on, [['settings', { helpers: { enabled: true } }]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).not.toContain('fusion')
+
+  // In the terminal the picker cycles: off → Max for deep → High + Max.
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helpers-fusion' })
+  expect((store.get('settings') as { helpers: { fusion: string } }).helpers.fusion).toBe('deep')
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(lastRow(rows)).toContain('deep: kiro-deep,copilot-fusion-max,copilot-deep,agy-deep')
+  expect(lastRow(rows)).toContain('standard: kiro-standard,copilot-standard,agy-standard')
+
+  await pane.press({ key: 'helpers-fusion' })
+  await pane.unmount()
+  expect((store.get('settings') as { helpers: { fusion: string } }).helpers.fusion).toBe('both')
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  expect(lastRow(rows)).toContain('standard: kiro-standard,copilot-fusion-high,copilot-standard,agy-standard')
+
+  const planned = await $.tool.call({
+    tool: PLAN,
+    steps: [{ id: 'h1', title: 'Refactor the parser', tier: 'deep', where: 'helper' }],
+  } as never)
+  expect(String(planned.result)).toContain('helper (kiro-deep → copilot-fusion-max → copilot-deep → agy-deep)')
+})
+
 test('ids reused after a finished plan start the new plan as planned', async ($, on) => {
   const { store } = await boot($, on, [])
   const steps = [

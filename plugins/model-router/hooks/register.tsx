@@ -14,6 +14,7 @@ import {
   costOf,
   fmtTok,
   fmtUsd,
+  helperList,
   helperOrder,
   isSetupHeavy,
   isTier,
@@ -207,9 +208,18 @@ async function registerPlanTool($: EngineInterface) {
 }
 
 async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers']>) {
-  const wasOn = (await read($, settings)).helpers.enabled
+  const before = await read($, settings)
+  const wasOn = before.helpers.enabled
   await editSettings($, s => ({ ...s, helpers: { ...s.helpers, ...patch } }))
-  if ((await read($, settings)).helpers.enabled === wasOn) return
+  const after = await read($, settings)
+  // The rules sit in the chat once; a changed order reaches it as a router note.
+  if (after.helpers.enabled && after.helpers.fusion !== before.helpers.fusion) {
+    await update($, notes, n => [
+      ...n,
+      `Helper orders changed (Copilot Fusion ${after.helpers.fusion}); use these instead of rule 6's: ${TIER_ORDER.map(t => `${t}: ${helperList(after, t).join(',')}`).join('; ')}.`,
+    ])
+  }
+  if (after.helpers.enabled === wasOn) return
   try {
     await registerPlanTool($)
   } catch {
@@ -270,7 +280,7 @@ const policy = (set: Settings) => {
         h.use === 'all'
           ? 'Use it for every self-contained step that would otherwise be "agent".'
           : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
-      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${h.tiers[t]}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. Review the helper's result yourself, then mark the step done with ${PLAN_TOOL} (done: [ids]).`
+      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. Review the helper's result yourself, then mark the step done with ${PLAN_TOOL} (done: [ids]).`
     : ''
 
   return `# Model routing (model-router mod)
@@ -705,6 +715,26 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   set.helpers.use,
                   [{ value: 'long', label: 'long steps' }, { value: 'all', label: 'all steps' }],
                   v => void editHelpers($, { use: v === 'all' ? 'all' : 'long' }),
+                )}
+              </Box>
+              <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
+                <Box flexDirection="column" flexShrink={1}>
+                  <Text weight="medium">Copilot Fusion</Text>
+                  {!mini && (
+                    <Text dimColor size="footnote" wrap="wrap">
+                      GitHub's router across Claude and GPT models; tried before the pinned Copilot helper. Max is near Opus 5.5 at max effort for about half the cost; High is unmeasured.
+                    </Text>
+                  )}
+                </Box>
+                {pick(
+                  'helpers-fusion',
+                  set.helpers.fusion,
+                  [
+                    { value: 'off', label: 'off' },
+                    { value: 'deep', label: 'Max for deep' },
+                    { value: 'both', label: 'High + Max' },
+                  ],
+                  v => void editHelpers($, { fusion: v === 'deep' || v === 'both' ? v : 'off' }),
                 )}
               </Box>
               <Text dimColor size="footnote" wrap="wrap">Helper order per tier, first usable wins:</Text>

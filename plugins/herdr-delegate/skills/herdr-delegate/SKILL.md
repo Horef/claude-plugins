@@ -19,8 +19,15 @@ Templates live in `~/.config/herdr-core/templates/` (`hc templates` lists them).
 | `copilot-light` / `-standard` / `-deep` | GPT-6 Luna / Sonnet 5.5 / Opus 5.5, effort high | assisted (a judge): `defaultPermissionMode: "assisted"` in `~/.copilot/settings.json` (the CLI flag is refused in interactive mode) |
 | `agy-light` / `-standard` / `-deep` | Gemini 3.8 Flash / Sonnet 5.5 / Opus 5.5, high | `--mode auto`: edits run, every shell command asks you |
 | `copilot-argon`, `agy-argon` | Gemini 4 Argon (about Sonnet level) | as above |
+| `copilot-fusion-high` / `-max` | Copilot Fusion High / Max: a router, not a model (opt-in) | as Copilot |
 
 Tiers are the model-router's: light = mechanical with a clear rule, standard = following detailed instructions, deep = open judgment. **Argon** is a second opinion from another model family: use it to review a plan or a result, or to answer the same question independently, not as a cheaper standard.
+
+**Copilot Fusion** (GA 2026-10-28) is opt-in: it is in no default order, and `pick fusion` (Max, then High) or a named template uses it. Per prompt it picks the models (Claude Opus/Sonnet 5.5, GPT-6 Luna/Sol/Astra), their effort, and single, cascade or critique. Researched 2026-11-01:
+- Quality: the only independent number is Fusion Max 60 vs Claude Code with Opus 5.5 at *max* effort 61.7 (Artificial Analysis Coding Agent Index) at about half the cost and tokens. High and Standard are unmeasured; "High ≈ Sonnet 5.5 high" has no source. Trivial prompts go to GPT-6 Luna even on Max, and one simple question on Max went to Astra (2.5× Opus's price).
+- Cost: no rate of its own; each model it uses is billed at list price (30% off until 2026-11-30). High and Max need Pro+ or above.
+- CLI 1.0.105: the documented `--model fusion --fusion-tier` is rejected. The templates use `--model auto --auto-tier hydrafusion` (High) / `hydrafusion-max` (Max) with the `COPILOT_CLI_ENABLED_FEATURE_FLAGS=...` prefix (an unofficial flag workaround that may break on update; without it: "requires dynamic Auto tiers"). `--reasoning-effort` is refused. The status bar shows "Copilot Fusion · High".
+- Use it for large, well-scoped coding steps where cost and speed matter more than knowing the model; review its diffs (discarded drafts' edits stay). Keep the pinned templates for anything that must be a known model.
 
 ### Which helper: quotas
 

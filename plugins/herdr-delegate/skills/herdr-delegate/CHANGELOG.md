@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.2.0 (2026-11-01)
+- Copilot Fusion High and Max templates (opt-in, pick fusion); helpers.py and the installer read past VAR=value prefixes
+
 ## 0.1.0 (2026-10-31)
 - Created with `loop.py new`.
 - Templates for Kiro v3 (approve for me), Copilot (assisted) and agy at three tiers, plus Gemini 4 Argon second-opinion templates; `scripts/install_templates.sh` installs only those whose CLI is present.

@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.12.0 (2026-11-01)
+- Copilot Fusion setting under Helpers: off, Max for deep, or High + Max, placed before the pinned Copilot helper
+
 ## 0.11.0 (2026-11-01)
 - Minimal view (header button or Settings): the pane draws only steps and their pickers, no explanatory text, so a long plan fits without scrolling; settings groups get a coloured band and spacing, Done moves to the top of Settings
 

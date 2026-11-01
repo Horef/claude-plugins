@@ -28,3 +28,11 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 ## Trigger: should not fire
 **Task:** "Spawn a subagent to search the repo" (no Herdr or other CLI mentioned), "change the Herdr sidebar layout", "explain this function".
 **Good looks like:** herdr-delegate is not loaded.
+
+## Copilot Fusion on request
+**Task:** "Hand the parser refactor to Copilot Fusion Max." Then later, with no mention of Fusion: "Delegate this deep research step."
+**Good looks like:**
+- First request: launches `copilot-fusion-max` (named, or `helpers.py pick fusion`), not a pinned Copilot template, and does not add `--reasoning-effort`.
+- Checks the screen's status bar shows "Copilot Fusion · Max", and reviews the diff itself (a discarded draft's edits stay).
+- Second request: uses the normal deep order (`pick deep`), not Fusion, unless the router's helper order includes it.
+**Origin:** 2026-11-01 Fusion research (opt-in, unmeasured below Max).

@@ -15,6 +15,7 @@ Updated 2026-11-01. Snapshot only - overwrite each session; history is in `docs/
 | Genome docs check | `docmap.py check` → 0 errors, 2026-10-30 |
 | session-status-line 0.3.0 (mod): validates, test passes, genome and docs checks clean | `claude plugin validate` and `claude plugin test plugins/session-status-line` → pass; `loop.py check` → 0 errors, 2026-10-31. Seen working in the desktop app by the owner (screenshots, 2026-10-11) |
 | model-router 0.11.0 (mod): minimal view and Settings restyle, tests pass, genome and docs checks clean | `claude plugin test plugins/model-router` → 9 pass; `loop.py check` → 0 errors, 2026-11-01. Layout not yet seen in the real terminal |
+| Copilot Fusion as an opt-in helper: herdr-delegate 0.2.0 templates, model-router 0.12.0 setting | Fusion Max one-prompt run → `syntheticModel: hydrafusion-max`; `hc run copilot-fusion-high` → "Copilot Fusion · High"; `claude plugin test plugins/model-router` → 10 pass, 2026-11-01. Quality below Max unmeasured |
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 
 ## Doesn't work yet / known issues
