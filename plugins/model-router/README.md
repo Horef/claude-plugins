@@ -23,8 +23,9 @@ Routes each step of a multi-step task to the cheapest model tier that does it we
 - **Steps**: a card per step with pickers for where (subagent, here, or helper when Helpers are on), tier, model and thinking level (buttons on mobile), its cost and tokens, and a warning when a step was mostly subagent start-up cost. A "here" step is done by this chat on its own model; its tier is only a label until you send it to a subagent, and its card says so.
 - **Rerun one rung up**: a finished step that came back weak can be redone on the next rung of the ladder (Haiku low → medium → high → Sonnet medium → high → Opus high → xhigh → Fable). The main agent is asked to delegate it again.
 - **What the history says**: runs, reruns and average cost per model and thinking level, remembered across chats. When a tier's steps often need reruns, it suggests raising that tier; when none ever did, it suggests trying a cheaper rung. One click applies it.
-- **Settings** (opens right under its button, closes with Done):
-  - Always plan and auto-approve.
+- **Minimal view** (header button, or Settings → Minimal view): the pane draws only what you act on: two lines per step (title, then its pickers with cost and rerun), the cost line, and tier suggestions. No cards, notices or explanatory text, so a long plan fits without scrolling. The setting is remembered across chats.
+- **Settings** (opens right under its button, closes with Done, which sits at the top):
+  - Always plan, auto-approve and Minimal view. Groups start with a coloured band; in Minimal view their help texts are left out too.
   - Each tier's model and thinking level.
   - An optional scope note per tier. It adds one line to that tier's briefs: stay on the task, don't start sessions or load extra tools. Off by default.
   - Skills that should run in a subagent on a tier. A skill you've used shows up here; you can also add one by name.

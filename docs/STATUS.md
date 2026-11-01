@@ -1,5 +1,5 @@
 # Status
-Updated 2026-10-31. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-01. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -13,6 +13,7 @@ Updated 2026-10-31. Snapshot only - overwrite each session; history is in `docs/
 | docmap reading cost at scale | synthetic projects (15-400 decisions, 40-1500 modules): session start ~4k-12k tokens with `find`/`get` instead of 9k-66k; `loop.py eval project-foundations` 13/13, 2026-10-30 |
 | Genome docs check | `docmap.py check` → 0 errors, 2026-10-30 |
 | session-status-line 0.3.0 (mod): validates, test passes, genome and docs checks clean | `claude plugin validate` and `claude plugin test plugins/session-status-line` → pass; `loop.py check` → 0 errors, 2026-10-31. Seen working in the desktop app by the owner (screenshots, 2026-10-11) |
+| model-router 0.11.0 (mod): minimal view and Settings restyle, tests pass, genome and docs checks clean | `claude plugin test plugins/model-router` → 9 pass; `loop.py check` → 0 errors, 2026-11-01. Layout not yet seen in the real terminal |
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 
 ## Doesn't work yet / known issues
