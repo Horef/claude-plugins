@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendered by JavaScript after load</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 24px 16px; }
+  label { display: block; min-height: 32px; }
+  input { min-height: 32px; }
+  button { min-height: 36px; padding: 0 16px; }
+</style>
+</head>
+<body>
+<div id="app">Loading…</div>
+<script>
+  /* like a Streamlit app: the page loads empty, the real content arrives later */
+  setTimeout(function () {
+    document.getElementById('app').innerHTML =
+      '<h1>Loaded</h1>' +
+      '<label for="a">First value</label><input id="a" type="text">' +
+      '<label for="b">Second value</label><input id="b" type="text">' +
+      '<p><button type="button" id="go">Run</button></p>';
+  }, 500);
+</script>
+</body>
+</html>

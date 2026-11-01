@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sync settings</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f6f3; --panel: #ffffff; --text: #1f2328; --muted: #57606a; --line: #d8d6d0; --accent: #1a5fb4; --on-accent: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1c1e; --panel: #2a2a2d; --text: #ececec; --muted: #a8a8b0; --line: #3d3d42; --accent: #7db3f5; --on-accent: #10243d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 20px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 16px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row small { display: block; color: var(--muted); font-size: 13px; }
+  label.check { display: flex; align-items: center; gap: 10px; min-height: 40px; cursor: pointer; }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+  select, input[type=text] { min-height: 36px; padding: 4px 8px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; max-width: 55%; }
+  button.primary { min-height: 40px; padding: 0 18px; font: inherit; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: 8px; cursor: pointer; }
+  details { margin-top: 16px; }
+  summary { min-height: 32px; display: flex; align-items: center; color: var(--accent); cursor: pointer; }
+  ul.history { list-style: none; margin: 8px 0 0; padding: 0; }
+  ul.history li { padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
+  .actions { margin-top: 20px; display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sync settings</h1>
+  <p class="lead">Choose what is kept in step across your devices.</p>
+  <section aria-label="Sync options">
+    <div class="row">
+      <label for="folder">Folder<small>Where synced files are stored</small></label>
+      <input id="folder" type="text" value="~/Documents/Sync">
+    </div>
+    <div class="row">
+      <label for="every">Sync every<small>How often changes are pushed</small></label>
+      <select id="every"><option>5 minutes</option><option>1 hour</option><option>Manual</option></select>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" checked> Include hidden files</label>
+    </div>
+  </section>
+  <details>
+    <summary>Recent activity</summary>
+    <ul class="history">
+      <li>Today 09:14, 12 files uploaded</li>
+      <li>Today 08:02, 3 files updated</li>
+      <li>Yesterday 17:40, 1 conflict resolved</li>
+      <li>Yesterday 11:05, 48 files uploaded</li>
+      <li>Monday 16:30, 6 files removed</li>
+      <li>Monday 09:12, 2 files updated</li>
+      <li>Sunday 20:01, 19 files uploaded</li>
+      <li>Sunday 10:44, 5 files updated</li>
+    </ul>
+  </details>
+  <div class="actions"><button class="primary" type="button">Save changes</button></div>
+</main>
+</body>
+</html>

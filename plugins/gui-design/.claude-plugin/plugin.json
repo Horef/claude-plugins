@@ -1,0 +1,6 @@
+{
+  "name": "gui-design",
+  "version": "0.1.0",
+  "description": "Design GUIs people actually use: tool and mod panels, settings pages, inspection viewers, dashboards and interactive explainers, at the right density (everything needed on screen or one click away, rarer flows behind more steps, more detail on request). Layered disclosure rule, settings and explainer patterns, surface limits, a build-lint-shoot-look loop with screenshots at several widths in light and dark, and a profile for audience and taste. Use when building or reworking any GUI, panel, page, viewer or interactive demo, or when one feels too complex or too thin.",
+  "license": "MIT"
+}
