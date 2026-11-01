@@ -10,7 +10,8 @@ command -v hc >/dev/null 2>&1 || { echo "hc (herdr-core) not on PATH: nothing to
 mkdir -p "$dest"
 for f in "$here"/templates/*.md; do
   name=$(basename "$f" .md)
-  cli=$(sed -n 's/^command: \([^ ]*\).*/\1/p' "$f")
+  # First word of the command that is not a VAR=value assignment.
+  cli=$(sed -n 's/^command: //p' "$f" | tr ' ' '\n' | grep -v '=' | head -n 1)
   if ! command -v "$cli" >/dev/null 2>&1; then echo "skip   $name ($cli not installed)"; continue; fi
   if [ -e "$dest/$name.md" ] && [ "$force" != "--force" ]; then echo "kept   $name (exists)"; continue; fi
   cp "$f" "$dest/$name.md"; echo "wrote  $name"
