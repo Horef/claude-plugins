@@ -2,7 +2,8 @@
 /* In-page checks for lint_ui.py. A function expression: lint_ui.py calls it as (<this file>)(options) through
    Runtime.evaluate and reads the returned {problems, notes, density}. It only reads the page, never changes it.
    Problem kinds: page-hscroll, text-overflow, text-clipped, small-text, low-contrast, no-accessible-name,
-   small-target, overlap. Density counts are for the first screen (scroll position 0, viewport height). */
+   small-target, overlap. Density counts are for the first screen (scroll position 0, viewport height; inside an
+   iframe, the part of it that shows in the top viewport). */
 (function (opts) {
   var TOL = 2;                                  // px of slack for sub-pixel layout
   var SKIP = {SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, HEAD: 1, META: 1, LINK: 1, TITLE: 1, BR: 1, WBR: 1,
@@ -15,6 +16,9 @@
   var problems = [], notes = [], seen = {};
   window.scrollTo(0, 0);
   var VW = window.innerWidth, VH = window.innerHeight;
+  // First screen = this window's viewport; inside an iframe, lint_frames.js passes opts.clip: the part of the frame
+  // that is visible in the top viewport (frame coordinates).
+  var CLIP = (opts && opts.clip) || {left: 0, top: 0, right: VW, bottom: VH};
   var body = document.body;
   if (!body) return {problems: [], notes: [], density: null};
 
@@ -92,7 +96,7 @@
     return cs.overflowX !== 'visible' || cs.overflowY !== 'visible' || cs.backgroundImage !== 'none' ||
       parseColor(cs.backgroundColor)[3] > 0.05 || borderSides(cs) > 0;
   }
-  function inFirstScreen(r) { return r.top < VH && r.bottom > 0 && r.left < VW && r.right > 0; }
+  function inFirstScreen(r) { return r.top < CLIP.bottom && r.bottom > CLIP.top && r.left < CLIP.right && r.right > CLIP.left; }
 
   // ---------- visible text elements ----------
   var all = body.querySelectorAll('*'), textEls = [];

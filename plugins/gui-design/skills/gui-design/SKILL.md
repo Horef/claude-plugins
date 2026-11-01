@@ -98,6 +98,7 @@ For a surface you cannot see, check what you can (tests, widths in the harness, 
 
 1. **Build** from the layer plan (section 2), with the pattern from section 3 and the style scales from section 4.
 2. **Lint:** `python SKILL/scripts/lint_ui.py PAGE --max-controls 7 --max-notices 1` (add `--wait-for CSS` for a JS app; widths default to 390, 800 and 1280, both themes). It must report no problems: no text overflowing or clipped, no horizontal scroll, no text under 12 px, contrast passing, every control named, targets at least 24 px, no console errors. Read the density report too: controls, words, boxes, notices, text sizes and colours on the first screen. A box count in the teens or more than 4 text sizes means the screen is not calm yet, even when nothing is flagged.
+   Same-origin and `srcdoc` iframes (a Streamlit `components.html` viewer) are linted too, with the frame named before each selector and its own density line; a cross-origin frame is only a `frame-skipped` note, so lint its URL on its own.
 3. **Shoot:** `python SKILL/scripts/shot.py PAGE --out DIR` takes the first screen at each width in light and dark, plus `sheet.png`. Add `--click 'text=Advanced'` (or a CSS selector) to capture a layer-2 state, and `--full` for the whole page. Each image costs context: read the sheet first, then single images only where you need detail.
 4. **Look** at the sheet with this checklist, answering each item:
    - In 5 seconds, can you say what this view is for, and is that the most prominent thing?

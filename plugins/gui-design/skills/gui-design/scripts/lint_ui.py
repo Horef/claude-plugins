@@ -9,6 +9,14 @@ stable). Every width x theme is loaded fresh (dark = emulated prefers-color-sche
 (checks live in lint_ui.js). A problem prints as `width theme: kind: selector: detail`; the same problem seen
 in several combinations is merged into one line (`390,800 light,dark: ...`).
 
+IFRAMES: the checks also run inside every displayed iframe the browser lets the page reach, i.e. same-origin and
+srcdoc frames, nested up to 3 deep (a Streamlit `components.html` viewer is one). A problem inside a frame is
+printed with the frame in front of its selector, `iframe#2 (title or src) > div.panel`, and carries a "frame" key
+in --json. Each frame gets its own DENSITY line: its first screen is the part of it that shows in the top
+viewport (zero when it sits below the fold), and the --max-* limits apply to each frame separately. A
+cross-origin or sandboxed frame cannot be read: it gets a `frame-skipped` note and is NOT checked, so lint its
+own URL. Console errors and exceptions of frames are reported once, without a frame name.
+
 Kinds: page-hscroll, text-overflow (text runs out of its box), text-clipped (cut off by overflow/ellipsis/
 line-clamp), small-text (< 12px), low-contrast (< 4.5:1, or < 3:1 for >= 24px or >= 18.66px bold; text over
 an image or gradient is only a `contrast-unknown` note), no-accessible-name, small-target (< 24x24),
@@ -31,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from browser import Browser, BrowserUnavailable, CDPError, LoadError, to_url  # noqa: E402
 
 JS = (Path(__file__).resolve().parent / "lint_ui.js").read_text()
+FRAMES_JS = (Path(__file__).resolve().parent / "lint_frames.js").read_text()
 MAX_PER_KIND = 15
 
 
@@ -50,27 +59,35 @@ def lint(page_arg, widths, themes, height=900, wait_for=None, settle=800, timeou
                 warnings.append("%d %s: --wait-for %r never became visible" % (w, theme, wait_for))
             elif r.get("timedOut"):
                 warnings.append("%d %s: page still changing after %ds; checked anyway" % (w, theme, timeout))
-            res = page.evaluate("%s(%s)" % (JS, json.dumps({})))
+            entries = page.evaluate("(%s)(%s, %s)" % (FRAMES_JS, JS, json.dumps({})))
             page.pump(0.15)
             tag = {"width": w, "theme": theme}
-            for p in res["problems"]:
-                problems.append(dict(tag, **p))
+            for e in entries:
+                frame = e["frame"]
+                if "skipped" in e:
+                    notes.append(dict(tag, kind="frame-skipped", selector=frame, detail=e["skipped"], frame=frame))
+                    continue
+                res = e["result"]
+                for p in res["problems"]:
+                    problems.append(dict(tag, frame=frame, **p))
+                for n in res["notes"]:
+                    notes.append(dict(tag, frame=frame, **n))
+                if not res["density"]:
+                    continue
+                d = dict(tag, frame=frame, onFirstScreen=e["onFirstScreen"], **res["density"])
+                density.append(d)
+                for key, label in (("controls", "visible controls"), ("words", "visible words"),
+                                   ("boxes", "bordered/filled boxes"), ("notices", "notices/alerts")):
+                    lim = limits.get(key)
+                    if lim is not None and d[key] > lim:
+                        extra = ""
+                        if key == "notices" and d["noticeSelectors"]:
+                            extra = " (" + ", ".join(d["noticeSelectors"]) + ")"
+                        problems.append(dict(tag, kind="density", frame=frame, selector="first screen",
+                                             detail="%d %s on the first screen, limit %d%s" % (d[key], label, lim, extra)))
             for kind, loc, text in page.console_problems():
-                problems.append(dict(tag, kind=kind, selector=loc, detail=text[:200]))
-            for n in res["notes"]:
-                notes.append(dict(tag, **n))
+                problems.append(dict(tag, kind=kind, selector=loc, detail=text[:200], frame=None))
             warnings.extend("%d %s: %s" % (w, theme, t) for t in page.warnings())
-            d = dict(tag, **res["density"])
-            density.append(d)
-            for key, label in (("controls", "visible controls"), ("words", "visible words"),
-                               ("boxes", "bordered/filled boxes"), ("notices", "notices/alerts")):
-                lim = limits.get(key)
-                if lim is not None and d[key] > lim:
-                    extra = ""
-                    if key == "notices" and d["noticeSelectors"]:
-                        extra = " (" + ", ".join(d["noticeSelectors"]) + ")"
-                    problems.append(dict(tag, kind="density", selector="first screen",
-                                         detail="%d %s on the first screen, limit %d%s" % (d[key], label, lim, extra)))
     return problems, notes, density, warnings
 
 
@@ -80,11 +97,15 @@ def _prefix(combos, widths, themes):
     return "%s %s" % (",".join(map(str, ws)), ",".join(ts))
 
 
+def shown_selector(it):
+    return it["selector"] if not it.get("frame") or it["kind"] == "frame-skipped" else "%s > %s" % (it["frame"], it["selector"])
+
+
 def merge(items, widths, themes):
     """Group identical (kind, selector, detail) over width x theme. Returns [(prefix, item)]."""
     groups = {}
     for it in items:
-        groups.setdefault((it["kind"], it["selector"], it["detail"]), []).append((it["width"], it["theme"]))
+        groups.setdefault((it["kind"], shown_selector(it), it["detail"]), []).append((it["width"], it["theme"]))
     out = []
     for (kind, sel, detail), combos in groups.items():
         ws, ts = {c[0] for c in combos}, {c[1] for c in combos}
@@ -115,8 +136,9 @@ def print_report(problems, notes, density, warnings, widths, themes, height):
     print("")
     print("DENSITY (first screen, %dpx tall; a report, not a verdict):" % height)
     for d in density:
-        print("  %4d %-5s controls %d, words %d, boxes %d, notices %d, text sizes %d %s, text colours %d %s" % (
-            d["width"], d["theme"], d["controls"], d["words"], d["boxes"], d["notices"],
+        name = "" if not d.get("frame") else "  %s%s:" % (d["frame"], "" if d.get("onFirstScreen", True) else " [below the first screen]")
+        print("  %4d %-5s%s controls %d, words %d, boxes %d, notices %d, text sizes %d %s, text colours %d %s" % (
+            d["width"], d["theme"], name, d["controls"], d["words"], d["boxes"], d["notices"],
             len(d["textSizes"]), d["textSizes"], len(d["textColors"]), " ".join(d["textColors"][:8])))
     print("")
     print("%d problem line(s)." % len(lines) if lines else "OK: no problems found.")
