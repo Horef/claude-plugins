@@ -22,7 +22,15 @@ export const DEFAULT_SETTINGS: Settings = {
       standard: 'kiro-standard,copilot-standard,agy-standard',
       deep: 'kiro-deep,copilot-deep,agy-deep',
     },
+    fusion: 'off',
   },
+}
+
+// Copilot Fusion templates (herdr-delegate) and the pinned Copilot template each goes before:
+// both draw on Copilot's quota, so after it Fusion would never be reached.
+export const FUSION: Partial<Record<Tier, { template: string; before: string }>> = {
+  standard: { template: 'copilot-fusion-high', before: 'copilot-standard' },
+  deep: { template: 'copilot-fusion-max', before: 'copilot-deep' },
 }
 
 export const TIER_USE: Record<Tier, string> = {

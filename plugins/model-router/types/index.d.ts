@@ -21,6 +21,8 @@ export type HelperSettings = {
   use: 'long' | 'all'
   /** Per tier, the helper templates to try in order, comma-separated. */
   tiers: Record<Tier, string>
+  /** Copilot Fusion, opt-in: 'deep' adds Fusion Max to the deep order, 'both' also Fusion High to standard. */
+  fusion: 'off' | 'deep' | 'both'
 }
 
 export type Settings = {
