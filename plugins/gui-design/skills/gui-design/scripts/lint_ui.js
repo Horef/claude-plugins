@@ -290,7 +290,11 @@
   }
 
   // ---------- density (first screen) ----------
-  var controls = inter.filter(function (it) { return inFirstScreen(it.r); }).length;
+  // Navigation (nav, role=navigation, a Streamlit sidebar) is counted apart, so --max-controls judges the page itself.
+  var NAV = 'nav, [role=navigation], [data-testid=stSidebar], [data-testid=stSidebarNav]';
+  var shownCtl = inter.filter(function (it) { return inFirstScreen(it.r); });
+  var navControls = shownCtl.filter(function (it) { return it.el.closest(NAV); }).length;
+  var controls = shownCtl.length - navControls;
   var words = 0, sizes = {}, colors = {};
   textEls.forEach(function (t) {
     var shown = false;
@@ -355,6 +359,7 @@
     notes: notes,
     density: {
       controls: controls,
+      navControls: navControls,
       words: words,
       boxes: boxes.length,
       notices: notices.length,

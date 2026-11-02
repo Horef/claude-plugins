@@ -22,7 +22,8 @@ line-clamp), small-text (< 12px), low-contrast (< 4.5:1, or < 3:1 for >= 24px or
 an image or gradient is only a `contrast-unknown` note), no-accessible-name, small-target (< 24x24),
 console-error, exception, overlap (text boxes overlapping), density (a --max-* limit exceeded).
 
-DENSITY is also printed for the first screen (scroll 0, --height tall): visible controls, words, distinct
+DENSITY is also printed for the first screen (scroll 0, --height tall): visible controls (navigation - nav,
+role=navigation, a Streamlit sidebar - counted apart and not judged by --max-controls), words, distinct
 bordered/filled boxes, notice/alert-like elements, distinct text sizes and text colours. These are a report,
 not problems, unless you pass --max-controls / --max-words / --max-boxes / --max-notices (no defaults).
 
@@ -137,8 +138,9 @@ def print_report(problems, notes, density, warnings, widths, themes, height):
     print("DENSITY (first screen, %dpx tall; a report, not a verdict):" % height)
     for d in density:
         name = "" if not d.get("frame") else "  %s%s:" % (d["frame"], "" if d.get("onFirstScreen", True) else " [below the first screen]")
-        print("  %4d %-5s%s controls %d, words %d, boxes %d, notices %d, text sizes %d %s, text colours %d %s" % (
-            d["width"], d["theme"], name, d["controls"], d["words"], d["boxes"], d["notices"],
+        nav = " (+%d navigation)" % d["navControls"] if d.get("navControls") else ""
+        print("  %4d %-5s%s controls %d%s, words %d, boxes %d, notices %d, text sizes %d %s, text colours %d %s" % (
+            d["width"], d["theme"], name, d["controls"], nav, d["words"], d["boxes"], d["notices"],
             len(d["textSizes"]), d["textSizes"], len(d["textColors"]), " ".join(d["textColors"][:8])))
     print("")
     print("%d problem line(s)." % len(lines) if lines else "OK: no problems found.")
@@ -154,7 +156,7 @@ def main(argv=None):
     ap.add_argument("--wait-for", metavar="CSS", help="wait until this selector is visible (slow JS apps)")
     ap.add_argument("--settle", type=int, default=800, help="ms the DOM must stay unchanged before checking")
     ap.add_argument("--timeout", type=int, default=15, help="max seconds to wait for the page to settle")
-    ap.add_argument("--max-controls", type=int, help="problem if more visible controls on the first screen")
+    ap.add_argument("--max-controls", type=int, help="problem if more visible controls on the first screen (navigation not counted)")
     ap.add_argument("--max-words", type=int, help="problem if more visible words on the first screen")
     ap.add_argument("--max-boxes", type=int, help="problem if more bordered/filled boxes on the first screen")
     ap.add_argument("--max-notices", type=int, help="problem if more notice/alert elements on the first screen")

@@ -10,11 +10,11 @@ prefers-color-scheme: dark. --click SEL clicks before the shot (CSS selector, or
 element containing that text) to capture layer-2 states such as an opened expander or popover; repeat it for
 several clicks. Images are device scale 1 unless --scale 2, to keep them cheap to view.
 
-Prints one PNG path per line, then the contact sheet `sheet.png` (needs Pillow; skipped with a note if it is
-missing). Open the sheet first with the Read tool, then single PNGs for detail.
+Prints one PNG path per line, then the contact sheet `sheet.png` (made with Pillow when it is installed,
+otherwise by screenshotting an HTML layout of the tiles in the same browser). Open the sheet first with the Read tool, then single PNGs for detail.
 Exit codes: 0 done, 1 a page step failed (e.g. --click matched nothing; shots already taken are still printed),
 2 not run (no browser, page not found or not loadable).
-Standard library only; Pillow optional (contact sheet).
+Standard library only; Pillow optional (faster contact sheet).
 """
 import argparse
 import sys
@@ -72,6 +72,44 @@ def make_sheet(tiles, widths, themes, out_path, view_h, tile_h=380, max_w=1800):
             x += t.width + pad
         y += max(t.height for t, _ in r) + band + pad
     sheet.save(out_path)
+    return True
+
+
+def make_sheet_browser(tiles, widths, themes, out_path, view_h, tile_h=380, max_w=1800):
+    """The contact sheet without Pillow: lay the tiles out in an HTML page and screenshot it with the same headless
+    browser. Same layout as make_sheet (a row per theme, a column per width, labelled, first screen only)."""
+    import html
+    import struct
+
+    def tile(w, theme):
+        p = Path(tiles[(w, theme)]).resolve()
+        px_w = struct.unpack(">I", p.read_bytes()[16:20])[0]          # PNG IHDR width
+        return ('<figure><figcaption>%dpx %s</figcaption><div style="max-height:%dpx;overflow:hidden">'
+                '<img src="%s" style="width:%dpx;display:block"></div></figure>' % (
+                    w, theme, tile_h * 2, html.escape(p.as_uri()), round(px_w * tile_h / view_h)))
+    cells = []
+    for theme in themes:
+        row = "".join(tile(w, theme) for w in widths if (w, theme) in tiles)
+        if row:
+            cells.append('<div class="r">%s</div>' % row)
+    if not cells:
+        return False
+    page = out_path.with_suffix(".html")
+    page.write_text('<!doctype html><meta charset="utf-8"><style>body{margin:0;padding:10px;background:#c8c8c8;'
+                    'font:14px sans-serif;width:max-content}.r{display:flex;gap:10px;margin-bottom:10px}'
+                    'figure{margin:0}figcaption{height:22px;color:#141414}img{outline:1px solid #787878}'
+                    '</style>' + "".join(cells))
+    try:
+        with Browser() as b:
+            pg = b.new_page()
+            pg.set_view(max_w, 400, 1.0, "light")
+            pg.goto(page.as_uri())
+            pg.settle(300, 10, None)
+            pg.screenshot(out_path, full=True)
+    except (BrowserUnavailable, LoadError, CDPError, ConnectionError, TimeoutError):
+        return False
+    finally:
+        page.unlink(missing_ok=True)
     return True
 
 
@@ -133,10 +171,11 @@ def main(argv=None):
 
     if tiles:
         sheet = out / "sheet.png"
-        if make_sheet(tiles, widths, themes, sheet, int(a.height * a.scale)):
+        if (make_sheet(tiles, widths, themes, sheet, int(a.height * a.scale))
+                or make_sheet_browser(tiles, widths, themes, sheet, int(a.height * a.scale))):
             print(sheet)
         else:
-            print("(no contact sheet: Pillow is not installed; pip install pillow)", file=sys.stderr)
+            print("(no contact sheet could be made)", file=sys.stderr)
     return 1 if failed else 0
 
 
