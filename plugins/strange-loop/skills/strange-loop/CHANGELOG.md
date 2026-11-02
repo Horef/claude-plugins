@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.0.0 (2026-11-02)
+- Kernel (owner approved, 2 Nov 2026): an explicit owner request for a change makes a single observation ripe for Learn; cite it in the bump (section 3 table, section 4 triage) (O18)
+
 ## 0.12.0 (2026-11-02)
 - A git worktree of the configured genome wins when it is the current directory (O16); new --from refuses a bad source before writing and takes a hooks-only mod folder with --mod (O17); section 4 says what to do when the harness refuses to merge the agent's own PR (O19); O20 kept as evidence for evals-first (O16, O17, O19, O20)
 
