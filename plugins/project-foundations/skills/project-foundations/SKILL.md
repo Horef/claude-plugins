@@ -23,6 +23,7 @@ An agent should be able to go from "nothing loaded" to "the right lines of the r
 3. `<folder>/README.md` - **hand-written** purpose paragraph and folder-specific rules, plus a **generated** table of its files and subfolders with their summaries and who imports them.
 4. The file's header docstring/comment - **hand-written**: what it is for, how to use it, its contracts.
 5. `python tools/docmap.py show PATH | where NAME | uses PATH | find WORDS | get D12` - **computed on demand**: symbols with signatures and line numbers, definitions, importers and every reference.
+6. `python tools/docmap.py calls NAME | deps [PATH] | map [--budget N]` - **the code graph, computed on demand** (Python): callers and callees with file:line, module dependencies with import cycles, and a ranked, token-budgeted repo map. How calls are resolved and what is not: `references/code-graph.md`.
 
 **Write what lasts, generate what changes.** People and agents write purpose, usage and reasons, which change rarely. The script generates lists of files, symbols and "who uses this", which change with every commit and go stale the moment anyone maintains them by hand. CI fails when a generated block is out of date or a description is missing, so forgetting becomes visible instead of silent. The same holds for prose that can go stale: every doc carries a dated Status line, key values live once in a generated `docs/FACTS.md`, and `check` points at docs that are overdue for verification or still cite superseded decisions. "Imported by" also lists the tests that import a module, which tells an agent which tests to run after changing it.
 
@@ -151,7 +152,7 @@ Goal, scope and open questions: `docs/BRIEF.md`. Scaffolding: the project-founda
 1. `docs/MAP.md` (generated): every folder and code file with a one-line summary.
 2. The folder's `README.md`: purpose, folder rules, and a generated table of its files and who imports them.
 3. The file's header docstring; `python tools/docmap.py show <path>` lists its symbols, signatures and importers.
-4. Before changing a function or class: `python tools/docmap.py where <Name>` (definition, importers, every use); run the tests it lists.
+4. Before changing a function or class: `python tools/docmap.py where <Name>` (definition, importers, every use); run the tests it lists. `calls <Name>` shows its callers and callees, `deps <folder>` how modules depend on each other, `map --budget 2000` the repo's most-used symbols.
 
 ## Environment and commands
 - `python` means the interpreter named by `python` in `AGENTS.local.md` (<how the env is built, e.g. `conda env create -f env/environment.yml`>); never the base interpreter.
