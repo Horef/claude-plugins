@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.4.0 (2026-11-02)
+- Unattended runs use Kiro (Copilot needs a present judge); Copilot waits use --timeout 300 plus hc read; launch with --cwd where the helper must run things; briefs steer quota cost (line ranges, lowest tier, one session per batch, capped look rounds) (O1, O2, O3, O4, O5)
+
 ## 0.3.0 (2026-11-01)
 - helpers.py prompt finds approvals a Copilot helper waits on; leads check at 60-second check-ins
 
