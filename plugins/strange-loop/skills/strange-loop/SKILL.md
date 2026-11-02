@@ -79,7 +79,7 @@ Like the game Nomic, the loop distinguishes rules that play can change from rule
 | Class | Examples | Bar | Version |
 |---|---|---|---|
 | **Fix** | wrong command, renamed function, broken link, typo that changes meaning | You verified the correction by running or reading the source | patch |
-| **Learn** | a new heuristic, a clarified step, a new helper function, a new check | A ripe observation (seen ×2, or one `failure`/`misled` with a verified cause) and evals still pass | minor |
+| **Learn** | a new heuristic, a clarified step, a new helper function, a new check | A ripe observation (seen ×2, or one `failure`/`misled` with a verified cause), or the owner's explicit request for that change (cite it: who, when, what), and evals still pass | minor |
 | **Restructure** | split or merge sections, move detail to references, change scope or triggers, remove rules | A reflection pass with before/after evals; say what was removed and why | minor or major |
 | **Kernel** | the rules in "Kernel" below, ripeness thresholds, this table | The owner's explicit approval; agents propose with evidence from at least two units | major |
 
@@ -96,7 +96,7 @@ Do one unit per pass. Work on the genome checkout, on a branch if the repository
    - *rule*: becomes or sharpens one instruction, written where the agent will be when it matters;
    - *case*: becomes an eval case (always, for a `failure`), with or without another outcome;
    - *move*: belongs to another layer or unit (section 1) - note it there, resolve it here as moved;
-   - *wait*: not enough evidence yet - leave it open;
+   - *wait*: not enough evidence yet - leave it open, unless the owner asks for the change: an owner request makes a single observation ripe (section 3), cite it in the bump;
    - *reject*: wrong, already covered, or conflicts with an owner preference - resolve it with the reason.
 4. **Change by deltas.** Edit the smallest span that carries the lesson. Keep wording that works; never rewrite a whole skill from memory in one go (summarising rewrites lose hard-won specifics: "context collapse"). New detail goes into a referenced file when the main file is near its budget.
 5. **Pay for growth.** Check the budgets (section 6). If the unit grew, find what to shrink: detail that can move to `references/`, prose a check now enforces, rules every model already follows (test by removing them on an eval case), duplicates.
