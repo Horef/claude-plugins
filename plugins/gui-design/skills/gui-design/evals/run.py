@@ -10,7 +10,8 @@ Runs scripts/lint_ui.py and scripts/shot.py against the fixtures in evals/fixtur
     first-screen density, --max-* limits apply per frame; a file:// host cannot read the file:// frame (a note,
     not a pass), but over http:// the good.html frame is checked, clean, and follows the dark theme;
   - shot.py writes the expected PNGs (right size, light differs from dark, --click and --full change the image,
-    a missed --click selector exits 1), plus sheet.png when Pillow is installed;
+    a missed --click selector exits 1), plus sheet.png (Pillow, or the browser when Pillow is missing);
+  - nav.html: navigation controls are counted apart from the page's; the browser has WebGL;
   - the same works over http:// (fixtures served on a free local port), including delayed.html, which only
     renders its controls half a second after load, and a closed port exits 2.
 No Chrome/Chromium/Edge (see scripts/browser.py find_chrome; $GUI_CHROME) means "not run" (2), never a pass.
@@ -150,12 +151,26 @@ def main():
     check(not any(p["frame"] == "iframe#3 (Far embed)" for p in data["problems"] if p["kind"] == "density"),
           "host.html: a frame below the fold never breaks a first-screen limit")
 
+    code, data, err = lint_json(FIX / "nav.html", "--widths", "1280", "--themes", "light", "--max-controls", "3")
+    d = data["density"][0] if data["density"] else {}
+    check(d.get("controls") == 2 and d.get("navControls") == 5, "nav.html: navigation controls are counted apart",
+          "%s / %s" % (d.get("controls"), d.get("navControls")))
+    check(not [p for p in data["problems"] if p["kind"] == "density"], "nav.html: --max-controls judges the page without its navigation",
+          str(data["problems"][:2]))
+    from browser import Browser, to_url
+    with Browser() as b:
+        pg = b.new_page()
+        pg.set_view(400, 300, 1.0, "light")
+        pg.goto(to_url(str(FIX / "nav.html")))
+        pg.settle(300, 10, None)
+        check(pg.evaluate("document.body.dataset.webgl") == "yes", "the headless browser has WebGL (Plotly 3D, maps)")
+
     print("shot.py")
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         code, out, err = run("shot.py", good, "--out", tmp / "a")
         files = {p.name: p for p in (tmp / "a").glob("*.png")}
-        check(code == 0 and len(files) == (7 if have_pil else 6), "good.html: six PNGs%s" % (" + sheet.png" if have_pil else ""), "exit %s %s" % (code, err[-200:]))
+        check(code == 0 and len(files) == 7, "good.html: six PNGs + sheet.png (with or without Pillow)", "exit %s %s" % (code, err[-200:]))
         sizes_ok = all(png_size(files.get("good-%d-%s.png" % (w, t), tmp)) == (w, 900) for w in (390, 800, 1280) for t in ("light", "dark"))
         check(sizes_ok, "PNG sizes are width x 900 (first screen only)")
         a, b = files.get("good-390-light.png"), files.get("good-390-dark.png")
@@ -164,8 +179,7 @@ def main():
             from PIL import Image, ImageStat
             ml, md = (ImageStat.Stat(Image.open(p).convert("L")).mean[0] for p in (a, b))
             check(ml > 200 and md < 80, "light shot is bright, dark shot is dark", "means %.0f / %.0f" % (ml, md))
-        if have_pil:
-            check("sheet.png" in files and png_size(files["sheet.png"])[0] > 500, "contact sheet written")
+        check("sheet.png" in files and png_size(files["sheet.png"])[0] > 500, "contact sheet written")
         base = tmp / "b"
         run("shot.py", good, "--widths", "390", "--themes", "light", "--out", base)
         run("shot.py", good, "--widths", "390", "--themes", "light", "--click", "summary", "--out", tmp / "c")
@@ -203,7 +217,7 @@ def main():
             d = data["density"][0] if data["density"] else {}
             check(code == 0 and d.get("controls") == 3, "URL: waits for JS-rendered controls (delayed.html)", str(d.get("controls")) + " " + err[-200:])
             code, out, err = run("shot.py", base_url + "/delayed.html", "--widths", "800", "--themes", "light", "--wait-for", "#go", "--out", tmp / "f")
-            check(code == 0 and (tmp / "f" / "sheet.png").exists() == have_pil and any((tmp / "f").glob("*800-light.png")),
+            check(code == 0 and (tmp / "f" / "sheet.png").exists() and any((tmp / "f").glob("*800-light.png")),
                   "URL: shot.py with --wait-for", "exit %s %s" % (code, err[-200:]))
             code, out, err = run("shot.py", base_url + "/good.html", "--widths", "390", "--themes", "dark", "--out", tmp / "g")
             check(code == 0 and any((tmp / "g").glob("*390-dark.png")), "URL: shot.py writes the PNG", "exit %s %s" % (code, err[-200:]))
