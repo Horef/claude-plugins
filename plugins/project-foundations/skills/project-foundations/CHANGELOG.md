@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.5.1 (2026-11-02)
+- MAP.md intro names the code-graph commands (calls, deps, map), so agents reading the map first learn them (owner question, 2 Nov 2026)
+
 ## 5.5.0 (2026-11-02)
 - docmap code graph (owner request, 2 Nov 2026): calls NAME [--depth N] (callers and callees resolved through imports, unresolved listed apart), deps [PATH] [--mermaid] (module imports, cycles flagged), map [PATH] [--budget N] (ranked signatures within a token budget); stdlib ast, Python only; every command ~2x faster on large repos
 
