@@ -895,13 +895,15 @@ class Graph:
                     stack.extend(v)
                 elif isinstance(v, ast.AST):
                     stack.append(v)
+        key_of = {n.name: f"{mod}.{n.name}" if owner == mod else f"{owner}.{n.name}" for n in nested}
+        here = key_of if isinstance(node, FUNC) else {}  # functions and classes defined in this function
         for n in items:
-            self._ref(owner, mod, n, id(n) in callee, cls, local, types)
+            self._ref(owner, mod, n, id(n) in callee, cls, local, types, here)
         for n in nested:
-            key = f"{mod}.{n.name}" if owner == mod else f"{owner}.{n.name}"
+            key = key_of[n.name]
             self._scan(key, mod, n, key if isinstance(n, ast.ClassDef) else (cls if isinstance(node, ast.ClassDef) else None))
 
-    def _ref(self, owner, mod, n, is_call, cls, local, types):
+    def _ref(self, owner, mod, n, is_call, cls, local, types, here):
         parts = dotted_parts(n)
         text = ".".join(parts) if parts else ast.unparse(n)
         line = n.lineno
@@ -912,6 +914,8 @@ class Graph:
         first, target = parts[0], None
         if first in ("self", "cls") and cls and first in local and len(parts) == 2:
             target = self.method(cls, parts[1])
+        elif first in here and first not in local:
+            target = here[first] if len(parts) == 1 else self.method(here[first], parts[1]) if len(parts) == 2 else None
         elif first in types and len(parts) == 2:
             target = self.method(types[first], parts[1])
         elif first in local and first not in types:
