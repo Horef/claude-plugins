@@ -32,7 +32,7 @@ GRAPH = {  # a small package for the code-graph commands
     "g/util.py": '"""Util."""\n\n\ndef fmt(v):\n    return str(v)\n',
     "g/app.py": ('"""App."""\nimport json\n\nimport g.util as u\nfrom g import helper\nfrom g.core import Engine\n\n\n'
                  'def main(thing):\n    e = Engine()\n    e.run()\n    thing.step()\n    u.fmt(helper(2))\n'
-                 '    return json.dumps(1)\n'),
+                 '    return json.dumps(1)\n\n\ndef outer():\n    def inner():\n        return 1\n    return inner()\n'),
     "g/cyc_a.py": '"""Cycle A."""\nfrom g import cyc_b\nfrom g.core import helper\n\n\ndef a():\n    return helper(cyc_b.b())\n',
     "g/cyc_b.py": '"""Cycle B."""\nfrom g import cyc_a\nfrom g.core import helper\n\n\ndef b():\n    return helper(cyc_a)\n',
     "web/app.js": "// Web.\nfunction jsOnly() { return 1; }\n",
@@ -204,6 +204,8 @@ def main() -> int:
         expect("g.core.Engine.step" in p.stdout.split("called by")[0], "calls resolves self.method() in a class", p)
         p = docmap(root, "calls", "main", "--depth", "2")
         expect("g.core.Engine.step  g/core.py:" in p.stdout.split("called by")[0], "calls --depth 2 follows callees of callees", p)
+        p = docmap(root, "calls", "outer")
+        expect("g.app.outer.inner  g/app.py:" in p.stdout.split("called by")[0], "calls resolves a function defined in the caller", p)
         p = docmap(root, "calls", "jsOnly")
         expect(p.returncode != 0 and "jsOnly" in p.stdout + p.stderr and "Python" in p.stdout + p.stderr,
                "calls says non-Python code is not supported", p)
