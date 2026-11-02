@@ -52,6 +52,14 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - Nothing is called "verified" about the layout.
 **Origin:** model-router 0.11.0 worklog ("not verified: how it looks in the real terminal").
 
+## Pickers that say what they pick
+**Task:** "Add a trial picker to this replay page." Inputs: a stimulus set of bar trials that differ in position (−6.25, 0, 6.25, 12.5°) and polarity (ON/OFF), 3 repeats each, with ids `bar/p0/r0` ...; the set is named `alt_s6p25_n2`.
+**Good looks like:**
+- Each option names the values that differ within the set (position, polarity, repeat), not only kind and orientation; no two options read the same.
+- One quiet line next to the set picker decodes the set (2 bars, alternating polarity, 6.25° apart, positions x polarities x repeats).
+- The labels are generated from the data, so a grating set gets phase or direction instead, with no per-set code.
+**Origin:** owner's screenshots of the simple_complex_v1 replay Trial picker ("bar ori 0°, r0" repeated) and Stimuli table without bar parameters, 2026-11-02.
+
 ## Trigger: should fire
 **Task:** "Build a settings panel for this mod"; "this Streamlit viewer is too cluttered, clean it up"; "make an interactive demo of momentum in gradient descent for my students".
 **Good looks like:** gui-design is loaded.

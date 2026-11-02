@@ -32,6 +32,7 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
 
 Genome resolution, first hit wins: --genome PATH, $STRANGE_LOOP_GENOME, the path in ~/.config/strange-loop/genome,
 the nearest folder above the current directory (then above this script) with .claude-plugin/marketplace.json.
+A git worktree of the configured genome, when it is the current directory, wins over the configured path.
 Installed plugin copies under ~/.claude/plugins are never treated as the genome (updates overwrite them).
 With no genome, `note` writes to ~/.config/strange-loop/inbox.md and `absorb` moves the lines later.
 """
@@ -133,6 +134,19 @@ def _marketplace_root(start: Path) -> Path | None:
     return None
 
 
+def _same_repo(a: Path, b: Path) -> bool:
+    """True when a and b are checkouts (worktrees) of one git repository."""
+    def common(p):
+        try:
+            r = subprocess.run(["git", "-C", str(p), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                               capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return Path(r.stdout.strip()).resolve() if r.returncode == 0 and r.stdout.strip() else None
+    ca = common(a)
+    return ca is not None and ca == common(b)
+
+
 def find_genome(explicit: str | None = None) -> tuple[Path | None, str]:
     if explicit:
         return Path(explicit).expanduser(), "--genome"
@@ -141,7 +155,11 @@ def find_genome(explicit: str | None = None) -> tuple[Path | None, str]:
         return Path(env).expanduser(), "$STRANGE_LOOP_GENOME"
     cfg = CONFIG / "genome"
     if cfg.is_file() and cfg.read_text(encoding="utf-8").strip():
-        return Path(cfg.read_text(encoding="utf-8").strip()).expanduser(), str(cfg)
+        configured = Path(cfg.read_text(encoding="utf-8").strip()).expanduser()
+        here = _marketplace_root(Path.cwd())
+        if here and here.resolve() != configured.resolve() and _same_repo(here, configured):
+            return here, "git worktree of the configured genome (current directory)"
+        return configured, str(cfg)
     for start, why in ((Path.cwd(), "current directory"), (Path(__file__).resolve().parent, "this script's location")):
         root = _marketplace_root(start)
         if root:
@@ -573,6 +591,12 @@ def cmd_new(args):
     plug = g / "plugins" / name
     if plug.exists():
         sys.exit(f"strange-loop: {plug} exists already")
+    if args.source:                                                    # refuse a bad source before writing anything
+        src = Path(args.source).expanduser()
+        if not src.is_dir():
+            sys.exit(f"strange-loop: {src} is not a folder")
+        if not args.mod and not (src / "SKILL.md").is_file():
+            sys.exit(f"strange-loop: {src} has no SKILL.md (for a mod folder, add --mod)")
     version = "1.0.0" if args.source else "0.1.0"
     (plug / ".claude-plugin").mkdir(parents=True)
     write_json(plug / ".claude-plugin" / "plugin.json", {"name": name, "version": version, "description": desc, "license": "MIT"})
@@ -580,21 +604,19 @@ def cmd_new(args):
     unit.mkdir(parents=True, exist_ok=True)
     copied = []
     if args.source:
-        src = Path(args.source).expanduser()
-        if not (src / "SKILL.md").is_file():
-            sys.exit(f"strange-loop: {src} has no SKILL.md")
         for f in sorted(src.rglob("*")):
             rel = f.relative_to(src)
             if f.is_file() and "__pycache__" not in rel.parts and f.suffix != ".pyc" and f.name != ".DS_Store":
                 (unit / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(f, unit / rel)
                 copied.append((rel, f.stat().st_size))
-        body = (unit / "SKILL.md").read_text(encoding="utf-8")
-        if "## Learning loop" not in body:
-            (unit / "SKILL.md").write_text(body.rstrip() + "\n\n" + LOOP_SECTION.format(cmd=NOTE_CMD, name=name), encoding="utf-8")
-    elif args.mod:
+        if (unit / "SKILL.md").is_file():
+            body = (unit / "SKILL.md").read_text(encoding="utf-8")
+            if "## Learning loop" not in body:
+                (unit / "SKILL.md").write_text(body.rstrip() + "\n\n" + LOOP_SECTION.format(cmd=NOTE_CMD, name=name), encoding="utf-8")
+    if args.mod and not (unit / "README.md").exists():
         (unit / "README.md").write_text(f"# {name}\n\n{desc}\n\nTODO(new): how it works and how to install it.\n", encoding="utf-8")
-    else:
+    if not args.source and not args.mod:
         title = name.replace("-", " ").capitalize()
         (unit / "SKILL.md").write_text(SKILL_TEMPLATE.format(name=name, description=desc, title=title, cmd=NOTE_CMD), encoding="utf-8")
     (unit / "evals").mkdir(exist_ok=True)

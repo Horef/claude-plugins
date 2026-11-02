@@ -14,7 +14,7 @@ It distils Wathan & Schoger *Refactoring UI*, Tidwell et al. *Designing Interfac
 ## 0. Setup (once per task)
 
 1. `SKILL` = this skill's folder: in Claude Code `${CLAUDE_PLUGIN_ROOT}/skills/gui-design`; in a clone of the genome `<genome>/plugins/gui-design/skills/gui-design` (the clone's path is in `~/.config/strange-loop/genome`).
-2. Tools in `SKILL/scripts/` need Python 3 (standard library; Pillow optional, for the contact sheet) and Google Chrome, Chromium or Edge (`$GUI_CHROME` overrides the search). `shot.py` takes screenshots, `lint_ui.py` reports mechanical faults and a density report. Both take an HTML file or a URL (a Streamlit app on `http://localhost:8501`), and both exit 2 when no browser is available. Exit 2 means not checked: never report it as clean.
+2. Tools in `SKILL/scripts/` need Python 3 (standard library; Pillow optional, it only makes the contact sheet faster) and Google Chrome, Chromium or Edge (`$GUI_CHROME` overrides the search). `shot.py` takes screenshots, `lint_ui.py` reports mechanical faults and a density report. Both take an HTML file or a URL (a Streamlit app on `http://localhost:8501`), and both exit 2 when no browser is available. Exit 2 means not checked: never report it as clean.
 3. **Read the person's GUI profile** if there is one: `~/.config/gui-design/profile.md` (format: `profile.example.md` next to this file), or their standing instructions in a chat app. It names the audience, surfaces, density, how much to explain, and apps they like or dislike; each line overrides a default here. Without a profile, assume one expert user (the person asking), balanced density, light and dark, and ask only if the audience or surface changes the build. When the person states a lasting preference, offer to add it to the profile.
 
 ## 1. Before building: job, tasks, posture, surfaces
@@ -82,6 +82,7 @@ Every string tells the user what they can do or what just happened, in their own
 - Buttons: a verb and its object, 1-3 words ("Load run", "Re-make at 1 ms"). Put the number on the button when it matters ("Delete 3 runs").
 - Labels: a noun phrase. Help text: what the control *changes*, in one line of about 40-50 characters, with the unit and an example if the input is ambiguous.
 - Status: one short clause in the present tense ("Verified: replay matches the run"), the detail one click away.
+- Pickers and IDs: every option says what it is. No bare codes (`r0`, `alt_s6p25_n2`, "trial 4") without the values that tell the options apart: generate the label from what varies across the list ("bar 0°, pos −6.25°, ON, r1"), and put one line describing the chosen item next to the picker. A table of items shows the fields that differ between them, not one fixed set of columns.
 - Errors and empty states: what to do next ("No replays yet. Choose a trial and press Replay."), with no blame and no internal jargon.
 
 ## 6. Surfaces
@@ -97,9 +98,9 @@ For a surface you cannot see, check what you can (tests, widths in the harness, 
 ## 7. The loop: build, lint, shoot, look, fix
 
 1. **Build** from the layer plan (section 2), with the pattern from section 3 and the style scales from section 4.
-2. **Lint:** `python SKILL/scripts/lint_ui.py PAGE --max-controls 7 --max-notices 1` (add `--wait-for CSS` for a JS app; widths default to 390, 800 and 1280, both themes). It must report no problems: no text overflowing or clipped, no horizontal scroll, no text under 12 px, contrast passing, every control named, targets at least 24 px, no console errors. Read the density report too: controls, words, boxes, notices, text sizes and colours on the first screen. A box count in the teens or more than 4 text sizes means the screen is not calm yet, even when nothing is flagged.
+2. **Lint:** `python SKILL/scripts/lint_ui.py PAGE --max-controls 7 --max-notices 1` (add `--wait-for CSS` for a JS app; widths default to 390, 800 and 1280, both themes). It must report no problems: no text overflowing or clipped, no horizontal scroll, no text under 12 px, contrast passing, every control named, targets at least 24 px, no console errors. Read the density report too: controls (navigation, such as a sidebar of pages, is counted apart and not judged by `--max-controls`), words, boxes, notices, text sizes and colours on the first screen. A box count in the teens or more than 4 text sizes means the screen is not calm yet, even when nothing is flagged.
    Same-origin and `srcdoc` iframes (a Streamlit `components.html` viewer) are linted too, with the frame named before each selector and its own density line; a cross-origin frame is only a `frame-skipped` note, so lint its URL on its own.
-3. **Shoot:** `python SKILL/scripts/shot.py PAGE --out DIR` takes the first screen at each width in light and dark, plus `sheet.png`. Add `--click 'text=Advanced'` (or a CSS selector) to capture a layer-2 state, and `--full` for the whole page. Each image costs context: read the sheet first, then single images only where you need detail.
+3. **Shoot:** `python SKILL/scripts/shot.py PAGE --out DIR` takes the first screen at each width in light and dark, plus `sheet.png`. Add `--click 'text=Advanced'` (or a CSS selector) to capture a layer-2 state, and `--full` for the whole page. Each image costs context: read the sheet first, then single images only where you need detail. WebGL (Plotly 3D, maps) renders in software; a canvas that still says WebGL is unavailable is "not seen".
 4. **Look** at the sheet with this checklist, answering each item:
    - In 5 seconds, can you say what this view is for, and is that the most prominent thing?
    - Does layer 1 hold only the every-visit items, and does it fit the narrowest first screen?
@@ -116,7 +117,8 @@ When the person says a GUI is too much (or too thin), do not restyle it first.
 1. **Inventory the first screen:** every control, box, notice, caption and repeated fact, with counts (`lint_ui.py` gives the numbers). `references/case-replay-viewer.md` is a worked example: a replay viewer with a duplicated verification banner, repeated run identifiers, permanent instructions, developer paths and captions overflowing their panels.
 2. **Map each item to the task inventory** (section 1): delete what no task needs, merge duplicates, move rare items down a layer, and replace permanent captions with `?` popovers.
 3. **Rebuild layer 1**, then run the loop (section 7). Show the person before and after shots side by side, with the counts.
-4. **Record what was wrong** as an observation (learning loop below), citing the screenshot, before you fix it: UI lessons that live only in commit messages are lost.
+4. **Many pages:** do the shared parts first (theme, navigation, page header), then the pages in parallel batches, one branch or worktree per batch with one common brief that carries the lessons of the first page. Expect merge conflicts only in generated files; regenerate them.
+5. **Record what was wrong** as an observation (learning loop below), citing the screenshot, before you fix it: UI lessons that live only in commit messages are lost.
 
 ## 9. Delivery
 

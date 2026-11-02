@@ -179,6 +179,38 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(run("--genome", str(self.g), "check")[0], 0)
         self.assertIn('"version": "1.0.0"', (self.g / "plugins/old-skill/.claude-plugin/plugin.json").read_text())
 
+    def test_new_from_checks_before_writing_and_takes_a_mod_folder(self):
+        src = Path(self.tmp.name) / "hooks-only"
+        (src / "hooks").mkdir(parents=True)
+        (src / "hooks" / "index.ts").write_text("// A hook.\n")
+        code, out = run("--genome", str(self.g), "new", "bad-skill", "--description", "x.", "--category", "general", "--from", str(src))
+        self.assertEqual(code, 1, out)
+        self.assertFalse((self.g / "plugins/bad-skill").exists())        # nothing written when the source is refused
+        code, out = run("--genome", str(self.g), "new", "a-mod", "--description", "A mod.", "--category", "general", "--mod", "--from", str(src))
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.g / "plugins/a-mod/hooks/index.ts").is_file())
+        self.assertTrue((self.g / "plugins/a-mod/README.md").is_file())
+
+    def test_worktree_of_the_configured_genome_wins(self):
+        git = lambda cwd, *a: subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True)
+        git(self.g, "init", "-q", "-b", "main")
+        git(self.g, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+        git(self.g, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        wt = Path(self.tmp.name) / "wt"
+        git(self.g, "worktree", "add", "-q", "-b", "side", str(wt))
+        self.cfg.mkdir(parents=True, exist_ok=True)
+        (self.cfg / "genome").write_text(str(self.g))
+        os.environ.pop("STRANGE_LOOP_GENOME", None)
+        cwd = os.getcwd()
+        os.chdir(wt / "plugins")
+        try:
+            found, why = loop.find_genome()
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(found.resolve(), wt.resolve(), why)
+        found, _ = loop.find_genome()                                    # elsewhere the configured clone still wins
+        self.assertEqual(found.resolve(), self.g.resolve())
+
     def test_skill_md_template_matches_what_new_writes(self):
         text = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
         self.assertIn(loop.LOOP_SECTION.format(cmd=loop.NOTE_CMD, name="<name>").rstrip(), text)

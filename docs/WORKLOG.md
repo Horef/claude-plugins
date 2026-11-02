@@ -2,6 +2,21 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-02 - Reflection pass: gui-design 0.3.0, herdr-delegate 0.4.0, strange-loop 0.12.0
+
+- Owner asked for the reflection pass after using the reworked simple_complex_v1 GUI, plus a rule from their replay screenshots (bare trial and set codes).
+- gui-design 0.3.0: navigation controls counted apart from the page (O6); software WebGL in headless Chrome (O7, failed before, passes now); contact sheet through the browser when Pillow is missing (O1); rules for pickers and IDs and for many-page reworks (O8). O2 closed by O4; O3 (mod panes) waits.
+- herdr-delegate 0.4.0: unattended runs use Kiro, Copilot waits with `--timeout 300` and `hc read`, `--cwd` where the helper runs things, briefs that steer quota cost (O1-O5; O5 from the owner's question about Kiro usage).
+- strange-loop 0.12.0: a worktree of the configured genome is the genome (O16), `new --from` checks before writing and takes mod folders (O17), what to do when the harness refuses an own merge (O19). O18 needs a kernel change: proposed to the owner, not made. paper-premark: all five observations come from reading, not use, and two are owner decisions; left open.
+- Eval checks were committed before each change and failed on the old code.
+
+| Verification command | Result |
+|---|---|
+| `loop.py eval gui-design` | pass (new: nav count, WebGL, sheet without Pillow; 6 failures before the change) |
+| `loop.py eval strange-loop` | 17 tests OK (2 new, failing before the change) |
+| `loop.py eval herdr-delegate` | pass |
+| `loop.py check --base origin/main`; `docmap.py check` | 0 errors |
+
 ## 2026-11-01 - gui-design 0.1.0: a skill for GUIs at the right density
 
 Changed: new skill **gui-design** 0.1.0, so GUIs come out neither overwhelming nor thin (owner's request, with screenshots of the simple_complex_v1 replay viewer as the main negative example). SKILL.md (about 135 lines): job, task inventory, posture and surfaces first; the layer rule with budgets; pattern table; visual calm; wording; surfaces; build-lint-shoot-look loop; rework procedure; handover. References were distilled by Kiro and Copilot helpers from the owner's DEVONthink copies of Refactoring UI, Designing Interfaces, About Face, Few, Strategic Writing for UX, NN/g, Pajamas, Distill, Victor and CLIG, then reviewed and deduplicated. Tools: `scripts/shot.py` and `scripts/lint_ui.py` drive Chrome over the DevTools protocol with the standard library only. The owner's profile is at `~/.config/gui-design/profile.md` (outside the repo). Not verified: judged cases never run, no live Streamlit app shot yet, mod panes cannot be seen (O1-O3).

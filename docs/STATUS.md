@@ -1,5 +1,5 @@
 # Status
-Updated 2026-11-01. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-02. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -16,8 +16,8 @@ Updated 2026-11-01. Snapshot only - overwrite each session; history is in `docs/
 | session-status-line 0.3.0 (mod): validates, test passes, genome and docs checks clean | `claude plugin validate` and `claude plugin test plugins/session-status-line` → pass; `loop.py check` → 0 errors, 2026-10-31. Seen working in the desktop app by the owner (screenshots, 2026-10-11) |
 | model-router 0.11.0 (mod): minimal view and Settings restyle, tests pass, genome and docs checks clean | `claude plugin test plugins/model-router` → 9 pass; `loop.py check` → 0 errors, 2026-11-01. Layout not yet seen in the real terminal |
 | Copilot Fusion as an opt-in helper: herdr-delegate 0.2.0 templates, model-router 0.12.0 setting | Fusion Max one-prompt run → `syntheticModel: hydrafusion-max`; `hc run copilot-fusion-high` → "Copilot Fusion · High"; `claude plugin test plugins/model-router` → 10 pass, 2026-11-01. Quality below Max unmeasured |
-| gui-design 0.1.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py` (headless Chrome, stdlib) | `loop.py eval gui-design` → pass (34 scripted checks), 2026-11-01; lint run on the simple_complex_v1 replay component (20 controls, small targets reported); judged cases not yet run, Streamlit and mod panes not yet seen |
-| herdr-delegate 0.3.0: `helpers.py prompt` finds approvals a Copilot helper waits on | live probe on `copilot-light`: trust, URL and idle screens detected; `loop.py eval herdr-delegate` 3/3, 2026-11-01. Not yet seen in a real delegated run |
+| gui-design 0.3.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py` (headless Chrome, stdlib; iframes, navigation counted apart, software WebGL, sheet without Pillow) | `loop.py eval gui-design` → pass, 2026-11-02; used on all 14 pages of the simple_complex_v1 Streamlit GUI, 2026-11-01. Judged cases not yet run; mod panes cannot be seen |
+| herdr-delegate 0.4.0: `helpers.py prompt`, AFK helper choice, cost-aware briefs | `loop.py eval herdr-delegate` pass, 2026-11-02; Kiro helpers used unattended in the GUI-wide pass (4 batches), 2026-11-01 |
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 
 ## Doesn't work yet / known issues

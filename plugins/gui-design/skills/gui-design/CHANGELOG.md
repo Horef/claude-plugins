@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.3.0 (2026-11-02)
+- Navigation controls counted apart from the page (--max-controls judges the page); software WebGL in the headless browser (Plotly 3D now visible); contact sheet without Pillow via the browser; rules: pickers and IDs say what they pick (owner request, 2 Nov), many-page reworks in parallel batches (O8) (O1, O6, O7, O8)
+
 ## 0.2.0 (2026-11-01)
 - lint_ui.py checks same-origin and srcdoc iframes (Streamlit components) (O5)
 - Frame problems carry the frame (`iframe#N (title or src) > selector`), each frame has its own density line and --max-* limits; cross-origin frames give a `frame-skipped` note. The settle wait (browser.py) also watches same-origin frames. New scripts/lint_frames.js, evals/fixtures/host.html.
