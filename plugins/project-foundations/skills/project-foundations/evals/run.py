@@ -2,7 +2,8 @@
 
 Checks the behaviour the skill promises: `update` writes the map and README tables, `check` is green on a
 well-formed project and fails on a TODO README stub, a missing file header and a forbidden import, `where`
-finds definitions and importers. Run: python evals/run.py (from the skill folder or anywhere).
+finds definitions and importers, and the code graph (`calls`, `deps`, `map`) resolves calls, flags import cycles and
+keeps the map within its token budget. Run: python evals/run.py (from the skill folder or anywhere).
 """
 from __future__ import annotations
 
@@ -23,6 +24,18 @@ FILES = {
     "demo/__init__.py": '"""Demo package."""\n',
     "demo/core.py": '"""Pure arithmetic core."""\n\n\ndef add(a: int, b: int) -> int:\n    return a + b\n',
     "demo/adapter.py": '"""Adapter that formats results as JSON."""\nimport json\n\nfrom demo.core import add\n\n\ndef dump(a, b):\n    return json.dumps(add(a, b))\n',
+}
+GRAPH = {  # a small package for the code-graph commands
+    "g/__init__.py": '"""G package."""\nfrom .core import helper\n',
+    "g/core.py": ('"""Core."""\n\n\ndef helper(x):\n    return x\n\n\nclass Engine:\n    def run(self):\n'
+                  '        self.step()\n        return helper(1)\n\n    def step(self):\n        return 0\n'),
+    "g/util.py": '"""Util."""\n\n\ndef fmt(v):\n    return str(v)\n',
+    "g/app.py": ('"""App."""\nimport json\n\nimport g.util as u\nfrom g import helper\nfrom g.core import Engine\n\n\n'
+                 'def main(thing):\n    e = Engine()\n    e.run()\n    thing.step()\n    u.fmt(helper(2))\n'
+                 '    return json.dumps(1)\n'),
+    "g/cyc_a.py": '"""Cycle A."""\nfrom g import cyc_b\nfrom g.core import helper\n\n\ndef a():\n    return helper(cyc_b.b())\n',
+    "g/cyc_b.py": '"""Cycle B."""\nfrom g import cyc_a\nfrom g.core import helper\n\n\ndef b():\n    return helper(cyc_a)\n',
+    "web/app.js": "// Web.\nfunction jsOnly() { return 1; }\n",
 }
 
 
@@ -167,6 +180,47 @@ def main() -> int:
         wl = (root / "docs/WORKLOG.md").read_text()
         expect(f"## {long} - Second" in wl and wl.index(f"## {long} - Second") < wl.index(f"## {long} - first"),
                "worklog keeps a long-date style", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # code graph: `calls`, `deps`, `map` (Python only, resolved through imports)
+        root = Path(tmp)
+        for rel, text in GRAPH.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        p = docmap(root, "calls", "main")
+        out = p.stdout
+        callees = out.split("called by")[0]
+        expect(p.returncode == 0 and "g.core.helper" in callees and "g.util.fmt" in callees,
+               "calls lists resolved callees, through a package re-export and a module alias", p)
+        expect("g.core.Engine.run" in callees, "calls resolves a method on a local instance (e = Engine())", p)
+        unres = callees.split("by name only")[1] if "by name only" in callees else ""
+        expect("step" in unres and "g.core.Engine.step" in unres, "calls lists unresolved calls apart, by name only", p)
+        expect("json.dumps" in callees, "calls names external calls separately", p)
+        p = docmap(root, "calls", "helper")
+        callers = p.stdout.split("called by")[1] if "called by" in p.stdout else ""
+        expect("g/app.py:" in callers and "g/core.py:" in callers and "Engine.run" in callers,
+               "calls lists callers with file:line and the calling function", p)
+        p = docmap(root, "calls", "Engine.run")
+        expect("g.core.Engine.step" in p.stdout.split("called by")[0], "calls resolves self.method() in a class", p)
+        p = docmap(root, "calls", "main", "--depth", "2")
+        expect("g.core.Engine.step" in p.stdout.split("called by")[0], "calls --depth 2 follows callees of callees", p)
+        p = docmap(root, "calls", "jsOnly")
+        expect(p.returncode != 0 and "jsOnly" in p.stdout + p.stderr and "Python" in p.stdout + p.stderr,
+               "calls says non-Python code is not supported", p)
+        p = docmap(root, "deps", "g")
+        expect(p.returncode == 0 and "app ->" in p.stdout and "core" in p.stdout.split("app ->")[1].splitlines()[0],
+               "deps lists which modules import which", p)
+        cyc = [ln for ln in p.stdout.splitlines() if "cycle" in ln.lower()]
+        expect(any("cyc_a" in ln and "cyc_b" in ln for ln in cyc), "deps flags an import cycle", p)
+        p = docmap(root, "deps", "g", "--mermaid")
+        expect(p.stdout.lstrip().startswith(("graph", "flowchart")) and "-->" in p.stdout, "deps --mermaid writes a Mermaid graph", p)
+        p = docmap(root, "map", "--budget", "4000")
+        out = p.stdout
+        expect(p.returncode == 0 and "helper(" in out and "fmt(" in out and out.index("helper(") < out.index("fmt("),
+               "map ranks the most-referenced symbol first", p)
+        p = docmap(root, "map", "--budget", "60")
+        expect(p.returncode == 0 and len(p.stdout) // 4 <= 60 and "helper(" in p.stdout and "fmt(" not in p.stdout,
+               "map keeps within the token budget, dropping the least-referenced symbols", p)
 
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
