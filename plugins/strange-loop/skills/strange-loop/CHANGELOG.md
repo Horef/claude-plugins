@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.12.0 (2026-11-02)
+- A git worktree of the configured genome wins when it is the current directory (O16); new --from refuses a bad source before writing and takes a hooks-only mod folder with --mod (O17); section 4 says what to do when the harness refuses to merge the agent's own PR (O19); O20 kept as evidence for evals-first (O16, O17, O19, O20)
+
 ## 0.11.0 (2026-10-31)
 - The reply-block fallback is opt-in: only when the person takes part in improving their skills (a clone, or their standing instructions say so); otherwise nothing, except one line when the skill clearly failed. 'Invoked directly' now has a defined behaviour (sync, status, offer next steps). README: what happens with only some skills installed, and how others take part by forking. (O15)
 
