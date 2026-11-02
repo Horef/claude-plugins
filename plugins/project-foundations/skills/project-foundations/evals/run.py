@@ -203,7 +203,7 @@ def main() -> int:
         p = docmap(root, "calls", "Engine.run")
         expect("g.core.Engine.step" in p.stdout.split("called by")[0], "calls resolves self.method() in a class", p)
         p = docmap(root, "calls", "main", "--depth", "2")
-        expect("g.core.Engine.step" in p.stdout.split("called by")[0], "calls --depth 2 follows callees of callees", p)
+        expect("g.core.Engine.step  g/core.py:" in p.stdout.split("called by")[0], "calls --depth 2 follows callees of callees", p)
         p = docmap(root, "calls", "jsOnly")
         expect(p.returncode != 0 and "jsOnly" in p.stdout + p.stderr and "Python" in p.stdout + p.stderr,
                "calls says non-Python code is not supported", p)
