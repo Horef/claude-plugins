@@ -4,7 +4,7 @@ import { EFFORTS, FUSION, LADDER, MODELS, PRICES, SETUP_HEAVY, TIER_ORDER } from
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.11.0'
+export const VERSION = '0.13.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -82,11 +82,28 @@ export const helperList = (set: Settings, tier: Tier): string[] => {
   return at < 0 ? [...list, f.template] : [...list.slice(0, at), f.template, ...list.slice(at)]
 }
 
-const placeOf = (s: Step, set: Settings) =>
-  s.where === 'here' ? 'here' : s.where === 'helper' ? `helper (${helperOrder(set, s.tier)})` : rungLabel(runsOn(s, set))
+// A here step's tier cannot change this chat's model or thinking; it rates the step and is
+// the default if the step is sent to a subagent. It matters here only when it asks for more
+// than this chat's model.
+const RANK: Record<Model, number> = { haiku: 0, sonnet: 1, opus: 2, fable: 3 }
 
-export const planText = (list: readonly Step[], set: Settings) =>
-  list.map(s => `[${s.id}] ${s.title}: ${s.tier}, ${placeOf(s, set)}, ${s.status}`).join('\n')
+/** The tier's model when a here step is rated above this chat's model, else undefined. */
+export const hereNeeds = (s: Step, set: Settings, mainModel: Model | undefined): Model | undefined => {
+  if (s.where !== 'here' || !mainModel) return undefined
+  const want = set.tiers[s.tier].model
+  return RANK[want] > RANK[mainModel] ? want : undefined
+}
+
+const placeOf = (s: Step, set: Settings, mainModel?: Model) => {
+  if (s.where === 'here') {
+    const want = hereNeeds(s, set, mainModel)
+    return want ? `here (rated for ${want}, this chat runs ${mainModel}: consider a subagent)` : 'here'
+  }
+  return s.where === 'helper' ? `helper (${helperOrder(set, s.tier)})` : rungLabel(runsOn(s, set))
+}
+
+export const planText = (list: readonly Step[], set: Settings, mainModel?: Model) =>
+  list.map(s => `[${s.id}] ${s.title}: ${s.tier}, ${placeOf(s, set, mainModel)}, ${s.status}`).join('\n')
 
 // --- What the history says ------------------------------------------------------
 

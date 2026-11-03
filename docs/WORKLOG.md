@@ -2,6 +2,17 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-03 - model-router 0.13.0: a here step's tier is a rating
+
+- Owner's report: a "here" step's tier (light/standard/deep) cannot change the open chat's model or thinking level, which could mislead both the user and the planning model. Chosen over removing the tier: keep it as a rating, since it is the default when the step is sent to a subagent and can flag a step too hard for this chat.
+- model-router 0.13.0: rule 3 says a here step runs on this chat's model and thinking, and not to mark a step "light" to mean "do it quickly here"; the schema's tier description says the same; a here step's tier picker reads "rated <tier>"; a here step whose tier's model is above this chat's model gets a warning on its card (mini and full) and a note in the plan text the tool returns. `VERSION` in `logic.ts` was stale (0.11.0), now 0.13.0.
+- Not verified: the pane in the real terminal and desktop app.
+
+| Verification command | Result |
+|---|---|
+| `claude plugin test plugins/model-router` | 11 pass (1 new) |
+| `loop.py check --base origin/main`; `docmap.py check` | 0 errors |
+
 ## 2026-11-02 - Reflection pass: gui-design 0.3.0, herdr-delegate 0.4.0, strange-loop 0.12.0
 
 - Owner asked for the reflection pass after using the reworked simple_complex_v1 GUI, plus a rule from their replay screenshots (bare trial and set codes).

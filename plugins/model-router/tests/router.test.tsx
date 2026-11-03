@@ -306,9 +306,10 @@ const boot = async (
 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
-  const step = async (turnId: string, usage: unknown, agentId: string) => {
+  // Without agentId the usage is the main chat's own.
+  const step = async (turnId: string, usage: unknown, agentId?: string) => {
     usageFor[turnId] = usage
-    const st = $.turn.step({ turnId, index: 0, model: 'x', messageCount: 1, agentId } as never)
+    const st = $.turn.step({ turnId, index: 0, model: 'x', messageCount: 1, ...(agentId ? { agentId } : {}) } as never)
     for await (const _ of st) void _
     return st.result
   }
@@ -511,4 +512,36 @@ test('a chat that starts with the minimal view stored draws it', async ($, on) =
   expect(await pane.find({ type: 'Text', text: /Runs in this chat on/ } as never)).toBeFalsy()
   expect(await pane.find({ type: 'Button', key: 'where:s1' } as never)).toBeTruthy()
   await pane.unmount()
+})
+
+test('a here step is a rating: the rule says so, and one rated above this chat is flagged', async ($, on) => {
+  const { step } = await boot($, on, [])
+  const rule = await $.prompt.compose({ model: 'claude-sonnet-5-5', promptModel: 'claude-sonnet-5-5', surfaces: ['desktop'], tools: [PLAN, 'Agent'], outputStyle: null, traits: [] } as never)
+  expect(JSON.stringify(rule)).toContain('which no tier can change')
+
+  // This chat runs on Sonnet.
+  await step('m1', { model: 'claude-sonnet-5-5', input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: 50 })
+  const res = await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Design the schema', tier: 'deep', where: 'here' },
+      { id: 's2', title: 'Rename files', tier: 'light', where: 'here' },
+      { id: 's3', title: 'Survey', tier: 'deep', where: 'agent' },
+    ],
+  } as never)
+  // The planner hears about the deep step only; the light one and the subagent step are fine.
+  expect(String(res.result)).toContain('[s1] Design the schema: deep, here (rated for opus, this chat runs sonnet: consider a subagent), planned')
+  expect(String(res.result)).toContain('[s2] Rename files: light, here, planned')
+  expect(String(res.result)).toContain('[s3] Survey: deep, opus/high, planned')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find({ type: 'Text', text: /^Rated deep \(opus\), but this chat runs on sonnet/ } as never)).toBeTruthy()
+  expect(await pane.find({ type: 'Text', text: /^Rated light/ } as never)).toBeFalsy()
+  await pane.unmount()
+
+  // The tier picker of a here step reads as a rating; a subagent step's does not.
+  const tty = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect((await tty.find({ type: 'Button', key: 'tier:s1' } as never))?.text).toContain('rated deep')
+  expect((await tty.find({ type: 'Button', key: 'tier:s3' } as never))?.text).not.toContain('rated')
+  await tty.unmount()
 })
