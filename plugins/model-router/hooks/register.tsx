@@ -521,9 +521,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ],
         v => void editStep($, s.id, x => ({ ...x, where: v as Where })),
       ),
-      // On a here step the tier is a rating, not a setting of this chat, and reads as one.
-      pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: s.where === 'here' ? `rated ${t}` : t })), v =>
-        void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
+      // On a here step the tier is a rating, not a setting of this chat: a label, not a picker.
+      // Sending the step to a subagent brings the picker back.
+      s.where === 'here' ? (
+        <Text key={`tier:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>
+      ) : (
+        pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
+          void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
+        )
       ),
       s.where === 'agent' &&
         pick(
@@ -595,7 +600,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         {s.where === 'here' && (
           <Text dimColor size="footnote" wrap="wrap">
             {tty
-              ? `Runs in this chat on ${m.model ?? 'its model'} and its thinking level; the tier is a rating, used if you send it to a subagent.`
+              ? `Runs in this chat on ${m.model ?? 'its model'} and its thinking level; the tier is a rating, used if you send it to a subagent (then you can change it).`
               : `Done in this chat, on ${m.model ?? "this chat's model"} and its thinking level, which the tier cannot change. The tier rates the step and only picks a model if you send it to a subagent.`}
           </Text>
         )}

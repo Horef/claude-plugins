@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.13.1 (2026-11-03)
+- A here step's tier is a plain "rated <tier>" label instead of a picker; sending the step to a subagent brings the picker back (owner's request)
+
 ## 0.13.0 (2026-11-03)
 - A here step's tier is a rating: the rules say no tier changes this chat's model or thinking, its picker reads "rated <tier>", and a here step rated above this chat's model is flagged on its card and in the plan the agent gets back (owner's report)
 

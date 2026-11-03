@@ -2,6 +2,19 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-03 - model-router 0.13.1 and model-routing 0.2.0: here tiers as labels
+
+- Owner's request after 0.13.0: make a here step's tier a label rather than a picker, and fix the same confusion in the model-routing skill.
+- model-router 0.13.1: a here step shows "rated <tier>" as a label; sending it to a subagent brings the tier picker back. The tests were changed in their own commit first and failed on 0.13.0 (2 of 11).
+- model-routing 0.2.0: the tier table's model and thinking columns are marked as sub-agent settings; a here step's tier is a rating, its model column reads "this chat", and a here step rated above the chat's model is pointed out. New judged case "A here step's tier" (judged cases not run).
+- Not verified: the pane in the real terminal and desktop app.
+
+| Verification command | Result |
+|---|---|
+| `claude plugin test plugins/model-router` | 11 pass |
+| `loop.py eval model-routing` | 8 judged cases listed (not run) |
+| `loop.py check --base origin/main`; `docmap.py check` | 0 errors |
+
 ## 2026-11-03 - model-router 0.13.0: a here step's tier is a rating
 
 - Owner's report: a "here" step's tier (light/standard/deep) cannot change the open chat's model or thinking level, which could mislead both the user and the planning model. Chosen over removing the tier: keep it as a rating, since it is the default when the step is sent to a subagent and can flag a step too hard for this chat.
