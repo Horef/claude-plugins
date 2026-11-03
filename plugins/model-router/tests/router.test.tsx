@@ -499,8 +499,9 @@ test('minimal view: steps and their pickers only, no explanatory text; kept acro
   expect(await pane.find({ type: 'Button', key: 'where:s1' } as never)).toBeTruthy()
   expect(await pane.find({ type: 'Button', key: 'effort:s2' } as never)).toBeTruthy()
   expect(await pane.find({ type: 'Button', key: 'settings-done' } as never)).toBeTruthy()
-  // Still editable: a picker cycles.
-  await pane.press({ key: 'tier:s1' })
+  // Still editable: a picker cycles. A here step's tier is a label, not a picker.
+  await pane.press({ key: 'tier:s2' })
+  expect(await pane.find({ type: 'Button', key: 'tier:s1' } as never)).toBeFalsy()
   await pane.unmount()
   await $.tool.call({ tool: PLAN, done: [] } as never)
 })
@@ -539,9 +540,13 @@ test('a here step is a rating: the rule says so, and one rated above this chat i
   expect(await pane.find({ type: 'Text', text: /^Rated light/ } as never)).toBeFalsy()
   await pane.unmount()
 
-  // The tier picker of a here step reads as a rating; a subagent step's does not.
+  // A here step's tier is a plain label, not a picker; a subagent step keeps its picker.
   const tty = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  expect((await tty.find({ type: 'Button', key: 'tier:s1' } as never))?.text).toContain('rated deep')
+  expect(await tty.find({ type: 'Button', key: 'tier:s1' } as never)).toBeFalsy()
+  expect(await tty.find({ type: 'Text', text: /^rated deep$/ } as never)).toBeTruthy()
   expect((await tty.find({ type: 'Button', key: 'tier:s3' } as never))?.text).not.toContain('rated')
+  // Sent to a subagent, the step gets its tier picker back.
+  await tty.press({ key: 'where:s1' })
+  expect(await tty.find({ type: 'Button', key: 'tier:s1' } as never)).toBeTruthy()
   await tty.unmount()
 })
