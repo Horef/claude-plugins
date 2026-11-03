@@ -16,6 +16,7 @@ import {
   fmtUsd,
   helperList,
   helperOrder,
+  hereNeeds,
   isSetupHeavy,
   isTier,
   modelHint,
@@ -193,7 +194,11 @@ async function registerPlanTool($: EngineInterface) {
             properties: {
               id: { type: 'string', description: 'Short id, e.g. s1' },
               title: { type: 'string', description: 'A few words' },
-              tier: { type: 'string', enum: TIER_ORDER },
+              tier: {
+                type: 'string',
+                enum: TIER_ORDER,
+                description: 'How hard the step is. Picks the model of a subagent or helper; for a "here" step it is only a rating',
+              },
               where: { type: 'string', enum: wheres },
             },
             required: ['id', 'title', 'tier', 'where'],
@@ -290,7 +295,7 @@ The user installed this mod so that each step of a task runs on the cheapest mod
 1. When a request has several distinct steps (more than a handful of tool calls in all), first call ${PLAN_TOOL} with the steps. Tag each with a tier and with where it runs. Skip this for single-step or conversational requests. The call waits for the user to approve the plan (unless they turned on auto-approve) and returns the approved plan, which the user may have edited: follow what it returns. If it returns a revision request, revise and call it again.
 2. Tiers:
 ${tiers}
-3. where = "here" for steps that need this conversation's accumulated context or back-and-forth with the user, and for small steps (under ~5 tool calls: a subagent costs ~15-40k tokens just to start). where = "agent" for self-contained steps, above all ones that read a lot.
+3. where = "here" for steps that need this conversation's accumulated context or back-and-forth with the user, and for small steps (under ~5 tool calls: a subagent costs ~15-40k tokens just to start). where = "agent" for self-contained steps, above all ones that read a lot. A "here" step runs on this chat's own model and thinking level, which no tier can change: still give it the tier its work needs, since that is the default if the user sends it to a subagent, and the router flags a here step rated above this chat's model. Do not mark a step "light" to mean "do it quickly here".
 4. Delegate an "agent" step with the Agent tool, its description starting with "[<step id>]". Do not set model or effort: the router sets them from the plan. Never use subagent_type "fork" for a routed step, since a fork ignores the model. Write a self-contained brief: goal, files, what to return. Light-tier briefs ask for a findings list, not fixes; spot-check surprising findings. If a light result is weak, say so: the user can rerun the step one rung higher from the pane.
 5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them.${helperRule}${skillRule}`
 }
@@ -516,7 +521,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ],
         v => void editStep($, s.id, x => ({ ...x, where: v as Where })),
       ),
-      pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
+      // On a here step the tier is a rating, not a setting of this chat, and reads as one.
+      pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: s.where === 'here' ? `rated ${t}` : t })), v =>
         void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
       ),
       s.where === 'agent' &&
@@ -552,6 +558,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {stepPickers(s)}
           {s.cost > 0 && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
           {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
+          {hereNeeds(s, set, m.model) && <Text color="warning" size="footnote">{`⚠ rated for ${hereNeeds(s, set, m.model)}`}</Text>}
           {up && (
             <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
               {`↑ ${rungLabel(up)}`}
@@ -586,10 +593,15 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {stepPickers(s)}
         </Box>
         {s.where === 'here' && (
-          <Text dimColor size="footnote">
+          <Text dimColor size="footnote" wrap="wrap">
             {tty
-              ? `Runs in this chat on ${m.model ?? 'its model'}; the tier counts only for a subagent.`
-              : `Done in this chat, on ${m.model ?? "this chat's model"}. The tier only picks a model if you send the step to a subagent.`}
+              ? `Runs in this chat on ${m.model ?? 'its model'} and its thinking level; the tier is a rating, used if you send it to a subagent.`
+              : `Done in this chat, on ${m.model ?? "this chat's model"} and its thinking level, which the tier cannot change. The tier rates the step and only picks a model if you send it to a subagent.`}
+          </Text>
+        )}
+        {hereNeeds(s, set, m.model) && (
+          <Text color="warning" size="footnote" wrap="wrap">
+            {`Rated ${s.tier} (${hereNeeds(s, set, m.model)}), but this chat runs on ${m.model}: send it to a subagent, or switch this chat's model.`}
           </Text>
         )}
         {s.where === 'helper' && (
@@ -910,7 +922,7 @@ export const register: Register = on => {
       await update($, steps, list => list.map(s => (input.done!.includes(s.id) ? { ...s, status: 'done' } : s)))
     }
     await refreshStatus($)
-    if (!input.steps) return withNotes(planText(await read($, steps), set))
+    if (!input.steps) return withNotes(planText(await read($, steps), set, (await read($, main)).model))
 
     const old = await read($, steps)
     // A plan that shares no step with the last one, or follows a finished one (ids may
@@ -934,7 +946,7 @@ export const register: Register = on => {
       if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
       await update($, planStatus, () => 'approved')
       await refreshStatus($)
-      return withNotes(`Plan auto-approved:\n${planText(await read($, steps), set)}`)
+      return withNotes(`Plan auto-approved:\n${planText(await read($, steps), set, (await read($, main)).model)}`)
     }
 
     await update($, planStatus, () => 'pending')
@@ -961,7 +973,7 @@ export const register: Register = on => {
       await refreshStatus($)
       const now = await read($, settings)
       return withNotes(
-        `Plan approved by the user (follow these tiers; they may differ from what you proposed):\n${planText(await read($, steps), now)}`,
+        `Plan approved by the user (follow these tiers and places; they may differ from what you proposed. A "here" step's tier is a rating: do it in this chat as usual):\n${planText(await read($, steps), now, (await read($, main)).model)}`,
       )
     }
     await update($, planStatus, () => 'none')

@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.13.0 (2026-11-03)
+- A here step's tier is a rating: the rules say no tier changes this chat's model or thinking, its picker reads "rated <tier>", and a here step rated above this chat's model is flagged on its card and in the plan the agent gets back (owner's report)
+
 ## 0.12.0 (2026-11-01)
 - Copilot Fusion setting under Helpers: off, Max for deep, or High + Max, placed before the pinned Copilot helper
 

@@ -1,5 +1,5 @@
 # Status
-Updated 2026-11-02. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-03. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -15,6 +15,7 @@ Updated 2026-11-02. Snapshot only - overwrite each session; history is in `docs/
 | Genome docs check | `docmap.py check` → 0 errors, 2026-10-30 |
 | session-status-line 0.3.0 (mod): validates, test passes, genome and docs checks clean | `claude plugin validate` and `claude plugin test plugins/session-status-line` → pass; `loop.py check` → 0 errors, 2026-10-31. Seen working in the desktop app by the owner (screenshots, 2026-10-11) |
 | model-router 0.11.0 (mod): minimal view and Settings restyle, tests pass, genome and docs checks clean | `claude plugin test plugins/model-router` → 9 pass; `loop.py check` → 0 errors, 2026-11-01. Layout not yet seen in the real terminal |
+| model-router 0.13.0: a here step's tier is a rating (rule, "rated" picker label, warning when rated above this chat's model) | `claude plugin test plugins/model-router` → 11 pass, 2026-11-03. Pane not yet seen in the apps |
 | Copilot Fusion as an opt-in helper: herdr-delegate 0.2.0 templates, model-router 0.12.0 setting | Fusion Max one-prompt run → `syntheticModel: hydrafusion-max`; `hc run copilot-fusion-high` → "Copilot Fusion · High"; `claude plugin test plugins/model-router` → 10 pass, 2026-11-01. Quality below Max unmeasured |
 | gui-design 0.3.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py` (headless Chrome, stdlib; iframes, navigation counted apart, software WebGL, sheet without Pillow) | `loop.py eval gui-design` → pass, 2026-11-02; used on all 14 pages of the simple_complex_v1 Streamlit GUI, 2026-11-01. Judged cases not yet run; mod panes cannot be seen |
 | herdr-delegate 0.4.0: `helpers.py prompt`, AFK helper choice, cost-aware briefs | `loop.py eval herdr-delegate` pass, 2026-11-02; Kiro helpers used unattended in the GUI-wide pass (4 batches), 2026-11-01 |
