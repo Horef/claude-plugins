@@ -9,16 +9,16 @@ Most tasks mix easy and hard steps: checking documents against each other, then 
 
 ## Tiers
 
-| Tier | For | Default model (Claude) | Thinking |
+| Tier | For | Sub-agent model (Claude) | Sub-agent thinking |
 |---|---|---|---|
 | light | Mechanical work with a clear rule: cross-checking documents, finding and listing, extracting values, scanning logs or outputs, packaging | Haiku | low |
 | standard | Following detailed instructions: code to a spec, figures and slides, summarizing papers, web research | Sonnet | medium |
 | deep | Open judgment: research and design decisions, unclear failures, reviewing reasoning | Opus | high |
 
-In a harness with other models, map the tiers to its small, middle and large models. If the person keeps a mapping in `~/.config/model-routing/tiers.md`, use theirs.
+The model and thinking columns apply only to steps run in a sub-agent. In a harness with other models, map the tiers to its small, middle and large models. If the person keeps a mapping in `~/.config/model-routing/tiers.md`, use theirs.
 
 **Where** a step runs is separate from its tier:
-- **here**: the main chat does it, on whatever model the chat runs. For steps that need the conversation's accumulated context or back-and-forth with the person, and for small steps (under about five tool calls): a sub-agent spends roughly 15-40k tokens just starting and reading its brief. For a "here" step the tier is only a label.
+- **here**: the main chat does it, on whatever model the chat runs. For steps that need the conversation's accumulated context or back-and-forth with the person, and for small steps (under about five tool calls): a sub-agent spends roughly 15-40k tokens just starting and reading its brief. A "here" step runs on the chat's own model and thinking level, and no tier changes them: its tier is a rating of how hard the step is, not a setting. Still give it the tier its work needs (it is the model to use if the step is moved to a sub-agent), and never mark a step light to mean "do it quickly". If a here step is rated above the chat's model (a deep step in a chat on a middle model), say so in the plan and suggest a sub-agent for it.
 - **sub-agent**: a separate agent on the tier's model. For self-contained steps, above all ones that read a lot.
 
 Don't switch the main chat's model in the middle of a conversation to save money: the new model re-reads the whole conversation without the prompt cache, which usually costs more than it saves. If a plan has no deep step and the chat runs on the most capable model, say once that a cheaper model could run a chat like this, as a suggestion for the next one.
@@ -26,7 +26,7 @@ Don't switch the main chat's model in the middle of a conversation to save money
 ## Steps
 
 1. **Decide whether to plan.** Plan when the request has several distinct steps, or more than a handful of tool calls in all. Otherwise just do it.
-2. **Write the plan** as a short table: id (`s1`, `s2`, …), the step in a few words, tier, where, and the model each sub-agent step will use. Keep steps that must share context together.
+2. **Write the plan** as a short table: id (`s1`, `s2`, …), the step in a few words, tier, where, and the model it runs on: the tier's model for a sub-agent step, "this chat" for a here step. Keep steps that must share context together.
 3. **Ask before running.** Show the table and ask: run it as it is, or change the steps? The person may change tiers, where steps run or models; follow their version. If they have said not to ask (auto-approve), state the plan and start.
 4. **Run each step.**
    - *Sub-agent steps:* start a sub-agent on the step's model and thinking level, if the harness can choose them (see Harness notes). Give it a self-contained brief: the goal, the files, what to return. A light brief asks for a findings list, not fixes; spot-check anything surprising before acting on it. If the harness cannot start a sub-agent on a chosen model, run the step here and say so in the plan.

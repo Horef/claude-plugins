@@ -35,6 +35,14 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - Records a learning-loop observation about the weak light step.
 **Origin:** the model-router mod's rerun ladder.
 
+## A here step's tier
+**Task:** In a chat running on a middle model (Sonnet), a multi-step task whose design decision needs the conversation's context, plus a small rename done here.
+**Good looks like:**
+- Both here steps carry the tier their work needs (deep for the decision, light for the rename); the model column says "this chat" for them, not the tier's model.
+- Does not claim a here step will run on a smaller model or with less thinking.
+- Points out once that the deep step is rated above this chat's model and offers a sub-agent for it.
+**Origin:** owner's report that a here step's tier read as a setting of the chat (model-router 0.13.0).
+
 ## The mod is present
 **Task:** In Claude Code where the tool `mcp__model-router__plan` is available, a multi-step request.
 **Good looks like:** uses the `mcp__model-router__plan` tool and its rules, not this skill's table and approval question.
