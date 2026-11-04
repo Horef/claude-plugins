@@ -2,6 +2,15 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-04 - research-writing 0.1.0: write-ups and paper drafts as an argument
+
+Owner request: write-ups read like lab reports (order of the work, erratic figure placement, questions left open). Built the skill, then piloted it before release.
+- Sources (owner's copies from DEVONthink, converted with pdftotext/pandoc into a scratch folder, never committed): two helpers distilled them into `references/writing-rules.md` (Kiro, Sonnet 5.5) and `references/story.md` (Copilot, Opus 5.5; Kiro's login had expired); both reviewed.
+- Tools: LaTeX template (LuaLaTeX, biblatex, cleveref, `\claim`, `\figref` recording first-citation pages, `\status`), `wr.py` init/build/pages/check/readers/status; poppler installed for page images.
+- Pilot (simple_complex_v1 `docs/writeups/inhibition_wilson2012/`): ledger and skeleton by the lead, figures and text by a Kiro helper (14 pages, check clean), reader round 1 (3 Sonnet 5.5 subagents, 1 Gemini 4 Argon via agy; copilot-argon fell back to Sonnet silently), 170 questions sorted into 22 themes, revision (title and message narrowed to what the evidence supports, CIs, definitions), 15 pages, check clean.
+- Commands: `python3 plugins/research-writing/skills/research-writing/evals/run.py` -> ok; `loop.py check --base origin/main` -> 0 errors.
+- Not done: judged cases not run blind (provisional); a second reader round waits for the analyses the readers asked for.
+
 ## 2026-11-04 - gui-design 0.4.0 and project-foundations 5.6.0: design for what will vary next
 
 Reflection pass on gui-design after five rounds of owner feedback on the simple_complex_v1 Replay page (owner approved merging directly).

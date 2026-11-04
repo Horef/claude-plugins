@@ -1,0 +1,33 @@
+% Write-up made with the research-writing skill. Build: python3 <skill>/scripts/wr.py build <this folder>
+\documentclass[11pt]{article}
+\input{preamble}
+\IfFileExists{preamble-local.tex}{\input{preamble-local}}{}
+\addbibresource{refs.bib}
+\title{TITLE: the answer, not the topic}
+\author{AUTHORS}
+\date{DATE}
+
+\begin{document}
+\maketitle
+
+\begin{inshort}
+MESSAGE: the question, what we did, what we found, what it means (one paragraph, from ledger.md).
+\end{inshort}
+
+\section{The question}
+% context -> gap -> this question (the opening of the story)
+
+\section{Approach}
+% only what a reader needs to follow the results; detail in Methods
+
+\section{RESULT 1 AS A FINDING}
+\claim{C1}
+% topic sentence = the claim; then evidence (\figref{fig:c1}); then what it means
+
+\section{Discussion}
+% what the answer means, how it fits, what it does not show (limits), what comes next
+
+\section{Methods}
+
+\printbibliography
+\end{document}
