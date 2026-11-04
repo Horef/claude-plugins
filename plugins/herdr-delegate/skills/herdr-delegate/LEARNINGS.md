@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O6 2026-11-03 [friction] Brief: a helper worktree of a repo with git-ignored assets (data/, outputs/, external/, configs/local.json) and an editable install pointing at the main checkout needs symlinks + PYTHONPATH=src; I linked outputs/external/local.json but missed data/, the Kiro helper found and linked it itself. A worktree-setup checklist in the skill would help. (claude-code, simple_complex_v1)
+- O7 2026-11-04 [misled] Helpers: the copilot-argon template's model gemini-4-argon is not available on this Copilot plan; Copilot printed 'Model ... not available. Using claude-sonnet-5.5 instead' and the status bar showed Sonnet, so the 'other family' reader would silently have been Sonnet. agy-argon worked. helpers.py pick argon should prefer agy-argon, or the template should be checked at launch. (claude-code, simple_complex_v1)
 
 ## Resolved
 - O5 2026-11-02 [wish] Briefs: the owner saw Kiro quota drain fast in the GUI-wide pass (4 helpers, one deep, long sessions, many screenshot rounds); briefs should steer cost: line ranges or lookup commands instead of whole-file reads, lowest fitting tier, one session per batch, a cap on screenshot rounds. (claude-code, owner question, 2 Nov 2026) → 0.4.0

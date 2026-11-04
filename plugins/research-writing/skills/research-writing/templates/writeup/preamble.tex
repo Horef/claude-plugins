@@ -1,0 +1,39 @@
+% research-writing preamble (research-writing skill; see its SKILL.md). Edit the document, not this file:
+% project-wide changes go in a local preamble-local.tex, which main.tex inputs after this one.
+\usepackage{iftex}
+\usepackage{amsmath}
+\ifLuaTeX\usepackage{fontspec}\usepackage{libertinus}\else\usepackage[T1]{fontenc}\usepackage{lmodern}\usepackage{amssymb}\fi
+\usepackage[a4paper,margin=25mm]{geometry}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs,tabularx}
+\usepackage[detect-all]{siunitx}
+\usepackage{xcolor}
+\usepackage[font=small,labelfont=bf,skip=4pt]{caption}
+\usepackage{subcaption}
+\usepackage[section]{placeins} % a figure never floats past the end of its section
+\usepackage[backend=biber,style=authoryear,maxcitenames=2,uniquename=false,uniquelist=false]{biblatex}
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink,capitalise,noabbrev]{cleveref}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\setlength{\parskip}{0.4\baselineskip}\setlength{\parindent}{0pt}
+% floats: let figures sit on text pages and near their first citation
+\renewcommand{\topfraction}{0.85}\renewcommand{\textfraction}{0.12}\renewcommand{\floatpagefraction}{0.75}
+\setcounter{topnumber}{2}\setcounter{totalnumber}{3}
+
+% ---- the skill's marks (checked by wr.py check)
+% \claim{C3}: this paragraph carries claim C3 of ledger.md (prints nothing)
+\newcommand{\claim}[1]{}
+% \figref{fig:x}: cite a figure; records the page of the first citation for wr.py (page of figure vs of its first mention)
+\makeatletter
+\newcommand{\figref}[1]{\cref{#1}\protected@write\@auxout{}{\string\wrfigcite{#1}{\thepage}}}
+\newcommand{\Figref}[1]{\Cref{#1}\protected@write\@auxout{}{\string\wrfigcite{#1}{\thepage}}}
+\newcommand{\wrfigcite}[2]{}
+\makeatother
+% \status{established|plausible|open}: the evidence label of a claim, printed as a small tag
+\newcommand{\status}[1]{\textsuperscript{\textsf{\scriptsize[#1]}}}
+% a boxed summary for the first page of a write-up
+\usepackage[most]{tcolorbox}
+\newtcolorbox{inshort}{colback=black!4,colframe=black!4,boxrule=0pt,arc=0pt,left=6pt,right=6pt,top=4pt,bottom=4pt,
+  before upper={\textbf{In short.}\enskip}}
