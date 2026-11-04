@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-04 - gui-design 0.4.0 and project-foundations 5.6.0: design for what will vary next
+
+Reflection pass on gui-design after five rounds of owner feedback on the simple_complex_v1 Replay page (owner approved merging directly).
+- Triage: O9 (embedded viewer fills the window), O10 (one control per outcome), O11 (what will vary next), O12 (overlay colours), O13 (zoom and pan) → rules in SKILL.md sections 1-6 and `references/layout-patterns.md` §6; O14 (win) resolved with them; O3 (mod pane dump) waits.
+- Owner asked to generalise "what will vary next?" beyond GUIs: project-foundations template, Conventions, "Design for what will vary next" (every project scaffolded or upgraded gets it; `DOCMAP_VERSION` 5.6.0 so old copies report the newer template; upgrade step 6b names it).
+- Commands: `loop.py eval gui-design` → pass (before and after); `loop.py eval project-foundations` → pass; `loop.py check --base origin/main` → 0 errors; `docmap.py check` → 0 errors.
+- Not done: the judged cases (4 new in gui-design) were not run blind; changes are provisional until they are.
+
 ## 2026-11-03 - model-router 0.13.1 and model-routing 0.2.0: here tiers as labels
 
 - Owner's request after 0.13.0: make a here step's tier a label rather than a picker, and fix the same confusion in the model-routing skill.
