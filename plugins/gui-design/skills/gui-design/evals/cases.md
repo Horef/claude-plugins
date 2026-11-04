@@ -60,6 +60,38 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - The labels are generated from the data, so a grating set gets phase or direction instead, with no per-set code.
 **Origin:** owner's screenshots of the simple_complex_v1 replay Trial picker ("bar ori 0°, r0" repeated) and Stimuli table without bar parameters, 2026-11-02.
 
+## What will vary next
+**Task:** "Add a short description of the selected run under the run picker." Inputs: a run config with three conditions that differ only in one nested model setting (`inhibition.activation`: none / PV at 4 Hz / PV at 12 Hz), and stimulus sets whose trials differ in direction.
+**Good looks like:**
+- Before building, the plan names what may vary in future runs (other model settings, new stimulus fields) and chooses a data-driven description.
+- Each condition's line shows the setting that sets it apart, found by diffing its config against the other conditions; no field name is hard-coded.
+- A condition missing a block shows it as "none", not as nothing.
+- The text wraps under the picker; the picker label itself stays short and is not cut off.
+**Origin:** O11, simple_complex_v1 replay Trial picker with PV/SST inhibition runs, 2026-11-04.
+
+## Overlay colours and zoom on a dense drawing
+**Task:** "Show the 2000 inhibitory contacts (two classes) on this 3D neuron view; the branches are coloured by voltage on a blue-to-red scale."
+**Good looks like:**
+- The two class colours differ from the branch palette and from each other in lightness, checked in a shot at full density.
+- The dense view gets zoom about the pointer, pan, double-click reset and menu buttons; marks scale with zoom; compared panes share the view.
+- Contacts start hidden or faint when they would bury the cell, with a labelled toggle.
+**Origin:** O12, O13, simple_complex_v1 replay viewer, 2026-11-04.
+
+## One action, feedback beside it
+**Task:** "This page has no replay for the chosen trial yet; let the user make one." Inputs: a slow job (20 s) that can fail.
+**Good looks like:**
+- One Make button in the empty slot; its progress and error appear in that slot; job details one click away.
+- No second Make button elsewhere; display options for the viewer do not render until there is a viewer.
+**Origin:** O10, simple_complex_v1 replay page, 2026-11-03.
+
+## Embedded viewer fills the window
+**Task:** "The viewer in this Streamlit page scrolls inside the page, and the traces are small; fix it."
+**Good looks like:**
+- The viewer fills the window (flex column, no inner scroll), with a splitter between the main views and the traces; only the host page scrolls.
+- In Streamlit it uses `st.iframe(height="content")` and sizes itself from the parent window, not by resizing `frameElement`.
+- Shots taken at a fixed viewport height, not `--full`.
+**Origin:** O9, simple_complex_v1 replay viewer and dLGN player, 2026-11-03.
+
 ## Trigger: should fire
 **Task:** "Build a settings panel for this mod"; "this Streamlit viewer is too cluttered, clean it up"; "make an interactive demo of momentum in gradient descent for my students".
 **Good looks like:** gui-design is loaded.

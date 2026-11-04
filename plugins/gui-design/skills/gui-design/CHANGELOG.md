@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.4.0 (2026-11-04)
+- Reflection on the simple_complex_v1 Replay rounds: section 1 asks 'what will vary next?' and builds labels, descriptions and controls from the data (owner request 2026-11-04); section 2 one control per outcome with feedback beside it; section 4 overlay colours chosen against the base layer and apart in lightness; section 5 full wrapping description under a picker, including what sets the enclosing choice apart; section 6 window-filling embedded viewers (st.iframe height=content, no frameElement resizing), shoot them at a fixed height; layout-patterns Zoom and pan. Four eval cases added. Scripted evals pass; judged cases not re-run blind (provisional). (O9, O10, O11, O12, O13, O14)
+
 ## 0.3.0 (2026-11-02)
 - Navigation controls counted apart from the page (--max-controls judges the page); software WebGL in the headless browser (Plotly 3D now visible); contact sheet without Pillow via the browser; rules: pickers and IDs say what they pick (owner request, 2 Nov), many-page reworks in parallel batches (O8) (O1, O6, O7, O8)
 
