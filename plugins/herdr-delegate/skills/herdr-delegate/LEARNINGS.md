@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O6 2026-11-03 [friction] Brief: a helper worktree of a repo with git-ignored assets (data/, outputs/, external/, configs/local.json) and an editable install pointing at the main checkout needs symlinks + PYTHONPATH=src; I linked outputs/external/local.json but missed data/, the Kiro helper found and linked it itself. A worktree-setup checklist in the skill would help. (claude-code, simple_complex_v1)
 
 ## Resolved
 - O5 2026-11-02 [wish] Briefs: the owner saw Kiro quota drain fast in the GUI-wide pass (4 helpers, one deep, long sessions, many screenshot rounds); briefs should steer cost: line ranges or lookup commands instead of whole-file reads, lowest fitting tier, one session per batch, a cap on screenshot rounds. (claude-code, owner question, 2 Nov 2026) → 0.4.0
