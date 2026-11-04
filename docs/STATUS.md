@@ -1,5 +1,5 @@
 # Status
-Updated 2026-11-03. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-04. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -8,6 +8,7 @@ Updated 2026-11-03. Snapshot only - overwrite each session; history is in `docs/
 | `loop.py` note/status/digest/check/eval/bump/absorb/pack/link/sync/hook/new | `loop.py eval strange-loop` → 16 unit tests OK (incl. two clones syncing through one remote, new and --from), 2026-10-30 |
 | Adding a skill end to end (sandbox) | `loop.py new` → check flags placeholders → written → check and `claude plugin validate` pass → pushed → `claude plugin install` → note command from its own SKILL.md recorded O1, 2026-10-30 |
 | The whole round trip on a sandboxed Mac setup (fake home, local stand-in for GitHub, the real `claude` CLI) | install from the marketplace → session-start hook → notes from another project → auto-sync push → a second machine's note pulled → reply block absorbed → skills linked for a local agent → version bump reaches the installed plugin (0.7.0 → 0.7.1), 2026-10-30 |
+| project-foundations 5.6.0: AGENTS.md template Conventions line 'Design for what will vary next' (owner request, generalised from gui-design) | `loop.py eval project-foundations` → pass, 2026-11-04 |
 | `docmap.py` from its new home | `loop.py eval project-foundations` → 8/8 OK, 2026-10-30 |
 | `sciencefig` in the skill: all 31 worked-example figures build, lint and render outside the Mac | `loop.py eval scientific-figures` → pass (31 figures, 0 problems, one render sheet), 2026-10-30; the examples' output is byte-identical to the scripts they came from |
 | docmap reading cost at scale | synthetic projects (15-400 decisions, 40-1500 modules): session start ~4k-12k tokens with `find`/`get` instead of 9k-66k; `loop.py eval project-foundations` 13/13, 2026-10-30 |
@@ -17,7 +18,7 @@ Updated 2026-11-03. Snapshot only - overwrite each session; history is in `docs/
 | model-router 0.11.0 (mod): minimal view and Settings restyle, tests pass, genome and docs checks clean | `claude plugin test plugins/model-router` → 9 pass; `loop.py check` → 0 errors, 2026-11-01. Layout not yet seen in the real terminal |
 | model-router 0.13.1 / model-routing 0.2.0: a here step's tier is a rating (rules, "rated" label instead of a picker, warning when rated above this chat's model) | `claude plugin test plugins/model-router` → 11 pass, 2026-11-03. Pane not yet seen in the apps; the skill's judged cases not run |
 | Copilot Fusion as an opt-in helper: herdr-delegate 0.2.0 templates, model-router 0.12.0 setting | Fusion Max one-prompt run → `syntheticModel: hydrafusion-max`; `hc run copilot-fusion-high` → "Copilot Fusion · High"; `claude plugin test plugins/model-router` → 10 pass, 2026-11-01. Quality below Max unmeasured |
-| gui-design 0.3.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py` (headless Chrome, stdlib; iframes, navigation counted apart, software WebGL, sheet without Pillow) | `loop.py eval gui-design` → pass, 2026-11-02; used on all 14 pages of the simple_complex_v1 Streamlit GUI, 2026-11-01. Judged cases not yet run; mod panes cannot be seen |
+| gui-design 0.4.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py`; 0.4.0 adds 'what will vary next?' (data-driven labels), one control per outcome, overlay colours against the base layer, window-filling embedded viewers, Zoom and pan | `loop.py eval gui-design` → pass, 2026-11-04; rules come from the simple_complex_v1 Replay rounds (2026-11-03/04). Judged cases (4 new) not run blind; mod panes cannot be seen |
 | herdr-delegate 0.4.0: `helpers.py prompt`, AFK helper choice, cost-aware briefs | `loop.py eval herdr-delegate` pass, 2026-11-02; Kiro helpers used unattended in the GUI-wide pass (4 batches), 2026-11-01 |
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 

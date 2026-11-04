@@ -152,6 +152,11 @@ The layer rule (what is always visible, one gesture away, further away) is in SK
 - **Use:** same data needing different lenses (table vs chart, raw vs rendered, list vs map).
 - **Rules:** a small switch (segmented control) not a main nav; keep selection and scroll position when switching; remember the last choice. (DI ch.2, Alternative Views)
 
+### Zoom and pan
+- **Use:** any spatial drawing whose marks can get denser than about one per 5 px (a neuron with thousands of contacts, a map, a scatter of many points). Rotation alone is not enough.
+- **Rules:** wheel or pinch zooms about the pointer (the point under it stays put); shift-drag or middle-drag pans, plain drag keeps its existing job (rotate, select); double-click resets; `−`/`+` and the zoom factor sit in the view menu, and "Reset view" resets zoom too. Scale marks and line widths by about √zoom (capped), and hide labels whose anchor left the panel. Compared panes share one view. Say the gestures in the panel's subtitle or `?`. (agent note, simple_complex_v1 replay viewer, 2026-11-03)
+- **Build:** keep zoom and pan in the view state and include them in the cache key of projected coordinates; register the wheel listener with `{passive: false}` so `preventDefault` stops the page from scrolling; allow the zoom in the URL hash so screenshots can show it.
+
 ### Small Multiples
 - **Use:** many series that must be compared. Repeat the same small chart with identical axes and scale. Limit the count (bin if 100). Caption what varies. (DI ch.9, Small Multiples; Few, 6.2.6.3)
 

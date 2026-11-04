@@ -166,6 +166,7 @@ Goal, scope and open questions: `docs/BRIEF.md`. Scaffolding: the project-founda
 - <Sensitive-data rule, if any.>
 
 ## Conventions
+- **Design for what will vary next.** Before building something that will keep being used (a screen, a config schema, a file format, a function's signature, a report or figure layout), ask what it will have to hold next: new parameters, conditions, item kinds, tests. Make it handle them from the data (iterate over fields, diff an item against its siblings, name values from their keys and units) rather than from a hand-written list of today's cases; where a special case stays, anything it does not list must still show or fail loudly, never vanish.
 <Only project-wide rules an agent would get wrong. Folder-specific rules live in that folder's README.>
 
 ## Keeping the project maintained
@@ -450,7 +451,7 @@ reason = "core runs without heavy backends"
 4. Split a very long design document into per-component files if agents keep reading all of it; keep `ARCHITECTURE.md` short.
 5. `rotate` the WORKLOG; set up `[tool.docmap.runs]` for research repos and run `runs`.
 6. Add `python tools/docmap.py check` to CI; update the Copilot shim's fallback rules.
-6b. Coming from an older `tools/docmap.py` (compare `DOCMAP_VERSION`): replace the script, then bring AGENTS.md's session-start and finding-your-way lines up to the template (since 5.2: `find` and `get D<n>` instead of reading DECISIONS whole; since 5.3: the Scaffolding line under the title and the maintenance row that sends lessons about the scaffolding to the skill), run `update`, and `stats` to see what a session now reads.
+6b. Coming from an older `tools/docmap.py` (compare `DOCMAP_VERSION`): replace the script, then bring AGENTS.md's session-start and finding-your-way lines up to the template (since 5.2: `find` and `get D<n>` instead of reading DECISIONS whole; since 5.3: the Scaffolding line under the title and the maintenance row that sends lessons about the scaffolding to the skill; since 5.6: the "Design for what will vary next" line under Conventions), run `update`, and `stats` to see what a session now reads.
 6a. Doc lifecycle: give every doc in `docs/` a Status line (read it against the code, DECISIONS and RESULTS first: current, proposal, superseded or historical; move fully historical docs to `docs/archive/`). Mark superseded decisions in their headings. Configure `[tool.docmap.facts]` with the values docs keep repeating (defaults, presets, counts) and replace copied values with a reference to `docs/FACTS.md`. Keep `lifecycle_strict = false` until every doc has a Status line, then switch it on.
 7. Fix what `check` finds in old docs (broken links: fix the link or exempt truly historical folders via `link_exempt`; never delete history to silence a check).
 8. WORKLOG entry with the before/after `check` summary; commit; push.

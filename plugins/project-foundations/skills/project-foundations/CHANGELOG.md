@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.6.0 (2026-11-04)
+- AGENTS.md template, Conventions: 'Design for what will vary next' (data-driven over hand-listed cases; unlisted cases show or fail loudly). Owner request 2026-11-04 to generalise the gui-design rule across domains. (O11)
+
 ## 5.5.1 (2026-11-02)
 - MAP.md intro names the code-graph commands (calls, deps, map), so agents reading the map first learn them (owner question, 2 Nov 2026)
 
