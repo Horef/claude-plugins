@@ -1,0 +1,10 @@
+Page one of the test paper.
+We argue that the classiﬁcation of simple and complex cells is not a dichot-
+omy but a continuum, as shown by the well-known
+modulation ratio distribution.
+A closing line for page one.Page two begins here.
+The distribution of modulation ratios is bimodal, with a clear gap between
+the two groups of cells in cat primary visual cortex.
+Spike threshold turns a unimodal membrane potential distribution into a bimodal ﬁring rate distribution.
+The modulation ratio threshold was 1.0 in 85 cells.
+Last line.
