@@ -15,7 +15,8 @@ Rules with sources, by stage: `references/search-rules.md` (its "Most important 
 
 1. `SKILL` = this skill's folder. `lit.py` needs Python 3.10+; `pdftotext` (poppler) for full text; on macOS, DEVONthink through `osascript`. A missing tool gives exit 2: that source or step is not available, never "nothing found".
 2. Read the person's profile if there is one, `~/.config/literature-research/profile.md` (format: `profile.example.md`): default sources, where their papers live (DEVONthink databases, a project's `references/papers/`), how to get paywalled papers, API keys in the environment, model tiers per step.
-3. `python3 SKILL/scripts/lit.py devonthink-status`: if DEVONthink is not reachable (not this machine, not running, automation not allowed), say so once and continue with the other sources.
+3. `python3 SKILL/scripts/lit.py devonthink-status`: if DEVONthink is not reachable (not this machine, not running, automation not allowed), say so once and continue with the other sources. The automation permission belongs to the terminal app the agent runs in (System Settings > Privacy & Security > Automation): a helper in another terminal may reach DEVONthink when the lead cannot.
+4. Semantic Scholar answers HTTP 429 without a key: set `S2_API_KEY` (free) or rely on OpenAlex for search and citation chasing, and say so in the log.
 
 ## 1. Frame the question (search-rules A)
 
@@ -27,13 +28,13 @@ Show it to the person when they are available: it is the cheapest place to chang
 
 ## 2. Search, log, chase (B, C)
 
-- Build each query from the question's concepts with synonyms (and MeSH terms for PubMed); run it on each source with `lit.py search DIR <source> "<query>"`. Every run appends a row to `search_log.md` (source, query, filters, hits, new): never search without logging.
+- Build each query from the question's concepts with synonyms (and MeSH terms for PubMed). PubMed joins every word with AND, so a natural-language query usually returns nothing: write short boolean queries (`thalamocortical AND NMDA AND "layer 2/3"`), one concept combination at a time; run it on each source with `lit.py search DIR <source> "<query>"`. Every run appends a row to `search_log.md` (source, query, filters, hits, new): never search without logging.
 - Chase citations from the key papers: `lit.py cites DIR <key> --refs` always, `--citedby` for the papers that carry the answer, and look on purpose for papers that contradict the emerging answer (C8).
 - A project's `references/` folder is where papers already used are saved; it is not a search space, but check it before fetching a paper again.
 
 ## 3. Screen (D)
 
-Titles and abstracts first, over-inclusively; then full text. `lit.py screen DIR <key> in|out "<reason>"` records every full-text exclusion with its reason. Count studies, not papers: the same data reported twice is one data set (D3).
+Titles and abstracts first, over-inclusively; then full text. `lit.py screen DIR <key> in|out "<reason>"` records every full-text exclusion with its reason; for the hundreds of off-topic hits a broad search brings, write a TSV of decisions and use `lit.py screen DIR --from FILE`, or `--rest out "<reason>"` once every relevant one is marked in. Count studies, not papers: the same data reported twice is one data set (D3).
 
 ## 4. Read and fill the ledger (E)
 
@@ -43,7 +44,7 @@ One ledger row per finding, before any prose: the claim in one sentence, the **v
 
 ## 5. Verify with fresh checkers (F)
 
-Each ledger row is checked by an agent that did not extract it and sees only the row's claim, value, conditions, source and locator, not the synthesis. It opens the source, runs `lit.py quote <pdf> "<quote>"`, reads the passage, and sets `verified` to `confirmed`, `corrected` (with the right value or conditions), `not-found` or `indirect` (the source cites someone else). Give checkers a different model family from the extractor where possible; a light tier is enough for confirming quotes, a standard tier for judging conditions. Their reports go in `verify/`. Rows not confirmed do not carry the answer.
+Each ledger row is checked by an agent that did not extract it and sees only the row's claim, value, conditions, source and locator, not the synthesis. It first confirms that the file is the cited paper (title and first author on page 1: the pilot found four wrong PDFs matched by title words), then runs `lit.py quote <pdf> "<quote>"`, reads the passage, and sets `verified` to `confirmed`, `corrected` (with the right value or conditions), `not-found` or `indirect` (the source cites someone else). Give checkers a different model family from the extractor where possible; a light tier is enough for confirming quotes, a standard tier for judging conditions. Their reports go in `verify/`. Rows not confirmed do not carry the answer.
 
 ## 6. Synthesise (G, H)
 

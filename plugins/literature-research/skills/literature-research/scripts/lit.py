@@ -9,6 +9,8 @@ check, bib, devonthink-status.  Run `lit.py -h` or `lit.py <command> -h`.
 
 Exit codes: 0 ok; 1 problems found / bad input; 2 not run (optional tool or DEVONthink unavailable);
 3 full text not found (ask the owner; written to to_fetch.md); 4 network or API failure.
+fetch routes: DEVONthink (DOI or title+year match, identity checked on page 1), papers folder, open-access PDF (must be a real PDF),
+Europe PMC full text (.xml + .txt with section markers; quote locators are then section headings).
 Optional tools: `pdftotext` (poppler) for text/quote on PDFs; `osascript` + DEVONthink on macOS.
 Environment: NCBI_API_KEY, S2_API_KEY, OPENALEX_API_KEY (all optional); LIT_DEVONTHINK=off disables DEVONthink.
 """
@@ -45,6 +47,9 @@ LOG_HEADER = "| # | date | source | query | filters | hits | new | note |"
 LOG_SEP = "|---|------|--------|-------|---------|------|-----|------|"
 FETCH_HEADER = "| key | title | DOI | why needed |"
 FETCH_SEP = "|-----|-------|-----|------------|"
+S2_HINT = "set S2_API_KEY (free) or rely on OpenAlex"
+PUBMED_HINT = ("PubMed ANDs every word; use short boolean queries, e.g. thalamocortical AND NMDA AND layer 2/3")
+MIN_PDF_BYTES = 20_000
 S2_FIELDS = "title,authors,year,venue,abstract,externalIds,openAccessPdf"
 OA_SELECT = ("id,doi,title,display_name,publication_year,authorships,primary_location,best_oa_location,"
              "abstract_inverted_index,ids")
@@ -82,7 +87,8 @@ def http_get(url, headers=None, timeout=30, retries=3):
                 time.sleep(wait)
                 delay *= 2
                 continue
-            hint = " (set S2_API_KEY for a higher limit)" if e.code == 429 and "semanticscholar" in url else ""
+            hint = (f" ({S2_HINT})" if e.code == 429 and "semanticscholar" in url and not os.environ.get("S2_API_KEY")
+                    else "")
             raise NetError(f"HTTP {e.code} from {urllib.parse.urlsplit(url).netloc}{hint}")
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise NetError(f"network error for {urllib.parse.urlsplit(url).netloc}: {getattr(e, 'reason', e)}")
@@ -137,7 +143,7 @@ def name_to_cite(name):
 
 
 def blank_record():
-    return {"key": "", "doi": "", "pmid": "", "arxiv": "", "s2": "", "openalex": "", "title": "", "authors": [],
+    return {"key": "", "doi": "", "pmid": "", "pmcid": "", "arxiv": "", "s2": "", "openalex": "", "title": "", "authors": [],
             "year": None, "venue": "", "abstract": "", "oa_pdf": "", "found_by": [], "status": "new", "reason": ""}
 
 
@@ -181,7 +187,8 @@ def norm_pubmed(summary, fetch_xml):
     for uid in res.get("uids", []):
         r = res[uid]
         doi = next((a["value"] for a in r.get("articleids", []) if a.get("idtype") == "doi"), "")
-        out.append(mkrec(pmid=uid, doi=doi, title=r.get("title", ""), authors=[a["name"] for a in r.get("authors", [])],
+        pmc = next((a["value"] for a in r.get("articleids", []) if a.get("idtype") == "pmc"), "")
+        out.append(mkrec(pmid=uid, doi=doi, pmcid=pmc, title=r.get("title", ""), authors=[a["name"] for a in r.get("authors", [])],
                          year=year_of(r.get("pubdate") or r.get("epubdate")), venue=r.get("fulljournalname") or r.get("source", ""),
                          abstract=abstracts.get(uid, "")))
     return out
@@ -190,7 +197,9 @@ def norm_pubmed(summary, fetch_xml):
 def norm_s2(item):
     ext = item.get("externalIds") or {}
     oa = item.get("openAccessPdf") or {}
+    pmc = str(ext.get("PubMedCentral") or "")
     return mkrec(s2=item.get("paperId") or "", doi=ext.get("DOI", ""), pmid=ext.get("PubMed", ""), arxiv=ext.get("ArXiv", ""),
+                 pmcid=("PMC" + pmc.removeprefix("PMC")) if pmc else "",
                  title=item.get("title") or "", authors=[a.get("name", "") for a in item.get("authors") or []],
                  year=item.get("year"), venue=item.get("venue") or "", abstract=item.get("abstract") or "",
                  oa_pdf=oa.get("url") or "")
@@ -227,17 +236,41 @@ def norm_openalex(w):
     pmid = (ids.get("pmid") or "").rstrip("/").rsplit("/", 1)[-1]
     src = ((w.get("primary_location") or {}).get("source") or {}).get("display_name") or ""
     oa = (w.get("best_oa_location") or {}).get("pdf_url") or ""
+    pmc = (ids.get("pmcid") or "").rstrip("/").rsplit("/", 1)[-1]
     return mkrec(openalex=(w.get("id") or "").rsplit("/", 1)[-1], doi=w.get("doi") or "", pmid=pmid,
+                 pmcid=pmc if pmc.upper().startswith("PMC") else "",
                  title=w.get("title") or w.get("display_name") or "",
                  authors=[(a.get("author") or {}).get("display_name", "") for a in w.get("authorships") or []],
                  year=w.get("publication_year"), venue=src, abstract=oa_abstract(w.get("abstract_inverted_index")),
                  oa_pdf=oa)
 
 
+_TOKEN = r"[^\W\d_](?:[\w'\u2019.]|-(?=\w))*"
+_SURNAME = rf"{_TOKEN}(?: {_TOKEN}){{0,2}}"
+_AUTHORS = re.compile(rf"^({_SURNAME}(?:(?:, | & | and ){_SURNAME})*)\s*\(((?:1[5-9]|20)\d\d)[a-z]?\)$")
+_DASH = re.compile(r"\s[-\u2013\u2014]\s")
+
+
+def split_dt_name(name):
+    """'<title> - Kloc & Maffei (2014)' -> (title, ['Kloc', 'Maffei'], 2014); '... - Polack et al. (2013)' likewise.
+
+    Other names give (name, [], year found in the name or None).
+    """
+    name = re.sub(r"\s+", " ", name or "").strip()
+    ms = list(_DASH.finditer(name))
+    if ms:
+        tail = re.sub(r"\s+et al\.?(?=\s*\()", "", name[ms[-1].end():])
+        m = _AUTHORS.match(tail)
+        if m:
+            return name[:ms[-1].start()].strip(), re.split(r", | & | and ", m.group(1)), int(m.group(2))
+    return name, [], year_of(name)
+
+
 def norm_devonthink(row):
     """row: dict(name, path, uuid, url, doi) from AppleScript."""
     name = re.sub(r"\.(pdf|txt|md|rtf|html?)$", "", row.get("name", ""), flags=re.I)
-    r = mkrec(doi=row.get("doi", ""), title=name, year=year_of(name))
+    title, authors, year = split_dt_name(name)
+    r = mkrec(doi=row.get("doi", ""), title=title, authors=authors, year=year)
     r["devonthink_uuid"] = row.get("uuid", "")
     r["devonthink_url"] = row.get("url", "")
     r["path"] = row.get("path", "")
@@ -255,12 +288,27 @@ def make_key(rec, taken):
     first = unicodedata.normalize("NFKD", first)
     first = "".join(c for c in first if c.isalnum() and ord(c) < 128)
     first = (first[:1].upper() + first[1:]) or "Anon"
-    base = f"{first}{rec['year'] or 'nd'}"
+    base = f"{first}{rec['year'] or 'NoYear'}"
     key, i = base, 1
     while key in taken:
         key = base + chr(ord("a") + i) if i < 26 else f"{base}{i}"  # first stays bare; later ones get b, c, ...
         i += 1
     return key
+
+
+def openalex_authors(rec):
+    """Fill missing authors (and year) from OpenAlex by DOI, for records without authors; never raises."""
+    if rec.get("authors") or not rec.get("doi"):
+        return
+    url = "https://api.openalex.org/works/doi:" + urllib.parse.quote(rec["doi"], safe="/:()")
+    try:
+        w = get_json(url + "?" + qs({"select": "authorships,publication_year", "api_key": os.environ.get("OPENALEX_API_KEY", "")}))
+    except (LitError, AttributeError):
+        return
+    names = [(a.get("author") or {}).get("display_name", "") for a in w.get("authorships") or []]
+    rec["authors"] = [a for a in (name_to_cite(n) for n in names) if a]
+    if not rec.get("year") and w.get("publication_year"):
+        rec["year"] = int(w["publication_year"])
 
 
 def load_candidates(d):
@@ -295,7 +343,7 @@ def id_keys(r):
 
 
 def merge_into(old, new):
-    for f in ("doi", "pmid", "arxiv", "s2", "openalex", "venue", "oa_pdf", "year", "title", "devonthink_uuid",
+    for f in ("doi", "pmid", "pmcid", "arxiv", "s2", "openalex", "venue", "oa_pdf", "year", "title", "devonthink_uuid",
               "devonthink_url", "path"):
         if not old.get(f) and new.get(f):
             old[f] = new[f]
@@ -339,6 +387,7 @@ def merge_records(existing, incoming):
             rec, is_new = hit, False
         else:
             rec, is_new = n, True
+            openalex_authors(rec)
             rec["key"] = make_key(rec, taken)
             taken.add(rec["key"])
             existing.append(rec)
@@ -592,10 +641,19 @@ def cmd_search(a):
     if not d.is_dir():
         raise LitError(f"{d} is not a folder; run `lit.py init` first")
     maxn = max(1, a.max)
-    records, note = SOURCES[a.source](a.query, maxn, a.since)
+    filters = f"max={maxn}" + (f"; since={a.since}" if a.since else "")
+    try:
+        records, note = SOURCES[a.source](a.query, maxn, a.since)
+    except NetError as e:
+        if a.source == "s2" and S2_HINT in str(e):
+            append_log(d, a.source, a.query, filters, 0, 0, f"FAILED, nothing searched: {S2_HINT}")
+        raise
     if a.source == "devonthink" and a.since:
         note = "since ignored for devonthink"
-    filters = f"max={maxn}" + (f"; since={a.since}" if a.since else "")
+    if (a.source == "pubmed" and not records and len(a.query.split()) > 4
+            and not re.search(r"\b(AND|OR|NOT)\b", a.query)):
+        print("hint: " + PUBMED_HINT, file=sys.stderr)
+        note = (note + "; " if note else "") + "0 hits: PubMed ANDs every word"
     ingest(d, a.source, a.query, filters, records, a.source, note)
     return 0
 
@@ -661,6 +719,8 @@ def cmd_cites(a):
             note = "s2 returned nothing (often publisher-elided); used openalex"
     except LitError as e:
         records, note = [], f"s2 failed ({e}); used openalex"
+        if S2_HINT in str(e):
+            print(S2_HINT, file=sys.stderr)
     if not records:
         via = "openalex"
         records = cites_openalex(r, direction, a.max)
@@ -668,15 +728,67 @@ def cmd_cites(a):
     return 0
 
 
+def read_screen_tsv(path):
+    """Rows (line no, key, status, reason) from `key<TAB>in|out<TAB>reason`; blank lines, # comments and a header are skipped."""
+    p = Path(path)
+    if not p.exists():
+        raise LitError(f"no such file: {p}")
+    rows = []
+    for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        cells = [c.strip() for c in line.split("\t")]
+        if n == 1 and cells[0].lower() == "key" and (len(cells) < 2 or cells[1].lower() not in ("in", "out")):
+            continue
+        rows.append((n, cells[0], cells[1] if len(cells) > 1 else "", cells[2] if len(cells) > 2 else ""))
+    return rows
+
+
 def cmd_screen(a):
+    bulk = a.from_file or a.rest
+    if bulk and (a.key or a.status or a.reason):
+        raise LitError("give either KEY STATUS REASON, or --from / --rest, not both")
+    if not bulk:
+        if not (a.key and a.status and a.reason):
+            raise LitError("usage: screen DIR KEY in|out REASON, or screen DIR --from FILE, or screen DIR --rest in|out REASON")
+        recs = load_candidates(a.dir)
+        for r in recs:
+            if r["key"] == a.key:
+                r["status"], r["reason"] = a.status, a.reason
+                save_candidates(a.dir, recs)
+                print(f"{a.key}: {a.status} - {a.reason}")
+                return 0
+        raise LitError(f"no candidate with key {a.key!r}")
+    if a.rest and (a.rest[0] not in ("in", "out") or not a.rest[1].strip()):
+        raise LitError("--rest needs in|out and a non-empty reason")
     recs = load_candidates(a.dir)
-    for r in recs:
-        if r["key"] == a.key:
-            r["status"], r["reason"] = a.status, a.reason
-            save_candidates(a.dir, recs)
-            print(f"{a.key}: {a.status} - {a.reason}")
-            return 0
-    raise LitError(f"no candidate with key {a.key!r}")
+    by_key = {r["key"]: r for r in recs}
+    problems, done = [], collections.Counter()
+    if a.from_file:
+        for n, key, status, reason in read_screen_tsv(a.from_file):
+            if key not in by_key:
+                problems.append(f"line {n}: no candidate with key {key!r}")
+            elif status not in ("in", "out"):
+                problems.append(f"line {n}: {key}: status must be in or out, got {status!r}")
+            elif not reason:
+                problems.append(f"line {n}: {key}: reason is empty")
+            else:
+                by_key[key]["status"], by_key[key]["reason"] = status, reason
+                done[status] += 1
+        append_log(a.dir, "screen", f"--from {Path(a.from_file).name}", "", sum(done.values()), 0,
+                   f"screened {done['in']} in, {done['out']} out" + (f"; {len(problems)} lines skipped" if problems else ""))
+    if a.rest:
+        status, reason = a.rest
+        left = [r for r in recs if r.get("status") == "new"]
+        for r in left:
+            r["status"], r["reason"] = status, reason
+        done[status] += len(left)
+        append_log(a.dir, "screen", f"--rest {status}", "", len(left), 0, f"all {len(left)} still-new candidates marked {status}: {reason}")
+    save_candidates(a.dir, recs)
+    for pr in problems:
+        print("skipped: " + pr, file=sys.stderr)
+    print(f"screened: {done['in']} in, {done['out']} out" + (f"; {len(problems)} line(s) skipped" if problems else ""))
+    return 1 if problems else 0
 
 
 # ---------------------------------------------------------------- full text: fetch, text
@@ -703,39 +815,98 @@ def name_matches(rec, filename):
     return len(ws) >= 3 and sum(w in stem.split() for w in ws) >= max(3, int(0.6 * len(ws)))
 
 
-def pdftotext_page1_has(path, needle):
+TITLE_STOP = {"the", "and", "for", "from", "with", "into", "onto", "that", "this", "their", "between", "using",
+              "toward", "towards", "than", "have", "been", "are", "its"}
+
+
+def page1_text(path):
+    """Text of page 1, or None when pdftotext is missing or fails."""
     exe = shutil.which("pdftotext")
     if not exe:
-        return False
+        return None
     p = subprocess.run([exe, "-f", "1", "-l", "1", str(path), "-"], capture_output=True, text=True, errors="replace")
-    return needle.lower() in p.stdout.lower()
+    return p.stdout if p.returncode == 0 else None
 
 
-def dt_accept(rec, row, by_doi):
+def verify_identity(rec, path):
+    """(ok, why): the DOI, or the distinctive words of the title, appear on page 1 of the PDF."""
+    text = page1_text(path)
+    if text is None:
+        return True, "identity not checked (pdftotext not found)"
+    compact = re.sub(r"[^a-z0-9]+", "", text.lower())
+    doi = re.sub(r"[^a-z0-9]+", "", rec.get("doi", ""))
+    if doi and doi in compact:
+        return True, "DOI on page 1"
+    tokens = set(norm_title(re.sub(r"-\s*\n\s*", "", text)).split()) | set(norm_title(text).split())
+    words = sorted({w for w in norm_title(split_dt_name(rec.get("title", ""))[0]).split()
+                    if len(w) >= 4 and w not in TITLE_STOP})
+    if not words:
+        return False, "nothing to check page 1 against (no DOI on it, no title words)"
+    need = len(words) if len(words) <= 3 else -(-4 * len(words) // 5)
+    found = sum(w in tokens for w in words)
+    if found >= need:
+        return True, f"{found}/{len(words)} title words on page 1"
+    return False, f"page 1 has {found}/{len(words)} of the title's words (need {need}): wrong paper"
+
+
+def is_pdf_file(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(5) == b"%PDF-"
+    except OSError:
+        return False
+
+
+def dt_accept(rec, row):
+    """Accept a DEVONthink row only on a DOI match, or title similarity >= 0.9 with a compatible year."""
     if not row["path"].lower().endswith(".pdf") or not Path(row["path"]).exists():
         return False
-    if rec.get("doi") and row.get("doi") == rec["doi"]:
-        return True
-    sim = difflib.SequenceMatcher(None, norm_title(Path(row["name"]).stem), norm_title(rec["title"])).ratio()
-    if sim >= 0.5:
-        return True
-    return by_doi and rec.get("doi") and pdftotext_page1_has(row["path"], rec["doi"])
+    if rec.get("doi") and row.get("doi"):
+        return rec["doi"] == row["doi"]
+    name = re.sub(r"\.pdf$", "", row["name"], flags=re.I)
+    row_title, _, row_year = split_dt_name(name)
+    rec_title, _, rec_year = split_dt_name(rec.get("title", ""))
+    rec_year = rec.get("year") or rec_year
+    if row_year and rec_year and row_year != rec_year:
+        return False
+    return difflib.SequenceMatcher(None, norm_title(row_title), norm_title(rec_title)).ratio() >= 0.9
 
 
-def fetch_devonthink(rec):
-    tries = ([("doi", rec["doi"])] if rec.get("doi") else []) + ([("title", rec["title"])] if rec.get("title") else [])
+def check_candidate_pdf(rec, path, route, notes):
+    """Return (path, route) when `path` is a real PDF of this paper, else None (reason appended to notes)."""
+    if not is_pdf_file(path):
+        notes.append(f"{route}: {Path(path).name} is not a PDF (blocked download?)")
+        return None
+    ok, why = verify_identity(rec, path)
+    if not ok:
+        notes.append(f"{route}: rejected {Path(path).name}: {why}")
+        return None
+    if why.startswith("identity not checked"):
+        notes.append(f"{route}: {why}")
+    return path, route
+
+
+def fetch_devonthink(rec, notes):
+    tries = ([("doi", rec["doi"])] if rec.get("doi") else []) + ([("title", split_dt_name(rec["title"])[0])] if rec.get("title") else [])
+    seen = set()
     for how, q in tries:
         for row in dt_search(q, 15):
-            if dt_accept(rec, row, how == "doi"):
-                return row["path"], f"devonthink ({how})"
+            if row["path"] in seen or not dt_accept(rec, row):
+                continue
+            seen.add(row["path"])
+            hit = check_candidate_pdf(rec, row["path"], f"devonthink ({how})", notes)
+            if hit:
+                return hit
     return None
 
 
-def fetch_papers_dir(rec, papers):
+def fetch_papers_dir(rec, papers, notes):
     if papers and papers.is_dir():
         for f in sorted(papers.rglob("*.pdf")):
             if name_matches(rec, f.name):
-                return str(f), "papers folder"
+                hit = check_candidate_pdf(rec, str(f), "papers folder", notes)
+                if hit:
+                    return hit
     return None
 
 
@@ -746,33 +917,126 @@ def oa_urls(rec):
     return [u for u in urls if u]
 
 
-def openalex_pdf_urls(rec):
+def openalex_lookup(rec):
+    """(PDF urls, PMCID) from OpenAlex; ([], '') without an identifier."""
     key = os.environ.get("OPENALEX_API_KEY", "")
     if rec.get("openalex"):
         url = f"https://api.openalex.org/works/{rec['openalex']}"
     elif rec.get("doi"):
         url = "https://api.openalex.org/works/doi:" + urllib.parse.quote(rec["doi"], safe="/:()")
     else:
-        return []
-    w = get_json(url + "?" + qs({"select": "best_oa_location,locations", "api_key": key}))
+        return [], ""
+    w = get_json(url + "?" + qs({"select": "best_oa_location,locations,ids", "api_key": key}))
     locs = [w.get("best_oa_location")] + (w.get("locations") or [])
-    return list(dict.fromkeys(l["pdf_url"] for l in locs if l and l.get("pdf_url")))
+    pmc = (((w.get("ids") or {}).get("pmcid")) or "").rstrip("/").rsplit("/", 1)[-1]
+    return list(dict.fromkeys(l["pdf_url"] for l in locs if l and l.get("pdf_url"))), (pmc if pmc.upper().startswith("PMC") else "")
 
 
 def download_pdf(urls, dest):
+    """Download the first URL that serves a real PDF (starts with %PDF, over 20 kB); bad downloads are deleted."""
     errors = []
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".part")
     for u in urls:
         try:
             data = http_get(u, {"Accept": "application/pdf"}, timeout=60)
         except LitError as e:
             errors.append(f"{u}: {e}")
             continue
-        if data[:5] == b"%PDF-":
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
+        tmp.write_bytes(data)
+        if data[:5] == b"%PDF-" and len(data) > MIN_PDF_BYTES:
+            tmp.replace(dest)
             return True, errors
-        errors.append(f"{u}: not a PDF (landing page?)")
+        tmp.unlink()
+        errors.append(f"{u}: not a PDF (blocked?) - got {len(data)} bytes")
     return False, errors
+
+
+EPMC_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/{}/fullTextXML"
+
+
+BLOCK_TAGS = {"p", "title", "label", "caption", "list-item", "sec"}
+
+
+def _local(tag):
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
+
+
+def _flat(el):
+    """Text of a JATS element; bibliography call-outs are dropped, tables become rows with " | " between cells."""
+    t = _local(el.tag)
+    if t == "xref" and el.get("ref-type") == "bibr":
+        return el.tail or ""
+    if t == "tr":
+        return " | ".join(re.sub(r"\s+", " ", _flat_inner(c)).strip() for c in el if _local(c.tag) in ("td", "th")) + "\n"
+    return _flat_inner(el) + ("\n" if t in BLOCK_TAGS else "") + (el.tail or "")
+
+
+def _flat_inner(el):
+    return (el.text or "") + "".join(_flat(c) for c in el)
+
+
+def jats_to_text(xml_bytes):
+    """JATS full text (Europe PMC) -> text with '=== section: <heading> ===' markers."""
+    root = ET.fromstring(xml_bytes)
+    art = root if _local(root.tag) == "article" else next((e for e in root.iter() if _local(e.tag) == "article"), None)
+    if art is None:
+        raise LitError("no <article> in the Europe PMC response")
+    out = []
+
+    def clean(s):
+        return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]*\n[ \t]*", "\n", re.sub(r"[ \t]+", " ", s))).strip()
+
+    def block(title, parts):
+        body = "\n\n".join(x for x in (clean(p) for p in parts) if x)
+        if body:
+            heading = re.sub(r"\s+", " ", title).strip()
+            out.append(f"=== section: {heading} ===\n{body}\n")
+
+    def walk(sec, trail):
+        heading = clean(next((_flat_inner(c) for c in sec if _local(c.tag) == "title"), ""))
+        trail = trail + [heading] if heading else trail
+        parts = []
+        for c in sec:
+            t = _local(c.tag)
+            if t == "sec":
+                block(" / ".join(trail) or "Body", parts)
+                parts = []
+                walk(c, trail)
+            elif t in ("p", "list", "disp-quote"):
+                parts.append(_flat_inner(c))
+            elif t in ("fig", "table-wrap"):
+                parts.append(_flat_inner(c))
+        block(" / ".join(trail) or "Body", parts)
+
+    for el in art.iter():
+        if _local(el.tag) == "article-title":
+            block("Title", [_flat_inner(el)])
+            break
+    for el in art.iter():
+        if _local(el.tag) == "abstract":
+            block("Abstract", [_flat_inner(c) for c in el.iter() if _local(c.tag) == "p"] or [_flat_inner(el)])
+            break
+    for el in art:
+        if _local(el.tag) == "body":
+            walk(el, [])
+    return "\n".join(out)
+
+
+def fetch_europepmc(pmcid, dest_xml):
+    """Save Europe PMC full text as <key>.xml and <key>.txt; returns the .txt path."""
+    data = http_get(EPMC_URL.format(pmcid), {"Accept": "application/xml"}, timeout=60)
+    try:
+        text = jats_to_text(data)
+    except ET.ParseError:
+        raise LitError("Europe PMC returned no JATS full text")
+    if not text.strip():
+        raise LitError("Europe PMC returned an article without full text (not open access?)")
+    dest_xml.parent.mkdir(parents=True, exist_ok=True)
+    dest_xml.write_bytes(data)
+    txt = dest_xml.with_suffix(".txt")
+    txt.write_text(text, encoding="utf-8")
+    return txt
 
 
 def add_to_fetch(d, rec, why):
@@ -790,28 +1054,32 @@ def add_to_fetch(d, rec, why):
 def cmd_fetch(a):
     rec = find_candidate(a.dir, a.key)
     papers = Path(a.papers).expanduser() if a.papers else project_root(a.dir) / "references" / "papers"
-    if rec.get("path") and Path(rec["path"]).exists():
-        print(f"{rec['path']}\nroute: devonthink (candidate record)")
-        return 0
     notes = []
+    if rec.get("path") and rec["path"].lower().endswith(".pdf") and Path(rec["path"]).exists():
+        hit = check_candidate_pdf(rec, rec["path"], "devonthink (candidate record)", notes)
+        if hit:
+            print(f"{hit[0]}\nroute: {hit[1]}")
+            return 0
     if dt_disabled():
         notes.append("devonthink: disabled")
     else:
         try:
-            hit = fetch_devonthink(rec)
+            hit = fetch_devonthink(rec, notes)
             if hit:
                 print(f"{hit[0]}\nroute: {hit[1]}")
                 return 0
             notes.append("devonthink: no matching PDF")
         except LitError as e:
             notes.append(f"devonthink: skipped ({e})")
-    hit = fetch_papers_dir(rec, papers)
+    hit = fetch_papers_dir(rec, papers, notes)
     if hit:
         print(f"{hit[0]}\nroute: {hit[1]}")
         return 0
-    urls = oa_urls(rec)
+    urls, pmcid = oa_urls(rec), rec.get("pmcid", "")
     try:
-        urls += [u for u in openalex_pdf_urls(rec) if u not in urls]
+        more, pmc = openalex_lookup(rec)
+        urls += [u for u in more if u not in urls]
+        pmcid = pmcid or pmc
     except LitError as e:
         notes.append(f"openalex lookup failed ({e})")
     ok, errs = download_pdf(urls, papers / f"{rec['key']}.pdf")
@@ -819,6 +1087,14 @@ def cmd_fetch(a):
     if ok:
         print(f"{papers / (rec['key'] + '.pdf')}\nroute: open access download")
         return 0
+    if pmcid:
+        try:
+            txt = fetch_europepmc(pmcid, papers / f"{rec['key']}.xml")
+            print(f"{txt}\nroute: europe pmc ({pmcid}; JATS saved as {txt.with_suffix('.xml').name}; "
+                  "text has section markers, cite a section heading as the locator)")
+            return 0
+        except LitError as e:
+            notes.append(f"europe pmc {pmcid}: {e}")
     why = a.why or "full text needed for verification; no open-access copy found"
     added = add_to_fetch(a.dir, rec, why)
     for n in notes:
@@ -835,7 +1111,7 @@ def need_pdftotext():
     return exe
 
 
-MARK = re.compile(r"^=== page (\d+) ===$", re.M)
+MARK = re.compile(r"^=== (?:page (\d+)|section: (.+?)) ===$", re.M)
 
 
 def cache_path(pdf, raw):
@@ -874,22 +1150,39 @@ def extract_pdf(pdf, raw=False):
     return cache, pages
 
 
-def load_pages(path, raw=False):
+def load_doc(path, raw=False):
+    """(pages, labels): labels[i] names page i ('page 3', or the heading of a section); None for unmarked text."""
     p = Path(path)
+    labels = None
     if p.suffix.lower() == ".pdf":
         pages = extract_pdf(p, raw)[1]
     else:
         if not p.exists():
             raise LitError(f"no such file: {p}")
-        text = p.read_text(encoding="utf-8", errors="replace")
-        pages = split_marked(text) if MARK.search(text) else text.split("\f")
-    return [unicodedata.normalize("NFC", t) for t in pages]
+        text = p.read_bytes().decode("utf-8", errors="replace")
+        if p.suffix.lower() == ".xml":
+            text = jats_to_text(text.encode("utf-8"))
+        if MARK.search(text):
+            pages = split_marked(text)
+            labels = [f"page {m.group(1)}" if m.group(1) else f'section "{m.group(2)}"' for m in MARK.finditer(text)]
+        else:
+            pages = text.split("\f")
+    return [unicodedata.normalize("NFC", t) for t in pages], labels
+
+
+def load_pages(path, raw=False):
+    return load_doc(path, raw)[0]
 
 
 def cmd_text(a):
     p = Path(a.path)
+    if p.suffix.lower() == ".xml":
+        out = p.with_suffix(".txt")
+        out.write_text(jats_to_text(p.read_bytes()), encoding="utf-8")
+        print(out)
+        return 0
     if p.suffix.lower() != ".pdf":
-        raise LitError("text expects a PDF")
+        raise LitError("text expects a PDF (or Europe PMC .xml)")
     cache, pages = extract_pdf(p, a.raw)
     print(cache)
     print(f"({len(pages)} pages)", file=sys.stderr)
@@ -1016,7 +1309,7 @@ def locate_quote(pages, quote, page=None):
 
 
 def cmd_quote(a):
-    pages = load_pages(a.path)
+    pages, labels = load_doc(a.path)
     res = locate_quote(pages, a.quote, a.page)
     mode = "layout"
     if res["score"] < 0.9 and Path(a.path).suffix.lower() == ".pdf":  # two-column papers: retry in reading order
@@ -1029,8 +1322,10 @@ def cmd_quote(a):
     if not res["page"]:
         print(f"no match (score 0.00) for the quote in {a.path}")
         return 1
-    span = f", continues on page {res['end_page']}" if res["end_page"] != res["page"] else ""
-    print(f"page {res['page']} | score {res['score']:.2f} | {mode}{span}")
+    name = lambda n: labels[n - 1] if labels else f"page {n}"
+    span = (f", continues {'in' if name(res['end_page']).startswith('section') else 'on'} {name(res['end_page'])}"
+            if res["end_page"] != res["page"] else "")
+    print(f"{name(res['page'])} | score {res['score']:.2f} | {mode}{span}")
     if res.get("numbers"):
         print(f"numbers differ: quote has {res['numbers'][0]}, text has {res['numbers'][1]}")
     print("\n".join(res["context"]))
@@ -1225,11 +1520,13 @@ def build_parser():
     s.add_argument("--max", type=int, default=50)
     s.set_defaults(fn=cmd_cites)
 
-    s = sp.add_parser("screen", help="mark a candidate in or out")
+    s = sp.add_parser("screen", help="mark a candidate in or out; in bulk with --from FILE and/or --rest")
     s.add_argument("dir")
-    s.add_argument("key")
-    s.add_argument("status", choices=("in", "out"))
-    s.add_argument("reason")
+    s.add_argument("key", nargs="?")
+    s.add_argument("status", nargs="?", choices=("in", "out"))
+    s.add_argument("reason", nargs="?")
+    s.add_argument("--from", dest="from_file", metavar="FILE", help="TSV: key<TAB>in|out<TAB>reason per line")
+    s.add_argument("--rest", nargs=2, metavar=("STATUS", "REASON"), help="mark every candidate still 'new' (after --from)")
     s.set_defaults(fn=cmd_screen)
 
     s = sp.add_parser("fetch", help="find or download the full text (DEVONthink, papers folder, open access)")

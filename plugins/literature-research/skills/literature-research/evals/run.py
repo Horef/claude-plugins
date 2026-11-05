@@ -56,8 +56,8 @@ def fx(name):
     return (FIX / name).read_bytes()
 
 
-def make_pdf(pages):
-    """Minimal PDF, one page per list of text lines (Helvetica, Latin-1)."""
+def make_pdf(pages, pad=24000):
+    """Minimal PDF, one page per list of text lines (Helvetica, Latin-1); comment padding makes it look like a real download (> 20 kB)."""
     objs = {1: b"<< /Type /Catalog /Pages 2 0 R >>", 3: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
     kids = []
     for i, lines in enumerate(pages):
@@ -69,7 +69,7 @@ def make_pdf(pages):
                     f"/Resources << /Font << /F1 3 0 R >> >> >>").encode()
         objs[ct] = f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream".encode("latin-1")
     objs[2] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(pages)} >>".encode()
-    out = b"%PDF-1.4\n"
+    out = b"%PDF-1.4\n" + (b"%" + b"x" * 78 + b"\n") * (pad // 80)
     offs = {}
     for n in sorted(objs):
         offs[n] = len(out)
@@ -95,8 +95,8 @@ PDF_PAGES = [
 class FakeNet:
     """Replaces lit.http_get; serves fixtures by URL and records the requests."""
 
-    def __init__(self, fail=(), html=()):
-        self.urls, self.fail, self.html = [], fail, html
+    def __init__(self, fail=(), html=(), tiny=()):
+        self.urls, self.fail, self.html, self.tiny = [], fail, html, tiny
 
     def __call__(self, url, headers=None, timeout=30, retries=3):
         self.urls.append(url)
@@ -104,6 +104,10 @@ class FakeNet:
             raise lit.NetError("HTTP 429 (simulated)")
         if any(h in url for h in self.html):
             return b"<html>landing page</html>"
+        if any(t in url for t in self.tiny):
+            return b"%PDF-1.4\n" + b"<html>Just a moment... (Cloudflare)</html>" * 130  # PDF header, 5 kB
+        if "europepmc" in url:
+            return fx("europepmc_fulltext.xml")
         if "esearch" in url:
             return fx("pubmed_esearch.json")
         if "esummary" in url:
@@ -599,6 +603,231 @@ def devonthink_status_reasons():
     check("not running" in lit.dt_reason("(-600)"), "-600")
     code, out, _ = run("devonthink-status")
     check(code == 2 and "LIT_DEVONTHINK=off" in out, out)
+
+
+# ---------------------------------------------------------------- pilot fixes: fetch identity, downloads, keys, bulk screen, hints
+
+OTHER_PAPER = [["Binocular interaction in striate cortex of kittens", "Ghose GM, Freeman RD, 1994", "Journal of Neurophysiology"]]
+MECHLER_P1 = [["On the classification of simple and complex cells", "Mechler F, Ringach DL", "doi 10.1016/s0042-6989(02)00025-1"]]
+
+
+@contextlib.contextmanager
+def devonthink(rows):
+    """Pretend DEVONthink is on and answers every search with `rows` (name, path, doi)."""
+    saved = os.environ.pop("LIT_DEVONTHINK")
+    real = lit.dt_search
+    lit.dt_search = lambda q, n=25: [dict(name=r[0], path=str(r[1]), uuid="U", url="x-devonthink-item://U", doi=r[2]) for r in rows]
+    try:
+        yield
+    finally:
+        lit.dt_search = real
+        os.environ["LIT_DEVONTHINK"] = saved
+
+
+def dt_pdf(content, name="f.pdf"):
+    f = tmpdir() / name
+    f.write_bytes(make_pdf(content))
+    return f
+
+
+def need_pdftotext_or_skip():
+    if not shutil.which("pdftotext"):
+        raise Skip("pdftotext not installed")
+
+
+@test
+def fetch_devonthink_needs_doi_or_close_title_and_year():
+    need_pdftotext_or_skip()
+    wrong = dt_pdf(OTHER_PAPER)
+    right = dt_pdf(MECHLER_P1)
+    rec = cand("Mechler2002", doi="10.1016/s0042-6989(02)00025-1")
+    for name in ("Binocular interaction in striate cortex of kittens - Ghose et al. (1994)", "On the classification of simple and complex cells - Mechler & Ringach (2026)"):
+        check(not lit.dt_accept(rec, dict(name=name, path=str(wrong), doi="")), f"{name} must not match")
+    check(lit.dt_accept(rec, dict(name="On the classification of simple and complex cells - Mechler & Ringach (2002)", path=str(right), doi="")), "title+year")
+    check(lit.dt_accept(rec, dict(name="scan001", path=str(right), doi="10.1016/s0042-6989(02)00025-1")), "DOI match decides")
+    check(not lit.dt_accept(rec, dict(name="On the classification of simple and complex cells", path=str(right), doi="10.1/other")), "different DOI")
+    d = folder_with([cand("Mechler2002", doi="10.1016/s0042-6989(02)00025-1")])
+    with devonthink([("On the classification of simple and complex cells - Mechler & Ringach (2002).pdf", wrong, "")]), patched(FakeNet(fail=("",))):
+        code, out, err = run("fetch", d, "Mechler2002", "--papers", tmpdir() / "p")
+    check(code == 3 and "rejected" in err and "wrong paper" in err, (code, out, err))
+    check(len(table_rows(d / "to_fetch.md")) == 1, "to_fetch row written when the only match was rejected")
+    d = folder_with([cand("Mechler2002")])
+    with devonthink([("On the classification of simple and complex cells - Mechler & Ringach (2002).pdf", right, "")]), patched(FakeNet(fail=("",))):
+        code, out, _ = run("fetch", d, "Mechler2002", "--papers", tmpdir() / "p")
+    check(code == 0 and out.splitlines()[0] == str(right) and "devonthink" in out, (code, out))
+
+
+@test
+def fetch_papers_folder_match_is_verified():
+    need_pdftotext_or_skip()
+    d = folder_with([cand("Mechler2002")])
+    papers = tmpdir() / "papers"
+    papers.mkdir()
+    (papers / "Mechler2002.pdf").write_bytes(make_pdf(OTHER_PAPER))
+    with patched(FakeNet(fail=("",))):
+        code, _, err = run("fetch", d, "Mechler2002", "--papers", papers)
+    check(code == 3 and "rejected Mechler2002.pdf" in err, (code, err))
+    (papers / "Mechler2002.pdf").write_bytes(b"<html>blocked</html>")
+    with patched(FakeNet(fail=("",))):
+        code, _, err = run("fetch", d, "Mechler2002", "--papers", papers)
+    check(code == 3 and "not a PDF" in err, (code, err))
+
+
+@test
+def fetch_download_must_be_a_real_pdf():
+    d = folder_with([cand("Mechler2002", oa_pdf="https://blocked.example/x.pdf")])
+    papers = tmpdir() / "papers"
+    with patched(FakeNet(tiny=("blocked.example",))):
+        code, _, err = run("fetch", d, "Mechler2002", "--papers", papers)
+    check(code == 3 and "not a PDF (blocked?)" in err, (code, err))
+    check(not list(papers.glob("*")), [p.name for p in papers.glob("*")])
+    check(table_rows(d / "to_fetch.md")[0][0] == "Mechler2002", "listed for the owner")
+
+
+@test
+def fetch_europe_pmc_full_text():
+    d = folder_with([cand("Mechler2002", oa_pdf="https://blocked.example/x.pdf", pmcid="PMC2915829")])
+    papers = tmpdir() / "papers"
+    with patched(FakeNet(html=("blocked.example",))) as net:
+        code, out, _ = run("fetch", d, "Mechler2002", "--papers", papers)
+    check(code == 0 and out.splitlines()[0] == str(papers / "Mechler2002.txt") and "europe pmc" in out, (code, out))
+    check(any(u == lit.EPMC_URL.format("PMC2915829") for u in net.urls), net.urls)
+    check((papers / "Mechler2002.xml").read_bytes().startswith(b"<?xml"), "xml saved")
+    txt = (papers / "Mechler2002.txt").read_text()
+    check("=== section: Results / Modulation ratio ===" in txt and "=== section: Abstract ===" in txt, txt)
+    check("Wiesel1" not in txt and "Wiesel TN" not in txt and "Wiesel<" not in txt and "Wiesel1962" not in txt, "citation call-outs and references dropped")
+    check("simple | 42\ncomplex | 57" in txt, "table rows kept")
+    code, out, _ = run("quote", papers / "Mechler2002.txt", "bimodal, with a clear gap between the two groups of cells")
+    check(code == 0 and out.startswith('section "Results / Modulation ratio" | score 1.00'), (code, out))
+    code, out, _ = run("quote", papers / "Mechler2002.xml", "complex cells were defined by Hubel and Wiesel on the basis of receptive field")
+    check(code == 0 and out.startswith('section "Introduction"'), (code, out))
+
+
+@test
+def fetch_europe_pmc_id_from_openalex_and_failure_falls_through():
+    d = folder_with([cand("Mechler2002", doi="10.1016/s0042-6989(02)00025-1")])
+
+    class Net(FakeNet):
+        def __call__(self, url, *a, **k):
+            if "openalex.org/works/doi:" in url:
+                self.urls.append(url)
+                return json.dumps({"locations": [], "ids": {"pmcid": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2915829"}}).encode()
+            return super().__call__(url, *a, **k)
+
+    papers = tmpdir() / "papers"
+    with patched(Net()) as net:
+        code, out, _ = run("fetch", d, "Mechler2002", "--papers", papers)
+    check(code == 0 and "europe pmc (PMC2915829" in out, (code, out))
+    with patched(Net(fail=("europepmc",))):
+        code, _, err = run("fetch", d, "Mechler2002", "--papers", tmpdir() / "q")
+    check(code == 3 and "europe pmc PMC2915829" in err and len(table_rows(d / "to_fetch.md")) == 1, (code, err))
+
+
+@test
+def devonthink_names_give_author_and_year():
+    f = lit.split_dt_name
+    check(f("Target-Specific Properties of Thalamocortical Synapses - Kloc & Maffei (2014)") == ("Target-Specific Properties of Thalamocortical Synapses", ["Kloc", "Maffei"], 2014), "two authors")
+    check(f("Orientation selectivity - A simulation study - Dictus et al. (2026)") == ("Orientation selectivity - A simulation study", ["Dictus"], 2026), "et al., dash in title")
+    check(f("Synaptic Integration - Hirsch, Alonso, Reid & Martinez (1998)")[1] == ["Hirsch", "Alonso", "Reid", "Martinez"], "list")
+    check(f("Development of maps \u2014 Antol\u00edk & Bednar (2011)")[1:] == (["Antol\u00edk", "Bednar"], 2011), "em dash")
+    check(f("Pocket Neurology") == ("Pocket Neurology", [], None) and f("Billeh 2020 \u2014 reading map")[1] == [], "no pattern")
+    r = lit.norm_devonthink({"name": "Mapping thalamic innervation to L2-3 neurons - Balcioglu et al. (2023).pdf", "path": "/x.pdf", "uuid": "U", "url": "u", "doi": "10.1/x"})
+    check(r["title"] == "Mapping thalamic innervation to L2-3 neurons" and r["authors"] == ["Balcioglu"] and r["year"] == 2023, r)
+    res = lit.merge_records([], [r])
+    check(res[0][0]["key"] == "Balcioglu2023", res[0][0]["key"])
+
+
+@test
+def keys_without_authors_use_openalex_then_title_never_nd():
+    class Net(FakeNet):
+        def __call__(self, url, *a, **k):
+            if "openalex.org/works/doi:10.1/known" in url:
+                return json.dumps({"publication_year": 2020, "authorships": [{"author": {"display_name": "Ana Zeta"}}]}).encode()
+            return super().__call__(url, *a, **k)
+
+    known = lit.mkrec(title="Thalamic activation of the visual cortex", doi="10.1/known")
+    unknown = lit.mkrec(title="Thalamic activation of the visual cortex", doi="10.1/unknown")
+    book = lit.mkrec(title="Pocket Neurology")
+    with patched(Net()):
+        keys = [r["key"] for r, _ in lit.merge_records([], [known, unknown, book])]
+    check(keys == ["Zeta2020", "Thalamic" + "NoYear", "PocketNoYear"], keys)
+    check(known["authors"] == ["Zeta, Ana"] and known["year"] == 2020, known)
+    with patched(Net(fail=("openalex",))):
+        check(lit.merge_records([], [lit.mkrec(title="Target specific", doi="10.1/x", year=2014)])[0][0]["key"] == "Target2014", "title word with year when OpenAlex is down")
+
+
+@test
+def screen_in_bulk_from_tsv_and_rest():
+    d = new_folder()
+    with patched(FakeNet()):
+        run("search", d, "pubmed", "q")
+        run("search", d, "openalex", "q")
+    keys = [c["key"] for c in lit.load_candidates(d)]
+    check(len(keys) >= 4, keys)
+    tsv = tmpdir() / "decisions.tsv"
+    tsv.write_text(f"key\tstatus\treason\n# comment\n{keys[0]}\tin\tcat V1 bimodality\n\n{keys[1]}\tout\toff topic\nNobody1999\tin\tx\n{keys[2]}\tmaybe\twhy\n")
+    code, out, err = run("screen", d, "--from", tsv)
+    st = {c["key"]: (c["status"], c["reason"]) for c in lit.load_candidates(d)}
+    check(code == 1 and "Nobody1999" in err and "maybe" in err, (code, err))
+    check(st[keys[0]] == ("in", "cat V1 bimodality") and st[keys[1]] == ("out", "off topic") and st[keys[2]][0] == "new", st)
+    code, out, _ = run("screen", d, "--rest", "out", "not about TC input")
+    st = {c["key"]: (c["status"], c["reason"]) for c in lit.load_candidates(d)}
+    check(code == 0 and st[keys[0]][0] == "in" and st[keys[1]] == ("out", "off topic"), st)
+    check(all(st[k] == ("out", "not about TC input") for k in keys[2:]), st)
+    check(f"{len(keys) - 2} out" in out, out)
+    rows = table_rows(d / "search_log.md")
+    check([r[2] for r in rows[-2:]] == ["screen", "screen"] and "not about TC input" in rows[-1][7] and "1 in, 1 out" in rows[-2][7], rows[-2:])
+    check(run("screen", d, "--rest", "maybe", "x")[0] != 0 and run("screen", d, "Mechler2002")[0] == 1, "bad arguments refused")
+
+
+class ZeroHitNet(FakeNet):
+    def __call__(self, url, *a, **k):
+        if "esearch" in url:
+            self.urls.append(url)
+            return json.dumps({"esearchresult": {"count": "0", "idlist": []}}).encode()
+        return super().__call__(url, *a, **k)
+
+
+@test
+def pubmed_zero_hits_on_a_sentence_prints_a_hint():
+    d = new_folder()
+    with patched(ZeroHitNet()):
+        code, _, err = run("search", d, "pubmed", "thalamocortical synapses NMDA AMPA ratio mouse visual cortex")
+        check(code == 0 and "PubMed ANDs every word" in err and "AND NMDA AND layer 2/3" in err, (code, err))
+        check("PubMed ANDs every word" in table_rows(d / "search_log.md")[0][7], "hint logged")
+        for q in ("thalamocortical AND NMDA AND layer 2/3 AND mouse AND cortex", "thalamocortical NMDA mouse cortex"):
+            check("hint" not in run("search", d, "pubmed", q)[2], q)
+    with patched(FakeNet()):
+        check("hint" not in run("search", d, "pubmed", "one two three four five six")[2], "no hint when there are hits")
+
+
+@test
+def s2_429_without_key_says_what_to_do():
+    d = new_folder()
+    real_open, real_sleep = lit.urllib.request.urlopen, lit.time.sleep
+
+    def fake_open(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many", {}, None)
+
+    lit.urllib.request.urlopen, lit.time.sleep = fake_open, lambda s: None
+    try:
+        code, _, err = run("search", d, "s2", "simple complex cells")
+    finally:
+        lit.urllib.request.urlopen, lit.time.sleep = real_open, real_sleep
+    check(code == 4 and err.count("set S2_API_KEY (free) or rely on OpenAlex") == 1, (code, err))
+    row = table_rows(d / "search_log.md")[0]
+    check(row[2] == "s2" and row[5] == "0" and "S2_API_KEY" in row[7] and lit.load_candidates(d) == [], row)
+
+    class Net(FakeNet):
+        def __call__(self, url, *a, **k):
+            if "semanticscholar" in url:
+                raise lit.NetError(f"HTTP 429 from api.semanticscholar.org ({lit.S2_HINT})")
+            return super().__call__(url, *a, **k)
+
+    with patched(Net()):
+        run("search", d, "pubmed", "q")
+        code, _, err = run("cites", d, "Mechler2002", "--refs")
+    check(code == 0 and err.count("set S2_API_KEY (free)") == 1 and "S2_API_KEY" in table_rows(d / "search_log.md")[-1][7], (code, err))
 
 
 # ---------------------------------------------------------------- live
