@@ -267,23 +267,21 @@ const kTok = (n: number) => `${Math.round(n / 1000)}k`
 const effortRank = (x: Step['effort'] | number | undefined) => (typeof x === 'string' ? EFFORTS.indexOf(x) : -1)
 
 /**
- * The effort a main-chat request goes out with: the running here step's tier effort when
- * that is below the chat's own and the chat is still small; else the chat's own. The note
- * says which, for the step's card.
+ * The effort a main-chat request goes out with: the running here step's tier effort, lower
+ * or higher than the chat's own, while the chat is still small; else the chat's own. The
+ * note says which, for the step's card.
  */
 function hereEffortFor(set: Settings, step: Step | undefined, own: Effort | number | undefined, context: number) {
   if (!step || typeof own !== 'string') return { effort: own, note: undefined }
   const want = set.tiers[step.tier].effort
-  if (effortRank(want) >= effortRank(own)) {
-    return { effort: own, note: `Runs at this chat's ${own}: the ${step.tier} tier (${want}) would not lower it.` }
-  }
+  if (want === own) return { effort: own, note: `Runs at this chat's ${own}, the ${step.tier} tier's level too.` }
   if (context > set.hereEffort.maxContext) {
     return {
       effort: own,
       note: `Kept at ${own}: this chat is at ${kTok(context)} tokens, over the ${kTok(set.hereEffort.maxContext)} limit for switching (a switch rewrites the cache).`,
     }
   }
-  return { effort: want, note: `Runs at ${want} instead of this chat's ${own}.` }
+  return { effort: want, note: `Runs at ${want} instead of this chat's ${own} (${effortRank(want) > effortRank(own) ? 'higher' : 'lower'}).` }
 }
 
 async function logSwitch($: EngineInterface, entry: EffortSwitch) {
@@ -292,7 +290,7 @@ async function logSwitch($: EngineInterface, entry: EffortSwitch) {
 }
 
 const hereEffortRule = (set: Settings) =>
-  `Before you begin a "here" step, call ${PLAN_TOOL} with start: [<id>] (in the same call as done: [<previous id>]). While it runs, the router sends this chat's requests at that tier's thinking level (${TIER_ORDER.map(t => `${t} ${set.tiers[t].effort}`).join(', ')}), never above the chat's own, and only while the chat is under ${kTok(set.hereEffort.maxContext)} tokens, since a change of level makes the API write the conversation to the cache again. Mark the step done when it is finished, so the chat returns to its own level.`
+  `Before you begin a "here" step, call ${PLAN_TOOL} with start: [<id>] (in the same call as done: [<previous id>]). While it runs, the router sends this chat's requests at that tier's thinking level (${TIER_ORDER.map(t => `${t} ${set.tiers[t].effort}`).join(', ')}), lower or higher than the chat's own, and only while the chat is under ${kTok(set.hereEffort.maxContext)} tokens, since a change of level makes the API write the conversation to the cache again. Mark the step done when it is finished, so the chat returns to its own level.`
 
 // --- Money ---------------------------------------------------------------------
 
@@ -760,7 +758,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {switchRow(
             'here-effort',
             'Adjust effort of here steps',
-            'While a here step runs, send this chat\'s requests at its tier\'s thinking level, never above the chat\'s own. A change of level makes the API write the conversation to the cache again, so only while the chat is under the limit below.',
+            'While a here step runs, send this chat\'s requests at its tier\'s thinking level, lower or higher than the chat\'s own. A change of level makes the API write the conversation to the cache again, so only while the chat is under the limit below.',
             set.hereEffort.enabled,
             () => void editHereEffort($, { enabled: !set.hereEffort.enabled }),
           )}

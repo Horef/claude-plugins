@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.15.0 (2026-11-05)
+- Here-step effort may also raise the chat's level: a started here step runs at its tier's effort, lower or higher than the chat's own (owner's request)
+
 ## 0.14.0 (2026-11-05)
 - Here-step effort, an opt-in experiment (Settings → Experiment): a started here step runs at its tier's thinking level, never above the chat's own, only while the chat is under a context limit; every change of level is logged with the cache tokens the next request wrote and read (owner's request)
 

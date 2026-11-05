@@ -4,7 +4,7 @@ import { EFFORTS, FUSION, LADDER, MODELS, PRICES, SETUP_HEAVY, TIER_ORDER } from
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.14.0'
+export const VERSION = '0.15.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
