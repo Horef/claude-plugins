@@ -276,6 +276,8 @@ const boot = async (
   const registered: Registered[] = []
   const calls: Call[] = []
   const usageFor: Record<string, unknown> = {}
+  // The effort each request went out with, after the plugin's hooks.
+  const sent: (string | number | undefined)[] = []
 
   on('command.register', () => ({ value: { command: 'router' } }))
   on('tool.register', (_, e) => {
@@ -293,7 +295,8 @@ const boot = async (
   on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
   on('agent.list', () => ({ value: agents.map(a => ({ ...a, type: 'general-purpose', status: 'running' })) }))
   on('turn.step', async function* (_, e) {
-    const x = e as { turnId: string; index: number }
+    const x = e as { turnId: string; index: number; effort?: string | number }
+    sent.push(x.effort)
     return { turnId: x.turnId, index: x.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: usageFor[x.turnId] ?? null } as never
   })
   const rows = mock.session(on)
@@ -307,14 +310,14 @@ const boot = async (
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
   // Without agentId the usage is the main chat's own.
-  const step = async (turnId: string, usage: unknown, agentId?: string) => {
+  const step = async (turnId: string, usage: unknown, agentId?: string, effort?: string) => {
     usageFor[turnId] = usage
-    const st = $.turn.step({ turnId, index: 0, model: 'x', messageCount: 1, ...(agentId ? { agentId } : {}) } as never)
+    const st = $.turn.step({ turnId, index: 0, model: 'x', messageCount: 1, ...(agentId ? { agentId } : {}), ...(effort ? { effort } : {}) } as never)
     for await (const _ of st) void _
     return st.result
   }
 
-  return { store, registered, calls, rows, step }
+  return { store, registered, calls, rows, step, sent }
 }
 
 const wheres = (r: Registered | undefined) => r?.inputSchema?.properties?.steps?.items?.properties?.where?.enum
@@ -549,4 +552,91 @@ test('a here step is a rating: the rule says so, and one rated above this chat i
   await tty.press({ key: 'where:s1' })
   expect(await tty.find({ type: 'Button', key: 'tier:s1' } as never)).toBeTruthy()
   await tty.unmount()
+})
+
+// --- Here-step effort (0.14.0, opt-in experiment) ---------------------------------
+
+const props = (r: unknown) => (r as { inputSchema?: { properties?: Record<string, unknown> } } | undefined)?.inputSchema?.properties ?? {}
+const opusUse = (context: number, cacheWrite = 0) => ({
+  model: 'claude-opus-5-5',
+  input_tokens: 10,
+  cache_creation_input_tokens: cacheWrite,
+  cache_read_input_tokens: context - cacheWrite,
+  output_tokens: 100,
+})
+
+test('here-step effort is off by default: no start field, no rule, effort untouched', async ($, on) => {
+  const { registered, rows, step, sent } = await boot($, on, [])
+  expect(props(registered.at(-1)).start).toBeUndefined()
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).not.toContain('start: [')
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'List', tier: 'light', where: 'here' }] } as never)
+  await step('m1', opusUse(10_000), undefined, 'high')
+  expect(sent.at(-1)).toBe('high')
+})
+
+test('here-step effort on: a started light step runs at low, never above the chat, only while the chat is small', async ($, on) => {
+  const { store, registered, rows, step, sent } = await boot($, on, [['settings', { hereEffort: { enabled: true, maxContext: 40_000 } }]])
+  expect(props(registered.at(-1)).start).toBeTruthy()
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('start: [')
+
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'List files', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Decide', tier: 'deep', where: 'here' },
+      { id: 's3', title: 'Survey', tier: 'standard', where: 'agent' },
+    ],
+  } as never)
+
+  // Nothing started: the chat's own effort.
+  await step('m1', opusUse(10_000), undefined, 'high')
+  expect(sent.at(-1)).toBe('high')
+
+  // s1 started: light's effort (low), and the switch is logged with the cache it cost.
+  const started = await $.tool.call({ tool: PLAN, start: ['s1'] } as never)
+  expect(String(started.result)).toContain('[s1] List files: light, here, running')
+  await step('m2', opusUse(12_000, 11_000), undefined, 'high')
+  expect(sent.at(-1)).toBe('low')
+  const log = store.get('effortLog') as { from: string; to: string; context: number; cacheWrite: number; cacheRead: number; step?: string }[]
+  expect(log.at(-1)).toMatchObject({ from: 'high', to: 'low', step: 's1', cacheWrite: 11_000, cacheRead: 1_000 })
+  // The same level again is no switch.
+  await step('m3', opusUse(13_000), undefined, 'high')
+  expect(sent.at(-1)).toBe('low')
+  expect((store.get('effortLog') as unknown[]).length).toBe(1)
+
+  // s1 done, s2 (deep, high) started: never above the chat's own level; going back up is a switch too.
+  await $.tool.call({ tool: PLAN, done: ['s1'], start: ['s2'] } as never)
+  await step('m4', opusUse(14_000), undefined, 'medium')
+  expect(sent.at(-1)).toBe('medium')
+  expect((store.get('effortLog') as { to: string }[]).at(-1)?.to).toBe('medium')
+
+  // A subagent's request is not touched.
+  await step('a1', { ...opusUse(5_000), model: 'claude-sonnet-5-5' }, 'x1', 'medium')
+  expect(sent.at(-1)).toBe('medium')
+})
+
+test('here-step effort on: a chat over the limit keeps its level, and the card says why', async ($, on) => {
+  const { step, sent } = await boot($, on, [['settings', { hereEffort: { enabled: true, maxContext: 40_000 } }]])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'List files', tier: 'light', where: 'here' }] } as never)
+  await step('m1', opusUse(90_000), undefined, 'high')
+  await $.tool.call({ tool: PLAN, start: ['s1'] } as never)
+  await step('m2', opusUse(91_000), undefined, 'high')
+  expect(sent.at(-1)).toBe('high')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find({ type: 'Text', text: /^Kept at high: this chat is at 9\dk tokens, over the 40k limit/ } as never)).toBeTruthy()
+  await pane.unmount()
+})
+
+test('here-step effort: the Settings switch turns it on, adds start to the plan tool, and shows what switches cost', async ($, on) => {
+  const { store, registered } = await boot($, on, [['effortLog', [{ at: '2026-11-05T10:00:00Z', from: 'high', to: 'low', context: 20_000, cacheWrite: 19_000, cacheRead: 1_000 }]]])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find({ type: 'Text', text: /^1 switch so far: 19k tokens written to the cache, 1k read/ } as never)).toBeTruthy()
+  await pane.press({ key: 'here-effort' })
+  expect((store.get('settings') as { hereEffort: { enabled: boolean } }).hereEffort.enabled).toBe(true)
+  expect(props(registered.at(-1)).start).toBeTruthy()
+  await pane.unmount()
 })
