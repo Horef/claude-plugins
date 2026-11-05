@@ -49,6 +49,16 @@ Off by default; while off, nothing in the rules, the plan tool or the pane chang
 - Helper steps have no Claude subagent usage, so they show no cost and are not counted in the subagent totals. The main chat marks them done itself.
 - With helpers off, a `helper` step in a plan is treated as a subagent step.
 
+## Here-step effort (experiment, off by default)
+
+A here step runs on this chat's model, which a plan cannot change mid-chat. This experiment changes the chat's thinking level instead.
+
+- **Turn it on**: Settings → Experiment → "Adjust effort of here steps". The plan tool then takes `start: [<id>]`, and the rules ask the agent to call it before each here step.
+- **What it does**: while a started here step runs, each request of this chat goes out at that step's tier's thinking level (light low, standard medium by default), never above the chat's own. Marking the step done returns the chat to its own level. Subagent requests are never touched.
+- **Why a limit**: on most setups a change of level makes the API write the whole conversation to the prompt cache again, instead of reading it. So the router switches only while the chat is under a context limit (20k, 40k by default, 80k or 150k tokens). Over the limit the step keeps the chat's level and its card says why.
+- **What it measures**: every change of level, and how many tokens the request after it wrote to the cache and read from it, remembered across chats (store key `effortLog`, last 200). Settings shows the totals. Mostly written means the switch cost a cache rewrite; mostly read means it did not. This is how to find out what a switch costs on your plan; the numbers are tokens, not your subscription's usage.
+- **Limits**: the router records the level it asked for. Where the model takes effort per message, the engine may hold a change back until your next message, so a step inside one long reply may still run at the old level. Thinking already scales with the work, so the saving is unmeasured.
+
 ## Keeping the rules in front of the model
 
 - **In every chat** the mod writes the rules into the conversation as a hidden note at the start of the first turn after it loads. It also adds them to the system prompt, but some hosts (the desktop app among them) supply their own system prompt and drop added sections without a trace, so only the note counts as delivered.

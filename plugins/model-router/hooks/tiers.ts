@@ -24,7 +24,11 @@ export const DEFAULT_SETTINGS: Settings = {
     },
     fusion: 'off',
   },
+  hereEffort: { enabled: false, maxContext: 40_000 },
 }
+
+// Context limits offered for here-step effort, in tokens.
+export const EFFORT_LIMITS = [20_000, 40_000, 80_000, 150_000]
 
 // Copilot Fusion templates (herdr-delegate) and the pinned Copilot template each goes before:
 // both draw on Copilot's quota, so after it Fusion would never be reached.
