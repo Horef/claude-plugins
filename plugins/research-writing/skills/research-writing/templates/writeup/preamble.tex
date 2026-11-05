@@ -37,3 +37,20 @@
 \usepackage[most]{tcolorbox}
 \newtcolorbox{inshort}{colback=black!4,colframe=black!4,boxrule=0pt,arc=0pt,left=6pt,right=6pt,top=4pt,bottom=4pt,
   before upper={\textbf{In short.}\enskip}}
+
+% \lead{The point.} a bold run-in head that opens a paragraph and names its point
+\newcommand{\lead}[1]{\textbf{#1}\enspace}
+
+% \supplementary: after \printbibliography; a new page titled Supplementary Information, sections, figures and
+% tables numbered S1, S2 (wr.py check exempts figures after it from the near-first-citation rule)
+\makeatletter
+\newcommand{\supplementary}{%
+  \clearpage
+  \begin{center}{\LARGE\bfseries Supplementary Information}\end{center}\vspace{1em}
+  \setcounter{section}{0}\setcounter{figure}{0}\setcounter{table}{0}
+  \renewcommand{\thesection}{S\arabic{section}}\renewcommand{\thefigure}{S\arabic{figure}}%
+  \renewcommand{\thetable}{S\arabic{table}}%
+  \renewcommand{\theHsection}{S\arabic{section}}\renewcommand{\theHfigure}{S\arabic{figure}}%
+  \renewcommand{\theHtable}{S\arabic{table}}%
+}
+\makeatother
