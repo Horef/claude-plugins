@@ -9,7 +9,7 @@ Standard library only; needs latexmk (with lualatex or pdflatex, and biber) for 
                                       citations, overfull boxes, missing files
   wr.py pages DIR [--first N --last M --dpi 60]   PNG per page in DIR/build/pages, plus a contact sheet when Pillow is there
   wr.py check DIR                     the mechanical checks of the skill (exit 1 when a problem is found)
-  wr.py readers DIR --round N [--roles pi,reviewer,newcomer,outsider]   write one brief per fresh reader into review/round-N/
+  wr.py readers DIR --round N [--roles pi,reviewer,newcomer,outsider,editor]   write one brief per fresh reader into review/round-N/
   wr.py status DIR                    claims, figures and the reader questions still open
 
 Exit codes: 0 ok, 1 problems found, 2 a tool is missing (not checked: never report that as clean).
@@ -29,7 +29,7 @@ TEMPLATE = HERE.parent / "templates" / "writeup"
 
 # ------------------------------------------------------------------ init
 def cmd_init(a) -> int:
-    d = Path(a.dir)
+    d = Path(a.dir).resolve()
     if (d / "main.tex").exists():
         print(f"{d}/main.tex exists; not overwriting")
         return 1
@@ -58,7 +58,7 @@ def _engine() -> str | None:
 
 
 def cmd_build(a) -> int:
-    d = Path(a.dir)
+    d = Path(a.dir).resolve()
     eng = _engine()
     if not shutil.which("latexmk") or eng is None:
         print("latexmk or a LaTeX engine is missing: not built")
@@ -108,7 +108,7 @@ def _log_problems(log: str) -> list[str]:
 
 # ------------------------------------------------------------------ pages
 def cmd_pages(a) -> int:
-    d = Path(a.dir)
+    d = Path(a.dir).resolve()
     pdf = d / "build" / "main.pdf"
     if not pdf.exists():
         print("no build/main.pdf: run build first")
@@ -241,9 +241,12 @@ def check(d: Path) -> list[str]:
         for m in re.finditer(r"\\wrfigcite\{([^}]+)\}\{(\d+)\}", a):
             for name in m.group(1).split(","):
                 first.setdefault(name.strip(), int(m.group(2)))
+        # figures after \\supplementary or \\appendix sit away from their pointer by design
+        cut = min([i for i in (body.find("\\supplementary"), body.find("\\appendix")) if i >= 0], default=len(body))
+        late = {lab for pos, f in figs if pos > cut for lab in re.findall(r"\\label\{(fig:[^}]+)\}", f)}
         for m in re.finditer(r"\\newlabel\{(fig:[^}]+)\}\{\{[^}]*\}\{(\d+)\}", a):
             name, page = m.group(1), int(m.group(2))
-            if name.startswith("fig:S"):  # a supplementary or appendix figure sits away from its pointer by design
+            if name.startswith("fig:S") or name in late:
                 continue
             if name in first and (page < first[name] or page > first[name] + 1):
                 probs.append(f"{name}: on page {page}, first cited on page {first[name]} (keep it on the same page or "
@@ -282,7 +285,7 @@ def check(d: Path) -> list[str]:
 
 
 def cmd_check(a) -> int:
-    d = Path(a.dir)
+    d = Path(a.dir).resolve()
     if not (d / "main.tex").exists():
         print(f"no {d}/main.tex")
         return 1
@@ -304,6 +307,9 @@ ROLES = {
     "newcomer": "a capable student new to this sub-field: knows general neuroscience and maths, not this project, its "
                 "jargon or its history; wants to understand every step",
     "outsider": "a scientist from a neighbouring field: reads for the main idea and whether the story holds together",
+    "editor": "a scientific editor who reads for the prose, not the science: marks every sentence that is a fragment, "
+              "reads as notes or as an instruction to the writer, is ambiguous, refers to something it does not name "
+              "('the published model': whose?), or does not follow from the one before, and asks the question it raises",
 }
 
 BRIEF = """# Reader brief: {role} (round {n})
@@ -327,7 +333,7 @@ Do not open any other file of the project: the point is to see only what the rea
 
 
 def cmd_readers(a) -> int:
-    d = Path(a.dir)
+    d = Path(a.dir).resolve()
     pdf = (d / "build" / "main.pdf").resolve()
     if not pdf.exists():
         print("no build/main.pdf: build first, readers read the rendered document")
@@ -346,7 +352,7 @@ def cmd_readers(a) -> int:
 
 # ------------------------------------------------------------------ status
 def cmd_status(a) -> int:
-    d = Path(a.dir)
+    d = Path(a.dir).resolve()
     led = _ledger(d)
     st = {}
     for c in led["claims"].values():
@@ -374,7 +380,7 @@ def main(argv=None) -> int:
     s.add_argument("--dpi", type=int, default=60)
     s = sub.add_parser("check"); s.add_argument("dir")
     s = sub.add_parser("readers"); s.add_argument("dir"); s.add_argument("--round", type=int, required=True)
-    s.add_argument("--roles", default="pi,reviewer,newcomer,outsider")
+    s.add_argument("--roles", default="pi,reviewer,newcomer,outsider,editor")
     s = sub.add_parser("status"); s.add_argument("dir")
     a = p.parse_args(argv)
     return {"init": cmd_init, "build": cmd_build, "pages": cmd_pages, "check": cmd_check, "readers": cmd_readers,
