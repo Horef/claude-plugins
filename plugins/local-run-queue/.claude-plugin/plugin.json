@@ -1,0 +1,6 @@
+{
+  "name": "local-run-queue",
+  "version": "0.1.0",
+  "description": "Run many local simulation or analysis jobs in parallel under a private-memory budget: measure each job's whole process tree (macOS footprint, Linux PSS; never RSS), admit jobs by estimates taken from measured peaks, stop and requeue the newest job above a kill line, chain dependent jobs, survive restarts and the launching agent's exit, and change budget, priorities or estimates while it runs. Use when a batch of local runs (sweeps, calibrations, simulations) must fit a machine's memory, when parallel runs need a memory estimate, or when a previous queue over- or under-used memory.",
+  "license": "MIT"
+}
