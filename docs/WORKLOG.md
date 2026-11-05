@@ -2,6 +2,16 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-05 - model-router 0.15.0: here-step effort may raise the level
+
+- Owner's request: let here-step effort raise the chat's level too, not only lower it.
+- model-router 0.15.0: a started here step runs at its tier's effort, lower or higher than the chat's own (a deep step in an Opus-on-medium chat runs at high); the context limit applies both ways. Test changed in its own commit first and failed on 0.14.0.
+
+| Verification command | Result |
+|---|---|
+| `claude plugin test plugins/model-router` | 15 pass |
+| `loop.py check --base origin/main`; `docmap.py check` | 0 errors |
+
 ## 2026-11-05 - model-router 0.14.0: here-step effort experiment
 
 - Owner's idea: a here step cannot change the chat's model, but the chat's effort can change per request. Built as an opt-in experiment because the cost of a change is uncertain: the mod API's docs (Claude Code 2.1.318) say a level that rides as a setting of the whole request makes the next request write the conversation to the cache again, and the owner found conflicting reports online, for a subscription in particular.
