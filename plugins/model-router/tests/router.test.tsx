@@ -575,7 +575,7 @@ test('here-step effort is off by default: no start field, no rule, effort untouc
   expect(sent.at(-1)).toBe('high')
 })
 
-test('here-step effort on: a started light step runs at low, never above the chat, only while the chat is small', async ($, on) => {
+test('here-step effort on: a started step runs at its tier\'s level, lower or higher than the chat\'s, only while the chat is small', async ($, on) => {
   const { store, registered, rows, step, sent } = await boot($, on, [['settings', { hereEffort: { enabled: true, maxContext: 40_000 } }]])
   expect(props(registered.at(-1)).start).toBeTruthy()
   await $.turn.start({ text: 'first', turnId: 't0' })
@@ -606,11 +606,16 @@ test('here-step effort on: a started light step runs at low, never above the cha
   expect(sent.at(-1)).toBe('low')
   expect((store.get('effortLog') as unknown[]).length).toBe(1)
 
-  // s1 done, s2 (deep, high) started: never above the chat's own level; going back up is a switch too.
+  // s1 done, s2 (deep, high) started in a chat on medium: the level goes up to the tier's, and that is a switch too.
   await $.tool.call({ tool: PLAN, done: ['s1'], start: ['s2'] } as never)
   await step('m4', opusUse(14_000), undefined, 'medium')
+  expect(sent.at(-1)).toBe('high')
+  expect((store.get('effortLog') as { to: string }[]).at(-1)?.to).toBe('high')
+
+  // s2 done, nothing running: back to the chat's own level.
+  await $.tool.call({ tool: PLAN, done: ['s2'] } as never)
+  await step('m5', opusUse(15_000), undefined, 'medium')
   expect(sent.at(-1)).toBe('medium')
-  expect((store.get('effortLog') as { to: string }[]).at(-1)?.to).toBe('medium')
 
   // A subagent's request is not touched.
   await step('a1', { ...opusUse(5_000), model: 'claude-sonnet-5-5' }, 'x1', 'medium')
