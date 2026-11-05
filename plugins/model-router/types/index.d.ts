@@ -34,7 +34,7 @@ export type Settings = {
   /** Minimal view: the pane draws only steps and their settings, with no explanatory text. */
   compact: boolean
   helpers: HelperSettings
-  /** Opt-in experiment: run a started here step at its tier's effort, never above the chat's own. */
+  /** Opt-in experiment: run a started here step at its tier's effort, lower or higher than the chat's own. */
   hereEffort: HereEffortSettings
 }
 
