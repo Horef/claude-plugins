@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, HistoryEntry, Lifetime, Settings, Step, Tier, Totals, Usage, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HistoryEntry, Lifetime, Settings, Step, Tier, Totals, Usage, Where } from '../types'
 import {
   EMPTY_USAGE,
   PANE,
@@ -31,7 +31,7 @@ import {
   suggestions,
 } from './logic'
 import type { Suggestion } from './logic'
-import { DEFAULT_SETTINGS, EFFORTS, MODELS, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
+import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
 
 // --- State: the session's (atoms) and what is remembered across sessions ($.store) --
 
@@ -53,8 +53,11 @@ const chatTotals = atom({ plugin: 'model-router', key: 'chatTotals' } as const, 
 const planBase = atom({ plugin: 'model-router', key: 'planBase' } as const, { mainCost: 0 })
 const costView = atom({ plugin: 'model-router', key: 'costView' } as const, 'plan')
 const lifetime = atom({ plugin: 'model-router', key: 'lifetime' } as const, newLifetime())
+const effortLog = atom({ plugin: 'model-router', key: 'effortLog' } as const, [])
+const lastMain = atom({ plugin: 'model-router', key: 'lastMain' } as const, { context: 0 })
 
-const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime' }
+const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog' }
+const EFFORT_LOG_CAP = 200
 const HISTORY_CAP = 500
 
 // What the router saw in this load, for the plan tool's status check.
@@ -73,7 +76,10 @@ async function loadRemembered($: EngineInterface) {
       ...(stored?.helpers ?? {}),
       tiers: { ...DEFAULT_SETTINGS.helpers.tiers, ...(stored?.helpers?.tiers ?? {}) },
     },
+    hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
   }))
+  const switches = (await $.store.get(STORE.effortLog)) as EffortSwitch[] | undefined
+  await update($, effortLog, () => (Array.isArray(switches) ? switches : []))
   await update($, autoApprove, () => false)
   if ((await $.store.get(STORE.auto)) === true) await update($, autoApprove, () => true)
   await update($, alwaysPlan, () => false)
@@ -179,7 +185,12 @@ async function applySuggestion($: EngineInterface, s: Suggestion) {
  * (the engine's documented behaviour). The tool call also stores 'helper' as 'agent' while off.
  */
 async function registerPlanTool($: EngineInterface) {
-  const wheres = (await read($, settings)).helpers.enabled ? ['agent', 'here', 'helper'] : ['agent', 'here']
+  const set = await read($, settings)
+  const wheres = set.helpers.enabled ? ['agent', 'here', 'helper'] : ['agent', 'here']
+  // Offered only while here-step effort is on, so with it off the schema is as before.
+  const start = set.hereEffort.enabled
+    ? { start: { type: 'array', items: { type: 'string' }, description: 'Here step ids you are starting now: the router runs this chat at their tier\'s effort' } }
+    : {}
   await $.tool.register({
     name: 'plan',
     description:
@@ -205,6 +216,7 @@ async function registerPlanTool($: EngineInterface) {
           },
         },
         done: { type: 'array', items: { type: 'string' }, description: 'Step ids now done' },
+        ...start,
         status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
       },
     },
@@ -231,6 +243,56 @@ async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers'
     // Keep the first registration; see registerPlanTool.
   }
 }
+
+async function editHereEffort($: EngineInterface, patch: Partial<Settings['hereEffort']>) {
+  const wasOn = (await read($, settings)).hereEffort.enabled
+  await editSettings($, s => ({ ...s, hereEffort: { ...s.hereEffort, ...patch } }))
+  const after = (await read($, settings)).hereEffort
+  if (after.enabled === wasOn) return
+  // The rules sit in the chat once; the change reaches it as a router note.
+  const note = after.enabled
+    ? `Here-step effort is now on. ${hereEffortRule(await read($, settings))}`
+    : 'Here-step effort is now off: no need to call the plan tool with start any more.'
+  await update($, notes, n => [...n, note])
+  try {
+    await registerPlanTool($)
+  } catch {
+    // Keep the first registration; see registerPlanTool.
+  }
+}
+
+// --- Here-step effort (opt-in experiment) ----------------------------------------
+
+const kTok = (n: number) => `${Math.round(n / 1000)}k`
+const effortRank = (x: Step['effort'] | number | undefined) => (typeof x === 'string' ? EFFORTS.indexOf(x) : -1)
+
+/**
+ * The effort a main-chat request goes out with: the running here step's tier effort when
+ * that is below the chat's own and the chat is still small; else the chat's own. The note
+ * says which, for the step's card.
+ */
+function hereEffortFor(set: Settings, step: Step | undefined, own: Effort | number | undefined, context: number) {
+  if (!step || typeof own !== 'string') return { effort: own, note: undefined }
+  const want = set.tiers[step.tier].effort
+  if (effortRank(want) >= effortRank(own)) {
+    return { effort: own, note: `Runs at this chat's ${own}: the ${step.tier} tier (${want}) would not lower it.` }
+  }
+  if (context > set.hereEffort.maxContext) {
+    return {
+      effort: own,
+      note: `Kept at ${own}: this chat is at ${kTok(context)} tokens, over the ${kTok(set.hereEffort.maxContext)} limit for switching (a switch rewrites the cache).`,
+    }
+  }
+  return { effort: want, note: `Runs at ${want} instead of this chat's ${own}.` }
+}
+
+async function logSwitch($: EngineInterface, entry: EffortSwitch) {
+  await update($, effortLog, l => [...l, entry].slice(-EFFORT_LOG_CAP))
+  await $.store.set(STORE.effortLog, await read($, effortLog))
+}
+
+const hereEffortRule = (set: Settings) =>
+  `Before you begin a "here" step, call ${PLAN_TOOL} with start: [<id>] (in the same call as done: [<previous id>]). While it runs, the router sends this chat's requests at that tier's thinking level (${TIER_ORDER.map(t => `${t} ${set.tiers[t].effort}`).join(', ')}), never above the chat's own, and only while the chat is under ${kTok(set.hereEffort.maxContext)} tokens, since a change of level makes the API write the conversation to the cache again. Mark the step done when it is finished, so the chat returns to its own level.`
 
 // --- Money ---------------------------------------------------------------------
 
@@ -297,7 +359,9 @@ The user installed this mod so that each step of a task runs on the cheapest mod
 ${tiers}
 3. where = "here" for steps that need this conversation's accumulated context or back-and-forth with the user, and for small steps (under ~5 tool calls: a subagent costs ~15-40k tokens just to start). where = "agent" for self-contained steps, above all ones that read a lot. A "here" step runs on this chat's own model and thinking level, which no tier can change: still give it the tier its work needs, since that is the default if the user sends it to a subagent, and the router flags a here step rated above this chat's model. Do not mark a step "light" to mean "do it quickly here".
 4. Delegate an "agent" step with the Agent tool, its description starting with "[<step id>]". Do not set model or effort: the router sets them from the plan. Never use subagent_type "fork" for a routed step, since a fork ignores the model. Write a self-contained brief: goal, files, what to return. Light-tier briefs ask for a findings list, not fixes; spot-check surprising findings. If a light result is weak, say so: the user can rerun the step one rung higher from the pane.
-5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them.${helperRule}${skillRule}`
+5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them.${helperRule}${skillRule}${
+    set.hereEffort.enabled ? `\n\nHere-step effort (an experiment the user turned on): ${hereEffortRule(set)}` : ''
+  }`
 }
 
 const REMINDER = `Model router: "Always plan" is on. Before any tool call for this message, call ${PLAN_TOOL} with the steps (one step is fine), unless the current approved plan already covers it. Answer without a plan only if no tools are needed.`
@@ -313,6 +377,7 @@ type PlanInput = {
   status?: boolean
   steps?: { id: string; title: string; tier: Tier; where?: Where }[]
   done?: string[]
+  start?: string[]
 }
 
 // Run = go with the plan as it stands in the pane (tier, where, model, thinking edits
@@ -362,6 +427,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const chat = await read($, chatTotals)
   const base = await read($, planBase)
   const life = await read($, lifetime)
+  const switches = await read($, effortLog)
   // Minimal view: only the steps and their settings, no explanatory text, so a long plan fits.
   const mini = set.compact
   const hint = mini ? undefined : modelHint(list, m.model)
@@ -609,6 +675,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             {`Rated ${s.tier} (${hereNeeds(s, set, m.model)}), but this chat runs on ${m.model}: send it to a subagent, or switch this chat's model.`}
           </Text>
         )}
+        {s.where === 'here' && s.effortNote && set.hereEffort.enabled && (
+          <Text color={s.effortNote.startsWith('Kept') ? 'warning' : undefined} dimColor={!s.effortNote.startsWith('Kept')} size="footnote" wrap="wrap">
+            {s.effortNote}
+          </Text>
+        )}
         {s.where === 'helper' && (
           <Text dimColor size="footnote" wrap="wrap">
             {`Runs on another subscription's agent (${helperOrder(set, s.tier)}); a subagent if none is usable.`}
@@ -683,6 +754,31 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {switchRow('auto', 'Auto-approve', 'Run new plans without asking first.', auto, () => void setAuto($, !auto))}
           {switchRow('open-pane', 'Open pane on start', 'Open this pane in every new chat.', set.openPane, () =>
             void editSettings($, s => ({ ...s, openPane: !s.openPane })),
+          )}
+
+          {group('Experiment', 'Here steps run on this chat\'s model; this tries lowering its thinking level for them instead.')}
+          {switchRow(
+            'here-effort',
+            'Adjust effort of here steps',
+            'While a here step runs, send this chat\'s requests at its tier\'s thinking level, never above the chat\'s own. A change of level makes the API write the conversation to the cache again, so only while the chat is under the limit below.',
+            set.hereEffort.enabled,
+            () => void editHereEffort($, { enabled: !set.hereEffort.enabled }),
+          )}
+          {set.hereEffort.enabled && (
+            <Box key="here-effort-limit-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm">
+              <Text dimColor size="footnote">Switch only while the chat is under</Text>
+              {pick(
+                'here-effort-limit',
+                String(set.hereEffort.maxContext),
+                EFFORT_LIMITS.map(n => ({ value: String(n), label: `${kTok(n)} tokens` })),
+                v => void editHereEffort($, { maxContext: Number(v) }),
+              )}
+            </Box>
+          )}
+          {switches.length > 0 && (
+            <Text dimColor size="footnote" wrap="wrap">
+              {`${switches.length} switch${switches.length === 1 ? '' : 'es'} so far: ${kTok(switches.reduce((n, x) => n + x.cacheWrite, 0))} tokens written to the cache, ${kTok(switches.reduce((n, x) => n + x.cacheRead, 0))} read on the request after each switch. Mostly written means the switch cost a cache rewrite.`}
+            </Text>
           )}
 
           {group('Tiers', `Model and thinking level for steps sent to a subagent. "Here" steps always use this chat's model.${tty ? ' ⇄ buttons: Enter picks the next option.' : ''}`)}
@@ -926,6 +1022,16 @@ export const register: Register = on => {
     if (input.done) {
       await update($, steps, list => list.map(s => (input.done!.includes(s.id) ? { ...s, status: 'done' } : s)))
     }
+    if (input.start?.length) {
+      // One here step runs at a time: starting one sets an unfinished other back to planned.
+      await update($, steps, list =>
+        list.map(s =>
+          input.start!.includes(s.id) && s.status !== 'done'
+            ? { ...s, status: 'running' }
+            : s.where === 'here' && s.status === 'running' ? { ...s, status: 'planned' } : s,
+        ),
+      )
+    }
     await refreshStatus($)
     if (!input.steps) return withNotes(planText(await read($, steps), set, (await read($, main)).model))
 
@@ -1036,8 +1142,39 @@ export const register: Register = on => {
 
   // Money is counted per model response, as it arrives, so every view moves together.
   on('turn.step', async function* ($, e, next) {
-    const r = yield* next(e)
-    if (r.usage) await account($, usageOf(r.usage), r.usage.model, e.agentId)
+    if (e.agentId) {
+      const r = yield* next(e)
+      if (r.usage) await account($, usageOf(r.usage), r.usage.model, e.agentId)
+      return r
+    }
+    // The main chat: with here-step effort on, a started here step may lower the level.
+    const set = await read($, settings)
+    const before = await read($, lastMain)
+    let effort = e.effort
+    let step: Step | undefined
+    if (set.hereEffort.enabled) {
+      step = (await read($, steps)).filter(s => s.where === 'here' && s.status === 'running').at(-1)
+      const chosen = hereEffortFor(set, step, e.effort, before.context)
+      effort = chosen.effort
+      if (step && chosen.note !== step.effortNote) await editStep($, step.id, s => ({ ...s, effortNote: chosen.note }))
+    }
+    const r = yield* next(effort === e.effort ? e : { ...e, effort })
+    if (!r.usage) return r
+    const used = usageOf(r.usage)
+    await account($, used, r.usage.model, undefined)
+    // Evidence for the experiment: what the request after a change of level read and wrote.
+    if (set.hereEffort.enabled && before.effort !== undefined && effort !== undefined && effort !== before.effort) {
+      await logSwitch($, {
+        at: new Date().toISOString(),
+        from: before.effort,
+        to: effort,
+        ...(step ? { step: step.id } : {}),
+        context: before.context,
+        cacheWrite: used.cacheWrite,
+        cacheRead: used.cacheRead,
+      })
+    }
+    await update($, lastMain, () => ({ effort, context: used.input + used.cacheWrite + used.cacheRead }))
 
     return r
   })

@@ -2,6 +2,19 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-05 - model-router 0.14.0: here-step effort experiment
+
+- Owner's idea: a here step cannot change the chat's model, but the chat's effort can change per request. Built as an opt-in experiment because the cost of a change is uncertain: the mod API's docs (Claude Code 2.1.318) say a level that rides as a setting of the whole request makes the next request write the conversation to the cache again, and the owner found conflicting reports online, for a subscription in particular.
+- model-router 0.14.0: Settings → Experiment → "Adjust effort of here steps" (off by default; off leaves the plan tool and rules as they were). On: the plan tool takes `start`, a started here step's requests go out at its tier's effort, never above the chat's own, only under a context limit (40k by default); the card says what was done and why; each change of level is logged with the next request's cache write and read tokens (store `effortLog`), totals in Settings.
+- Tests were committed first (3 of 15 failed on 0.13.1). Type-check against the 2.1.318 API types: no new errors beyond the ones `main` already shows in that ad-hoc setup.
+- Not verified: a real chat with the switch on; whether a switch rewrites the cache on the owner's subscription (that is what the log is for).
+
+| Verification command | Result |
+|---|---|
+| `claude plugin test plugins/model-router` | 15 pass (4 new) |
+| `claude plugin validate plugins/model-router` | pass (existing "no author" warning) |
+| `loop.py check --base origin/main`; `docmap.py check` | 0 errors |
+
 ## 2026-11-04 - research-writing 0.1.0: write-ups and paper drafts as an argument
 
 Owner request: write-ups read like lab reports (order of the work, erratic figure placement, questions left open). Built the skill, then piloted it before release.

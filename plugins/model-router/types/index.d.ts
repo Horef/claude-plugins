@@ -34,6 +34,27 @@ export type Settings = {
   /** Minimal view: the pane draws only steps and their settings, with no explanatory text. */
   compact: boolean
   helpers: HelperSettings
+  /** Opt-in experiment: run a started here step at its tier's effort, never above the chat's own. */
+  hereEffort: HereEffortSettings
+}
+
+export type HereEffortSettings = {
+  enabled: boolean
+  /** Context size, in tokens, above which the chat keeps its level: a switch rewrites the cache. */
+  maxContext: number
+}
+
+/** One change of the main chat's effort level, and what the request after it read and wrote to the cache. */
+export type EffortSwitch = {
+  at: string
+  from: Effort | number
+  to: Effort | number
+  /** The here step that was running, if any. */
+  step?: string
+  /** The chat's context, in tokens, before the switch. */
+  context: number
+  cacheWrite: number
+  cacheRead: number
 }
 
 export type Step = {
@@ -57,6 +78,8 @@ export type Step = {
   reruns: number
   /** The history entry of the step's latest finished run. */
   historyKey?: string
+  /** Here-step effort: what the router did with this step's effort, for its card. */
+  effortNote?: string
 }
 
 /** Money counted over some span: the main chat, the subagents, and what the
@@ -107,6 +130,10 @@ declare module 'claude-code' {
       costView: CostView
       lifetime: Lifetime
       delivery: { via?: 'system' | 'message'; inChat: boolean; planDue: boolean }
+      /** Every switch of the main chat's effort seen with here-step effort on; remembered across chats. */
+      effortLog: EffortSwitch[]
+      /** The main chat's last request: the effort it went out with and its context in tokens. */
+      lastMain: { effort?: Effort | number; context: number }
     }
   }
 }
