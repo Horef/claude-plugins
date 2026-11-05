@@ -1,5 +1,5 @@
 # Status
-Updated 2026-11-04. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-05. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -17,6 +17,7 @@ Updated 2026-11-04. Snapshot only - overwrite each session; history is in `docs/
 | Genome docs check | `docmap.py check` → 0 errors, 2026-10-30 |
 | session-status-line 0.3.0 (mod): validates, test passes, genome and docs checks clean | `claude plugin validate` and `claude plugin test plugins/session-status-line` → pass; `loop.py check` → 0 errors, 2026-10-31. Seen working in the desktop app by the owner (screenshots, 2026-10-11) |
 | model-router 0.11.0 (mod): minimal view and Settings restyle, tests pass, genome and docs checks clean | `claude plugin test plugins/model-router` → 9 pass; `loop.py check` → 0 errors, 2026-11-01. Layout not yet seen in the real terminal |
+| model-router 0.14.0: here-step effort experiment, opt-in (lower the chat's effort for a started here step under a context limit; switches logged with cache tokens) | `claude plugin test plugins/model-router` → 15 pass, 2026-11-05. Not yet tried in a real chat; cache cost of a switch on the subscription unmeasured |
 | model-router 0.13.1 / model-routing 0.2.0: a here step's tier is a rating (rules, "rated" label instead of a picker, warning when rated above this chat's model) | `claude plugin test plugins/model-router` → 11 pass, 2026-11-03. Pane not yet seen in the apps; the skill's judged cases not run |
 | Copilot Fusion as an opt-in helper: herdr-delegate 0.2.0 templates, model-router 0.12.0 setting | Fusion Max one-prompt run → `syntheticModel: hydrafusion-max`; `hc run copilot-fusion-high` → "Copilot Fusion · High"; `claude plugin test plugins/model-router` → 10 pass, 2026-11-01. Quality below Max unmeasured |
 | gui-design 0.4.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py`; 0.4.0 adds 'what will vary next?' (data-driven labels), one control per outcome, overlay colours against the base layer, window-filling embedded viewers, Zoom and pan | `loop.py eval gui-design` → pass, 2026-11-04; rules come from the simple_complex_v1 Replay rounds (2026-11-03/04). Judged cases (4 new) not run blind; mod panes cannot be seen |
