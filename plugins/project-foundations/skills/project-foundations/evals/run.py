@@ -8,12 +8,14 @@ keeps the map within its token budget. Run: python evals/run.py (from the skill 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-DOCMAP = Path(__file__).resolve().parents[1] / "scripts" / "docmap.py"
+SKILL_DIR = Path(__file__).resolve().parents[1]
+DOCMAP = SKILL_DIR / "scripts" / "docmap.py"
 FILES = {
     "pyproject.toml": '[project]\nname = "demo"\nversion = "0.1.0"\n\n[[tool.docmap.forbid]]\nsource = "demo.core"\nimports = ["json"]\nreason = "core stays pure"\n',
     "AGENTS.md": "# Demo - agent instructions\n\nA demo project.\n",
@@ -270,6 +272,18 @@ def main() -> int:
         p = docmap(root, "map", "--budget", "60")
         expect(p.returncode == 0 and len(p.stdout) // 4 <= 60 and "helper(" in p.stdout and "fmt(" not in p.stdout,
                "map keeps within the token budget, dropping the least-referenced symbols", p)
+
+    # Templates on demand: SKILL.md points at templates/, which holds one file per template.
+    skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    refs = set(re.findall(r"`templates/([A-Za-z0-9._-]+\.md)`", skill))
+    on_disk = {f.name for f in (SKILL_DIR / "templates").glob("*") if f.is_file()}
+    missing = sorted(refs - on_disk)
+    expect(bool(refs) and not missing, f"every template referenced from SKILL.md exists ({len(refs)} referenced; missing: {missing or 'none'})")
+    unref = sorted(on_disk - refs)
+    expect(not unref, f"every file in templates/ is referenced from SKILL.md (unreferenced: {unref or 'none'})")
+    bad = [n for n in sorted(on_disk) if not (lambda t: t.startswith("Produces ") and len(t) > 40)((SKILL_DIR / "templates" / n).read_text(encoding="utf-8").split("\n", 1)[0])]
+    expect(not bad, f"each template opens with its descriptive 'Produces ...' line (without: {bad or 'none'})")
+    expect(len(skill.splitlines()) <= 500, f"SKILL.md stays within its ~500-line budget ({len(skill.splitlines())} lines)")
 
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0

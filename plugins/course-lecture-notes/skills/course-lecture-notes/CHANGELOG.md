@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.5.0 (2026-11-06)
+- Workflow step 0: DEVONthink MCP-only check and harness table (owner decision 2026-11-06: MCP only, resolves the osascript recipes of O3); step 7 follows the pipeline's figures on cards (--no-images, --list figure counts) and in-deck duplicate skip (O3)
+
 ## 1.4.0 (2026-11-06)
 - Workflow 7: correct anki_blocks.py command line (no --quiet); say what a cross-deck duplicate stop does and how to resume with --from (O2, O4)
 

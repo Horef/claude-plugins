@@ -281,6 +281,18 @@ class LoopTest(unittest.TestCase):
         run("--genome", str(self.g), "note", "demo", "failure", "the export produced an empty file")
         self.assertIn("demo: 2 open (1 ripe)", run("--genome", str(self.g), "digest")[1])
 
+    def test_reading_notes_offered_after_later_use(self):
+        lp = self.g / "plugins" / "demo" / "skills" / "demo" / "LEARNINGS.md"
+        run("--genome", str(self.g), "note", "demo", "wish", "step 1: a script would help", "--context", "adopting")
+        text = lp.read_text(encoding="utf-8")
+        lp.write_text(re.sub(r"(- O1 )\d{4}-\d{2}-\d{2}", r"\g<1>2020-01-01", text), encoding="utf-8")
+        run("--genome", str(self.g), "note", "demo", "friction", "step 2: export wrote an empty folder")
+        run("--genome", str(self.g), "note", "demo", "misled", "step 4: the flag named here does not exist")
+        self.assertNotIn("reading notes", run("--genome", str(self.g), "status", "demo")[1])
+        run("--genome", str(self.g), "note", "demo", "friction", "step 9: completely different trouble here")
+        self.assertIn("offer to the owner as restructures: O1", run("--genome", str(self.g), "status", "demo")[1])
+        self.assertIn("demo: reading notes unconfirmed by use, offer to the owner as restructures: O1", run("--genome", str(self.g), "digest")[1])
+
     def test_base_requires_version_bump(self):
         git = lambda *a: subprocess.run(["git", "-C", str(self.g), *a], capture_output=True, text=True, check=True)
         git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")

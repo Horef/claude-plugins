@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.1.0 (2026-11-06)
+- reading notes unconfirmed after three later use notes are offered to the owner as restructures (owner's request 2026-11-06) (O5)
+
 ## 1.0.0 (2026-11-02)
 - Kernel (owner approved, 2 Nov 2026): an explicit owner request for a change makes a single observation ripe for Learn; cite it in the bump (section 3 table, section 4 triage) (O18)
 

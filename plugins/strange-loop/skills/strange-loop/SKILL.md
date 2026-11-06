@@ -60,6 +60,7 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 - Say the section, what happened, and **what would have helped**. Concrete beats general: the next agent must be able to act on it without your context.
 - Before adding, read the open list: if it is the same lesson, append ` ×N` (or increment it) instead of a new line. Recurrence is the main evidence the loop has.
 - A warning from a check that your change did not cause (a budget, a stale doc, a slow command) is an observation too: note it with the warning's text, so drift that no single session feels gets counted.
+- A note written from **reading** a skill (adopting or reviewing it), not from using it, says so in its context (`--context "reading"`, or `adopting`): it is a logic check, weaker than use (section 6).
 - Never paste secrets, private data or long logs; link or summarise.
 - Don't stop the user's task to reflect. Note, finish the task, mention the notes in one line at the end.
 
@@ -131,6 +132,8 @@ Always-loaded text costs every session and dilutes attention, so growth must be 
 **Slow costs need sensors.** Some decay is invisible from inside any one session: a log that grows a little each week, a map that lists one more file, a search that takes a little longer. The working agent never sees the comparison, so it never writes the observation. When a unit's cost can grow with use, give it a measurement that becomes a check warning past a budget (project-foundations does this with `docmap.py stats` and `read_max_tokens`); warnings then reach the loop through the rule in section 2. A unit whose cost grows without a sensor is a `missing` observation.
 
 Lessons also go stale: an open observation older than about six months (`loop.py check` warns) is either confirmed by new use or rejected as no longer relevant.
+
+Reading notes are checked against use: once a unit has three later notes from use and an open reading note has not recurred (no ` ×N`), `loop.py status` and the session digest list it as "unconfirmed by use". Offer each to the owner as a possible restructure (do it, keep waiting, or reject); never drop one on your own, since reading is also a basic logic check that nothing is amiss (owner, 2026-11-06).
 
 Forgetting is part of learning: a rule with no recorded `win`, no eval that needs it and no owner preference behind it is a candidate for removal in a Restructure pass. Removed text stays in git and the CHANGELOG says where it went.
 
