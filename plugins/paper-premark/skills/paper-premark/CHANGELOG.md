@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.2.0 (2026-11-06)
+- Workflow step 0: DEVONthink MCP tools check (stop if unavailable) and a harness table for moving files (Claude Code local path vs claude.ai connected folder); owner decision 2026-11-06 (O3)
+
 ## 1.1.0 (2026-11-06)
 - validate_marks.py checks mark strings against the extract (Workflow 5); calibration history moved to references/calibration-log.md; scripted evals (O1, O4)
 

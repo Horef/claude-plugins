@@ -36,11 +36,19 @@ Mac palette, if his marks use it: yellow #FFFF0A, green #6CC056, red #F64376, bl
 10. Comment format: `[RED · result 2] …`, `[GREEN · definition] …`, `[BLUE · project] …`, `[REF] …`, `[SKIM-SAFE → until '…' (p.N)] …`. Page numbers in comments are 1-based PDF pages (= the 0-based index + 1). Double-check them.
 
 ## Workflow
+0. **Check DEVONthink's MCP tools first** (`mcp__devonthink__*` in Claude Code, the DEVONthink connector in claude.ai). DEVONthink is used only through them: no AppleScript, no other route. If they are not reachable in this session (e.g. a cloud session without his Mac), say so ("DEVONthink's MCP tools are not available in this session") and stop; do not work around it.
+
+   **Moving a file between DEVONthink and you** (steps 2, 7) depends on the harness:
+   | Harness | How |
+   |---|---|
+   | Claude Code (on the Mac) | `export_record` to a local path (e.g. `/tmp/<paper>/`), then read it directly (Bash, PyMuPDF) |
+   | claude.ai | `export_record` into a connected folder (e.g. `<repo>/_reading_tmp/<paper>/`), then `device_stage_files` |
+
 1. **Locate the record** (`get_record_properties` on the x-devonthink-item UUID; or `search_records` with `name:<Author> kind:pdf`). Read its Finder comment (often an existing summary), tags and existing annotation (`get_record_annotation`), and check for existing highlights (`extract_record_highlights`). Read the project or memory context if one exists.
 2. **Get the text DEVONthink will match against:** `extract_record_content` with `pages` (0-based).
    - Do NOT build strings from PyMuPDF text. It merges words in some PDFs and spaces symbols differently. Use an exported copy plus PyMuPDF only to read existing annotation colours and to verify afterwards.
    - Large results are saved to a file (a JSON list of {link, text}). Requesting many pages at once is fine; the file is the cache. Step 5 validates strings against it directly.
-   - Export: `export_record` into a connected folder (e.g. `<repo>/_reading_tmp/<paper>/`), then `device_stage_files`.
+   - Export (for PyMuPDF only): see the harness table in step 0.
 3. **Read the whole paper**, including Methods, Extended Data captions and any supplementary pages appended to the PDF.
 4. **Write a mark spec** (list of {colour, type, string, comment}). Strings are copied from the PDFKit text, with `\n` exactly at line breaks. Strings cannot span pages: split a unit at the page break, and put the comment on the first part. Check where a line starts: Methods text often breaks at a different word than you expect (e.g. "We\nused …").
 5. **Validate** that each string occurs exactly once in the PDFKit text. Save the mark spec as JSON (a list of `{page, string, colour, comment}`, page 0-based) and run `python scripts/validate_marks.py <extract.json> <marks.json>` (path relative to this skill). It parses the extract per page, normalises NBSP, and exits non-zero listing every string that is missing, duplicated, contains a soft hyphen or `***`, or sits on a phantom page. Fix and rerun until it exits 0. Rules behind its checks and what it cannot see:
@@ -54,7 +62,7 @@ Mac palette, if his marks use it: yellow #FFFF0A, green #6CC056, red #F64376, bl
 6. **Apply** with `mark_record_text`, one call per colour/type, passing `comments` in the same order. Multi-line strings work if the `\n`s match.
 7. **Verify:**
    - Compare `markups_added` with the number of strings. Too few → missing marks. **Roughly 2× → duplicate or phantom matches: stop and inspect.**
-   - If it falls short, export and stage again, list the annotations (PyMuPDF), find the missing ones, and redo them from the PDFKit text.
+   - If it falls short, export again (step 0 table), list the annotations (PyMuPDF), find the missing ones, and redo them from the PDFKit text.
    - Export once at the end and count annotations by type and colour (PyMuPDF). **Render one or two dense pages** (`get_pixmap`, ~70 dpi) and look at them, especially for appended or supplement pages, scanned or OCRed PDFs, tables and odd counts. Counts alone don't catch misplaced highlights.
    - Extending an existing mark = mark only the adjacent unmarked text in the same colour. Adding to or correcting an existing mark's comment = re-mark the same string with the extra comment (it is appended; no new highlight is created). Use this for page-number fixes, e.g. "(Page fix: … starts on p.29.)".
    - No tool can delete annotations. A wrong batch can only be undone by him (DEVONthink version history, or deleting marks by hand), so prevention matters.
