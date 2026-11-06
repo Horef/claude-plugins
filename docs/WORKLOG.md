@@ -6,7 +6,7 @@ Earlier months: `docs/worklog/YYYY-MM.md`.
 
 Owner-reviewed reflection over all open observations (48). Done on branch genome/reflection-2026-11-06, one commit per unit; five units by Sonnet subagents, paper-premark and research-writing by Copilot helpers (Kiro needed a login).
 - course-lecture-notes 1.4.0 (O2, O4 docs only; pipeline fix belongs to the owner's repo); scientific-figures 7.0.3 (O5, O9); local-run-queue 0.2.0 (O1); project-foundations 5.7.0 (O12); paper-premark 1.1.0 (O1, O4); herdr-delegate 0.5.0 (O7, O9, mixed families; new O10: helpers.py prompt misses Copilot's path-access dialog); research-writing 0.3.0 (O2, O5, O11, O13, mixed-family readers as a rule).
-- Commands: `loop.py eval <unit>` for each → exit 0 (scientific-figures exit 0 under a matplotlib venv); `loop.py check --base origin/main` → 0 errors, 0 warnings; `docmap.py check` → 0 errors (2 pre-existing D11/D12 citation warnings in research-writing); `git diff --check` clean.
+- Commands: `loop.py eval <unit>` for each → exit 0 (scientific-figures exit 0 under a matplotlib venv); `loop.py check --base origin/main` → 0 errors, 0 warnings; `docmap.py check` → 0 errors (2 pre-existing warnings: writing-rules.md cites decision ids that docs/DECISIONS.md lacks); `git diff --check` clean.
 - Proposed to the owner, not done: project-foundations O3 templates on demand; DEVONthink harness routes (paper-premark O3, course-lecture-notes O3); strange-loop O5 expiry of reading-based notes. Model-router lifetime reset diagnosed, postponed.
 
 ## 2026-11-05 - model-router 0.15.0: here-step effort may raise the level
