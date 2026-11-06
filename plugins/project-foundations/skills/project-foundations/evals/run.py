@@ -107,6 +107,53 @@ def main() -> int:
         p = docmap(root, "check")
         expect("AGENTS.md: about" in p.stdout and "read_max_tokens" in p.stdout, "check warns when a file read whole is over budget", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O12: a total budget for the files read whole, apart from the per-file one
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo\n\n" + "word " * 5600, encoding="utf-8")       # about 7000 tokens each: under 8000
+        (root / "docs/STATUS.md").write_text("# Status\nUpdated 2026-10-30.\n\n" + "word " * 5600, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("read_total_max_tokens" in p.stdout and "read_max_tokens" not in p.stdout.replace("read_total_max_tokens", ""),
+               "check warns when the files read whole together exceed read_total_max_tokens though each is under read_max_tokens", p)
+        p = docmap(root, "stats")
+        expect("per file" in p.stdout and "read_total_max_tokens" in p.stdout and "<- over the total budget" in p.stdout
+               and "<- over the per-file budget" not in p.stdout, "stats names the per-file and the total limit and marks the total", p)
+        (root / "docmap.toml").write_text("read_total_max_tokens = 20000\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("read_total_max_tokens" not in p.stdout, "read_total_max_tokens can be raised in the configuration", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O12: `rotate --keep N` moves older entries regardless of month
+        import datetime
+        today = datetime.date.today()
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        d = today.isoformat()
+        (root / "docs/WORKLOG.md").write_text(
+            f"# Work log\n\n## {d} - third\n- c\n\n## {d} - second\n- b\n\n## {d} - first\n- a\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        p = docmap(root, "rotate")
+        expect(p.returncode == 0 and (root / "docs/WORKLOG.md").read_text().count("\n## ") == 3
+               and not (root / "docs/worklog").exists(), "rotate without --keep leaves current-month entries alone", p)
+        p = docmap(root, "rotate", "--keep", "1")
+        wl = (root / "docs/WORKLOG.md").read_text()
+        arch = root / "docs/worklog" / f"{today.year}-{today.month:02d}.md"
+        expect(p.returncode == 0 and "- third" in wl and "- second" not in wl and "- first" not in wl,
+               "rotate --keep 1 keeps only the newest entry in the WORKLOG", p)
+        text = arch.read_text() if arch.exists() else ""
+        expect("- second" in text and "- first" in text and text.index("- second") < text.index("- first"),
+               "rotate --keep moves the older entries to the month archive, order kept", p)
+        p = docmap(root, "rotate", "--keep", "1")
+        expect(p.returncode == 0 and (root / "docs/WORKLOG.md").read_text() == wl and arch.read_text() == text,
+               "rotate --keep is idempotent", p)
+        p = docmap(root, "rotate", "--keep", "x")
+        expect(p.returncode != 0, "rotate rejects a bad --keep value", p)
+
     with tempfile.TemporaryDirectory() as tmp:  # an older project copy warns when the person's skill clone is newer
         root, home = Path(tmp) / "proj", Path(tmp) / "home"
         genome = home / "skills"

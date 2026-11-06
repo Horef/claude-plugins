@@ -191,7 +191,7 @@ Update in the same commit as the change that requires it:
 | find that this scaffolding itself (a template rule, the docs layout, a `docmap.py` check or command) misleads you, is missing something or costs too much | nothing here: send it to the skill that installed it, `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note project-foundations <kind> "<what happened, what would have helped>" --context <this project>` (if that fails and the person takes part in improving their skills, an `Observations for project-foundations` block in your reply); lessons about other skills go to that skill the same way |
 | reach a milestone (a result merged, a phase closed) | a docs audit: `python tools/docmap.py docs`, re-read the oldest or affected docs against code, DECISIONS and RESULTS, fix them and re-date their Status lines |
 
-- Before every commit: `python tools/docmap.py update`, then `python tools/docmap.py check` (CI runs it too). When `check` warns about old WORKLOG months, run `python tools/docmap.py rotate`.
+- Before every commit: `python tools/docmap.py update`, then `python tools/docmap.py check` (CI runs it too). When `check` warns about old WORKLOG months, run `python tools/docmap.py rotate` (`rotate --keep N` also moves older entries of the current month).
 - Never describe planned or partial work as done; say how it was verified.
 - Keep this file short; add a rule only when an agent got something wrong.
 
@@ -427,7 +427,7 @@ reason = "core runs without heavy backends"
       - run: python tools/docmap.py check
 ```
 
-   `check` fails on: stale generated blocks, missing folder descriptions or file headers, files that don't parse, broken relative links in Markdown, forbidden imports. It warns on: cited decision IDs that don't exist, AGENTS.md over the length limit, a file agents read whole at session start over `read_max_tokens` (`docmap.py stats` shows the reading cost), old WORKLOG months, STATUS not touched for many commits, docs without a Status line, "current" docs not verified for `verify_max_days`, proposals open longer than `proposal_max_days`, and lines in live docs that cite a superseded decision without saying so (a decision is superseded when its heading, or its `Status:` line, says `superseded by D<n>`). A stale `docs/FACTS.md` (a source value changed) is an error like any stale generated block.
+   `check` fails on: stale generated blocks, missing folder descriptions or file headers, files that don't parse, broken relative links in Markdown, forbidden imports. It warns on: cited decision IDs that don't exist, AGENTS.md over the length limit, a file agents read whole at session start over `read_max_tokens`, or those files together over `read_total_max_tokens` (`docmap.py stats` shows the reading cost), old WORKLOG months, STATUS not touched for many commits, docs without a Status line, "current" docs not verified for `verify_max_days`, proposals open longer than `proposal_max_days`, and lines in live docs that cite a superseded decision without saying so (a decision is superseded when its heading, or its `Status:` line, says `superseded by D<n>`). A stale `docs/FACTS.md` (a source value changed) is an error like any stale generated block.
 5. For research projects: `python tools/docmap.py runs` after runs; commit `docs/RUNS.md` (rows from other machines, e.g. a cluster, are kept).
 
 ## Retrofit procedure

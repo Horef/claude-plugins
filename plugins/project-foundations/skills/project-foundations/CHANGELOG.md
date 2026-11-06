@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.7.0 (2026-11-06)
+- docmap: read_total_max_tokens budget checked by check and named in stats; rotate --keep N moves older WORKLOG entries regardless of month (O12)
+
 ## 5.6.0 (2026-11-04)
 - AGENTS.md template, Conventions: 'Design for what will vary next' (data-driven over hand-listed cases; unlisted cases show or fail loudly). Owner request 2026-11-04 to generalise the gui-design rule across domains. (O11)
 
