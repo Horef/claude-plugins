@@ -20,7 +20,7 @@ def draw():
     f = Dy.linear(M)
     Dy.flow_field(ax, f, (-L, L), (-L, L), density=0.9)
     Dy.eigenline(ax, (0, 0), U_GROW, Dy.GROW)
-    Dy.eigenline(ax, (0, 0), U_DECAY, Dy.DECAY)
+    Dy.eigenline(ax, (0, 0), U_DECAY, Dy.DECAY, ls=(0, (1, 2.2)), lw=2.4)  # dotted vs dashed: second channel
     # two trajectories that start close to the decaying direction
     ud = U_DECAY / np.linalg.norm(U_DECAY); ug = U_GROW / np.linalg.norm(U_GROW)
     for s in (1, -1):
@@ -37,16 +37,16 @@ def draw():
     ax.text(0.12, L, "$x_2$", ha="left", va="top", size=S.SIZE)
     # direct labels in the margin, next to where each eigenline leaves the box
     tx = 395 / W
-    fig.text(tx, 0.86, "growing direction $\\mathbf{u}_2$ = (2+√6, 1)", color=S.shade(Dy.GROW, .15),
+    fig.text(tx, 0.86, "growing (dashed) $\\mathbf{u}_2$ = (2+√6, 1)", color=S.shade(Dy.GROW, .15),
              size=S.SIZE_SMALL)
     fig.text(tx, 0.81, "eigenvalue $\\mu_2$ = 1 + √6 ≈ 3.45", color=S.shade(Dy.GROW, .15),
              size=S.SIZE_SMALL)
-    fig.text(tx, 0.70, "decaying direction $\\mathbf{u}_1$ = (2−√6, 1)", color=S.shade(Dy.DECAY, .15),
+    fig.text(tx, 0.70, "decaying (dotted) $\\mathbf{u}_1$ = (2−√6, 1)", color=S.shade(Dy.DECAY, .15),
              size=S.SIZE_SMALL)
     fig.text(tx, 0.65, "eigenvalue $\\mu_1$ = 1 − √6 ≈ −1.45", color=S.shade(Dy.DECAY, .15),
              size=S.SIZE_SMALL)
     fig.text(tx, 0.48, "black: two trajectories that start", color=S.INK, size=S.SIZE_SMALL)
-    fig.text(tx, 0.43, "near the blue line - first pulled in", color=S.INK, size=S.SIZE_SMALL)
+    fig.text(tx, 0.43, "near the dotted line - first pulled in", color=S.INK, size=S.SIZE_SMALL)
     fig.text(tx, 0.38, "along $\\mathbf{u}_1$, then pushed out along $\\mathbf{u}_2$", color=S.INK,
              size=S.SIZE_SMALL)
     fig.text(tx, 0.24, "gray: the flow everywhere else", color=S.INK2, size=S.SIZE_SMALL)
