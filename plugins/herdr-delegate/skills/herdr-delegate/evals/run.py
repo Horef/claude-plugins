@@ -25,5 +25,17 @@ for name, want in CASES:
         ok = got is not None and all(any(w in line for line in got) for w in want)
     failures += not ok
     print(f"{'OK  ' if ok else 'FAIL'} {name}: {got if not ok else 'detected as expected'}")
-print(f"{len(CASES) - failures}/{len(CASES)} passed")
+
+# pick order: argon prefers agy over Copilot (Copilot's argon model falls back to Sonnet).
+helpers.command_of = lambda name: "sh"
+order = helpers.ORDER["argon"]
+ok = order[0] == "agy-argon" and order.index("agy-argon") < order.index("copilot-argon")
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} pick argon order: {order}")
+import datetime as _dt
+picked = [n for n in order if helpers.usable(n, {}, _dt.date(2026, 11, 6))][0]
+ok = picked == "agy-argon" and [n for n in order if helpers.usable(n, {"agy": "login"}, _dt.date(2026, 11, 6))] == ["copilot-argon"]
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} pick argon takes agy, falls to copilot when agy is out")
+print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)

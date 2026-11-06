@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.0.3 (2026-11-06)
+- eval: missing optional module (morphio) is NOT RUN for those figures, rest judged; saddle_portrait: decaying direction dotted, growing dashed (second channel) (O5, O9)
+
 ## 7.0.2 (2026-10-31)
 - Learning loop: the reply-block fallback is opt-in (only when the person takes part in improving their skills), so people who installed this skill without strange-loop see no observation blocks.
 

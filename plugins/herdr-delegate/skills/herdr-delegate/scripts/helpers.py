@@ -35,7 +35,9 @@ ORDER = {
     "light": ["kiro-light", "copilot-light", "agy-light"],
     "standard": ["kiro-standard", "copilot-standard", "agy-standard"],
     "deep": ["kiro-deep", "copilot-deep", "agy-deep"],
-    "argon": ["copilot-argon", "agy-argon"],
+    # agy first: the owner's Copilot plan lacks gemini-4-argon and silently falls back to
+    # Sonnet (O7), which defeats the point of a second model family.
+    "argon": ["agy-argon", "copilot-argon"],
     # Opt-in only (the owner's choice, 2026-11-01): Copilot Fusion is a router, not a
     # pinned model, and its quality per tier is unmeasured; never in the tier orders above.
     "fusion": ["copilot-fusion-max", "copilot-fusion-high"],

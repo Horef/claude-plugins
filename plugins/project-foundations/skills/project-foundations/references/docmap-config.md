@@ -15,6 +15,7 @@ verify_max_days = 60                  # a "current" doc older than this is due f
 proposal_max_days = 30                # an open proposal older than this: decided? supersede it
 map_files_max = 150                   # MAP.md lists files up to this many code files; beyond, folders only
 read_max_tokens = 8000                # warn when a file agents read whole (AGENTS, STATUS, WORKLOG, MAP) is bigger
+read_total_max_tokens = 12000         # warn when those files together are bigger (the cost of a session start)
 
 [tool.docmap.facts]                   # generated docs/FACTS.md: one row per key value, read from its source
 "default cell" = { file = "configs/cell.json", key = "id", note = "D27" }      # key = dotted path in JSON/TOML
@@ -35,3 +36,5 @@ columns = { run = "run_id", created = "created_utc", commit = "project_git.revis
 # indexes), portable / portable_exempt (files scanned for machine-specific paths), portable_allow (paths that are facts
 # about other code, e.g. an upstream's hard-coded "/home/someone"), local / local_example (file names)
 ```
+
+Budgets: `read_max_tokens` applies to each file agents read whole at session start; `read_total_max_tokens` to the sum of all of them. `check` warns on either, `stats` shows both. To shrink a WORKLOG that is over budget although every entry is from the current month: `python tools/docmap.py rotate --keep N` keeps the newest N entries and moves the rest to `docs/worklog/YYYY-MM.md` (plain `rotate` moves only earlier months).

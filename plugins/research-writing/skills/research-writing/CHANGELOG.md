@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.3.0 (2026-11-06)
+- readers' Status line (O11), ledger condition column and check (O13), figure-number-vs-text and figure-height notes in wr.py check (O2, O5), step 6 mixed model families as a rule (owner's request 2026-11-06; wins O1, O6, O12) (O2, O5, O11, O13)
+
 ## 0.2.0 (2026-11-05)
 - Prose layer (O7, O8; the owner read the second write-up and found it correct but "inexpressive and inhuman": telegraphic fragments, skeleton notes turned into sentences, vague references, no reader raised them): step 3 says the In short is an abstract in two or three paragraphs with sources named, and that `% DO:` notes and technique names never become sentences; step 4 adds a Voice rule (full sentences, linked by old-before-new and connectives, bold run-in paragraph heads `\lead{}`, subsections); step 6 and `wr.py readers` add an **editor** reader for the prose (default roles now include it).
 - Layout (O10): the template ends with Methods, references, then `\supplementary` (new page, Supplementary Information, S-numbered sections, figures and tables; macro in `preamble.tex`); `wr.py check` exempts figures placed after `\supplementary` or `\appendix` from the near-first-citation rule.

@@ -2,13 +2,14 @@
 """research-writing tools: start a LaTeX write-up, build it, render its pages, check it, brief fresh readers.
 
 Standard library only; needs latexmk (with lualatex or pdflatex, and biber) for `build`, and pdftoppm (poppler) for
-`pages`. Every command takes the write-up folder (the one holding main.tex and ledger.md).
+`pages`; pdftotext and pdfinfo (poppler) are optional, for two of the check's notes. Every command takes the write-up folder (the one holding main.tex and ledger.md).
 
   wr.py init DIR [--title T]          copy the template (main.tex, preamble.tex, ledger.md, refs.bib, figures/, review/)
   wr.py build DIR                     latexmk; copies the PDF to DIR/<DIR name>.pdf; prints undefined references and
                                       citations, overfull boxes, missing files
   wr.py pages DIR [--first N --last M --dpi 60]   PNG per page in DIR/build/pages, plus a contact sheet when Pillow is there
-  wr.py check DIR                     the mechanical checks of the skill (exit 1 when a problem is found)
+  wr.py check DIR                     the mechanical checks of the skill (exit 1 when a problem is found); then notes that
+                                      never fail it: figure heights against the page, figure numbers vs the text (pdftotext)
   wr.py readers DIR --round N [--roles pi,reviewer,newcomer,outsider,editor]   write one brief per fresh reader into review/round-N/
   wr.py status DIR                    claims, figures and the reader questions still open
 
@@ -17,10 +18,12 @@ Exit codes: 0 ok, 1 problems found, 2 a tool is missing (not checked: never repo
 from __future__ import annotations
 
 import argparse
+import datetime
 import re
 import shutil
 import subprocess
 import sys
+from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -173,17 +176,25 @@ def _tex_sources(d: Path) -> str:
 
 def _ledger(d: Path) -> dict:
     p = d / "ledger.md"
-    out = {"claims": {}, "message": ""}
+    out = {"claims": {}, "message": "", "has_condition": False}
     if not p.exists():
         return out
     t = p.read_text()
     m = re.search(r"## Message\s*(.*?)(?=\n## )", t, re.S)
     out["message"] = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.S).strip() if m else ""
+    # columns are found by header name (after the id column), so older ledgers without a condition column still parse
+    cols = {"claim": 0, "status": 1, "evidence": 2, "figure": 3}
+    h = re.search(r"^\|\s*id\s*\|(.*)$", t, re.M | re.I)
+    if h:
+        for k, c in enumerate(x.strip().lower() for x in h.group(1).split("|")):
+            for name in ("claim", "status", "evidence", "figure", "condition"):
+                if c.startswith(name):
+                    cols[name] = k
+    out["has_condition"] = "condition" in cols
     for row in re.finditer(r"^\|\s*(C\d+)\s*\|(.*)$", t, re.M):
         cells = [c.strip() for c in row.group(2).split("|")]
-        out["claims"][row.group(1)] = {"claim": cells[0] if cells else "", "status": cells[1] if len(cells) > 1 else "",
-                                       "evidence": cells[2] if len(cells) > 2 else "",
-                                       "figure": cells[3] if len(cells) > 3 else ""}
+        out["claims"][row.group(1)] = {n: (cells[k] if k < len(cells) else "") for n, k in cols.items()}
+        out["claims"][row.group(1)].setdefault("condition", "")
     return out
 
 
@@ -206,6 +217,9 @@ def check(d: Path) -> list[str]:
             probs.append(f"ledger.md {cid}: status '{c['status']}' is not established, plausible or open")
         if not c["evidence"]:
             probs.append(f"ledger.md {cid}: no evidence (a result entry or run id)")
+        if led["has_condition"] and not c["condition"]:
+            probs.append(f"ledger.md {cid}: no condition (what it was tested under: a parameter strength, a dataset; "
+                         "'all' if none applies); each section states it")
         if f"\\claim{{{cid}}}" not in body:
             probs.append(f"ledger.md {cid} is not carried by any paragraph (add \\claim{{{cid}}} where it is made, or "
                          "move it to Out of scope)")
@@ -284,6 +298,142 @@ def check(d: Path) -> list[str]:
     return probs
 
 
+# ------------------------------------------------------------------ notes (reported, never fail the check)
+HEIGHT_BUDGET = 0.55  # of \textheight, unless the figure is the answer figure
+_PAPERS = {"a4paper": (210.0, 297.0), "letterpaper": (215.9, 279.4)}
+_UNIT_MM = {"mm": 1.0, "cm": 10.0, "in": 25.4, "pt": 25.4 / 72.27, "bp": 25.4 / 72.0}
+_FIGNUM = re.compile(r"(?<![\w.])\d+\.\d+(?![\w.])")
+
+
+def _page_mm(d: Path) -> tuple[float, float]:
+    """(textwidth, textheight) in mm from the geometry line of preamble.tex; the template's A4 with 25 mm margins if absent."""
+    paper, margin = (210.0, 297.0), 25.0
+    pre = d / "preamble.tex"
+    g = re.search(r"\\usepackage\[([^\]]*)\]\{geometry\}", pre.read_text()) if pre.exists() else None
+    if g:
+        for k, v in _PAPERS.items():
+            if k in g.group(1):
+                paper = v
+        m = re.search(r"margin=([\d.]+)(mm|cm|in|pt|bp)", g.group(1))
+        if m:
+            margin = float(m.group(1)) * _UNIT_MM[m.group(2)]
+    return paper[0] - 2 * margin, paper[1] - 2 * margin
+
+
+def _graphic(d: Path, name: str) -> Path | None:
+    for c in (name, name + ".pdf", f"figures/{name}", f"figures/{name}.pdf"):
+        p = d / c
+        if p.is_file():
+            return p
+    return None
+
+
+def _aspect(pdf: Path | None) -> float | None:
+    """height / width of the first page of a PDF, from pdfinfo."""
+    if pdf is None or pdf.suffix != ".pdf" or not shutil.which("pdfinfo"):
+        return None
+    m = re.search(r"Page size:\s*([\d.]+) x ([\d.]+)", subprocess.run(["pdfinfo", str(pdf)], capture_output=True,
+                                                                      text=True).stdout)
+    return float(m.group(2)) / float(m.group(1)) if m and float(m.group(1)) else None
+
+
+def _length_mm(v: str, tw: float, th: float) -> float | None:
+    m = re.fullmatch(r"([\d.]*)\s*\\(textheight|textwidth|linewidth|columnwidth)", v.strip())
+    if m:
+        return (float(m.group(1) or 1)) * (th if m.group(2) == "textheight" else tw)
+    m = re.fullmatch(r"([\d.]+)\s*(mm|cm|in|pt|bp)", v.strip())
+    return float(m.group(1)) * _UNIT_MM[m.group(2)] if m else None
+
+
+def figure_heights(d: Path, figs: list[str]) -> list[str]:
+    """One line per figure: its tallest \\includegraphics as a fraction of the text height, where it can be found."""
+    tw, th = _page_mm(d)
+    out = []
+    for f in figs:
+        lab = re.search(r"\\label\{(fig:[^}]+)\}", f)
+        best = None
+        for m in re.finditer(r"\\includegraphics\*?\[([^\]]*)\]\{([^}]+)\}", f):
+            opts = dict(o.split("=", 1) for o in re.split(r",\s*", m.group(1)) if "=" in o)
+            h = next((_length_mm(opts[k], tw, th) for k in ("height", "totalheight") if k in opts), None)
+            if h is None and "width" in opts:
+                w, asp = _length_mm(opts["width"], tw, th), _aspect(_graphic(d, m.group(2)))
+                h = w * asp if w is not None and asp else None
+            if h is not None:
+                best = max(best or 0.0, h / th)
+        if lab and best is not None:
+            flag = f"  over the {HEIGHT_BUDGET} budget (fine for the answer figure)" if best > HEIGHT_BUDGET else ""
+            out.append(f"{lab.group(1)}: {best:.2f} of the text height{flag}")
+    return out
+
+
+def _places(s: str) -> int:
+    return len(s.split(".")[1])
+
+
+def _rounding_miss(a: str, b: str) -> bool:
+    """True when the two decimals differ as written but by no more than one unit of the less precise one's last digit
+    and are not the same number rounded: 0.34 vs 0.35, or 2.4 vs 2.46 (which rounds to 2.5)."""
+    da, db = Decimal(a), Decimal(b)
+    if da == db:
+        return False
+    q = Decimal(1).scaleb(-min(_places(a), _places(b)))
+    if any(da.quantize(q, m) == db.quantize(q, m) for m in (ROUND_HALF_UP, ROUND_HALF_EVEN)):
+        return False
+    return abs(da - db) <= q
+
+
+def _ticks(vals: set[Decimal]) -> set[Decimal]:
+    """Members of any three-term arithmetic progression: axis tick labels, which are not results."""
+    out = set()
+    for x in vals:
+        for y in vals:
+            if y > x and x + 2 * (y - x) in vals:
+                out |= {x, y, x + 2 * (y - x)}
+    return out
+
+
+def figure_number_misses(d: Path, body: str, figs: list[str]) -> list[str]:
+    """Numbers (with a decimal point) printed in a figure PDF that differ only by rounding from a number in the paragraph
+    citing the figure or in its caption. A hint, not a verdict: the two may be different quantities."""
+    found = []
+    for f in figs:
+        lab = re.search(r"\\label\{(fig:[^}]+)\}", f)
+        gm = re.search(r"\\includegraphics\*?(?:\[[^\]]*\])?\{([^}]+)\}", f)
+        pdf = _graphic(d, gm.group(1)) if gm else None
+        if not lab or pdf is None or pdf.suffix != ".pdf":
+            continue
+        if not shutil.which("pdftotext"):
+            return ["pdftotext (poppler) is missing: numbers in figures not compared with the text"]
+        ft = subprocess.run(["pdftotext", "-layout", str(pdf), "-"], capture_output=True, text=True).stdout
+        fvals = set(_FIGNUM.findall(ft))
+        ticks = _ticks({Decimal(x) for x in fvals})
+        near = re.findall(r"\\caption(?:\[[^\]]*\])?\{.*", f, re.S)
+        for para in re.split(r"\n\s*\n", body):
+            if re.search(r"\\(?:[cC]ref|ref|[fF]igref|autoref)\{[^}]*\b" + re.escape(lab.group(1)) + r"\b", para):
+                near.append(para)
+        text = re.sub(r"\\(?:[cC]ref|ref|[fF]igref|autoref|label|cite\w*)\{[^}]*\}", " ", " ".join(near))
+        bvals = set(_FIGNUM.findall(text))
+        for fv in sorted(fvals):
+            if Decimal(fv) in ticks:
+                continue
+            for bv in sorted(bvals):
+                if _rounding_miss(fv, bv):
+                    found.append(f"{lab.group(1)}: the figure shows {fv}, the text near it says {bv} (same quantity? "
+                                 "then one is a rounding slip)")
+    return found
+
+
+def notes(d: Path) -> list[str]:
+    """Reports that never fail the check: figure heights against the page, figure numbers against the text."""
+    body = _strip_comments(_tex_sources(d)).split("\\begin{document}", 1)[-1]
+    figs = [m.group(0) for m in re.finditer(r"\\begin\{figure\*?\}.*?\\end\{figure\*?\}", body, re.S)]
+    out = ["height " + x for x in figure_heights(d, figs)]
+    out += ["numbers " + x for x in figure_number_misses(d, body, figs)]
+    if not _ledger(d)["has_condition"] and _ledger(d)["claims"]:
+        out.append("ledger.md has no condition column; add one (what each claim was tested under)")
+    return out
+
+
 def cmd_check(a) -> int:
     d = Path(a.dir).resolve()
     if not (d / "main.tex").exists():
@@ -292,6 +442,11 @@ def cmd_check(a) -> int:
     probs = check(d)
     for p in probs:
         print("- " + p)
+    ns = notes(d)
+    if ns:
+        print("notes (reported, they do not fail the check):")
+        for n in ns:
+            print("  " + n)
     if not (d / "build" / "main.aux").exists():
         print("(not built: figure-page checks skipped; run build)")
     print(f"{len(probs)} problem(s)")
@@ -312,12 +467,14 @@ ROLES = {
               "('the published model': whose?), or does not follow from the one before, and asks the question it raises",
 }
 
-BRIEF = """# Reader brief: {role} (round {n})
+BRIEF = """Status: historical ({date})
+
+# Reader brief: {role} (round {n})
 
 You are {desc}. Everything you know about this piece of work comes from this document: you have not seen its data, code or notes.
 Read `{pdf}` (the rendered PDF; read every page, figures included) as that reader would.
 
-Write `{out}`: every question this reader would ask, and every place they would get lost, in this format:
+Write `{out}`: every question this reader would ask, and every place they would get lost. Start the file with the line `Status: historical ({date})`, then use this format:
 
 ```
 - Q<k> [p<page>, <section or figure>] [must|should|could] <the question, in the reader's words>
@@ -344,7 +501,8 @@ def cmd_readers(a) -> int:
         role = role.strip()
         desc = ROLES.get(role, role)
         out = (rd / f"{role}.md").resolve()
-        (rd / f"brief-{role}.md").write_text(BRIEF.format(role=role, n=a.round, desc=desc, pdf=pdf, out=out))
+        (rd / f"brief-{role}.md").write_text(BRIEF.format(role=role, n=a.round, desc=desc, pdf=pdf, out=out,
+                                                       date=datetime.date.today().isoformat()))
         print(rd / f"brief-{role}.md")
     print("launch one fresh agent per brief (no project context); then sort the questions into review/questions.md")
     return 0

@@ -299,9 +299,30 @@ def test_start_detaches(tmp):
     assert q.state()["jobs"]["slow"]["status"] == "done"
 
 
+def test_wait(tmp):
+    q = Q(tmp, "wait", budget=5.0)
+    q.add("a", 5, 2.0)
+    q.add("b", 5, 0.2, extra="--fail")
+    # no driver: summary at once, b never ran -> not all done
+    r = runq("wait", q.dir, "--timeout", 5)
+    assert r.returncode == 3 and "driver: not running" in r.stdout, (r.returncode, r.stdout, r.stderr)
+    r = subprocess.run([PY, str(RUNQ), "start", str(q.dir), "--sample-s", "0.3"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    r = runq("wait", q.dir, "--timeout", 0.5)  # driver still busy with a
+    assert r.returncode == 4 and "timeout" in r.stderr, (r.returncode, r.stderr)
+    r = runq("wait", q.dir, "--timeout", 60)  # driver ends; b failed
+    assert r.returncode == 3 and "a " in r.stdout and "failed" in r.stdout, (r.returncode, r.stdout)
+    # all ok
+    q2 = Q(tmp, "wait_ok", budget=5.0)
+    q2.add("ok", 5, 0.5)
+    runq("start", q2.dir, "--sample-s", 0.3)
+    r = runq("wait", q2.dir, "--timeout", 60)
+    assert r.returncode == 0 and "done" in r.stdout, (r.returncode, r.stdout, r.stderr)
+
+
 TESTS = [test_tree_measurement, test_admission_budget, test_est_override_and_peak, test_kill_requeue,
          test_after_and_blocked, test_restart_skips_done, test_dynamic_job, test_stop_and_pause, test_status_plan,
-         test_start_detaches]
+         test_start_detaches, test_wait]
 
 
 def main() -> int:

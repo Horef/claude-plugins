@@ -1,6 +1,6 @@
 {
   "name": "research-writing",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Turn a body of research (results, run logs, figures, decisions) into a coherent write-up or paper draft in LaTeX: a one-paragraph message and its reader, a claims ledger tying each claim to its evidence and figure, a skeleton in argument order (not lab-notebook order), figures that each carry one claim, text written around them, then a loop of fresh reader agents whose questions are answered in the text, plus mechanical checks and a look at the rendered pages. Works for a full write-up after many results or incrementally as results arrive. Use when asked to write up results, draft a paper, report or thesis chapter, revise one that reads like a lab report, or add new results to an existing write-up.",
   "license": "MIT"
 }

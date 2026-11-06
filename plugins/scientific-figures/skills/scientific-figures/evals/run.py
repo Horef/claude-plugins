@@ -3,9 +3,12 @@
 Runs `lib/examples/build_all.py`, which builds each example in memory, lints it, checks it is inline-safe SVG,
 and renders all figures on one sheet in a temporary folder (so the render path - Playwright, or headless Chrome
 on a Mac - is tested too). Nothing is written into the skill folder. `$SCIENCEFIG` points at another library copy.
-Missing dependencies (matplotlib, numpy, scipy, Pillow) mean "not run", never a pass.
+Missing dependencies (matplotlib, numpy, scipy, Pillow) mean "not run", never a pass. A missing optional module
+(e.g. morphio for the reconstruction examples) skips only those figures: they are named as NOT RUN in the summary,
+the rest are judged, and the exit is 2 only if no figure could be built.
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -32,7 +35,12 @@ def main() -> int:
     print(p.stdout.rstrip())
     if p.returncode != 0 and p.stderr.strip():
         print(p.stderr.strip().splitlines()[-1])
-    print(f"scientific-figures evals: {'pass' if p.returncode == 0 else 'FAIL'}")
+    skipped = [l for l in p.stdout.splitlines() if l.startswith("NOT RUN:")]
+    note = f" ({skipped[0]})" if skipped else ""
+    if p.returncode == 0 and re.search(r"^0 figure\(s\)", p.stdout, re.M):
+        print(f"scientific-figures evals: NOT RUN - no figure could be built{note}")
+        return 2
+    print(f"scientific-figures evals: {'pass' if p.returncode == 0 else 'FAIL'}{note}")
     return 0 if p.returncode == 0 else 1
 
 

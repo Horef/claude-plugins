@@ -39,13 +39,12 @@ Mac palette, if his marks use it: yellow #FFFF0A, green #6CC056, red #F64376, bl
 1. **Locate the record** (`get_record_properties` on the x-devonthink-item UUID; or `search_records` with `name:<Author> kind:pdf`). Read its Finder comment (often an existing summary), tags and existing annotation (`get_record_annotation`), and check for existing highlights (`extract_record_highlights`). Read the project or memory context if one exists.
 2. **Get the text DEVONthink will match against:** `extract_record_content` with `pages` (0-based).
    - Do NOT build strings from PyMuPDF text. It merges words in some PDFs and spaces symbols differently. Use an exported copy plus PyMuPDF only to read existing annotation colours and to verify afterwards.
-   - Large results are saved to a file (a JSON list of {link, text}). Parse it into per-page text files (page index from `?page=N` in `link`). Then validate every string with `text.count(s) == 1` in a short script. Requesting many pages at once is fine; the file is the cache.
+   - Large results are saved to a file (a JSON list of {link, text}). Requesting many pages at once is fine; the file is the cache. Step 5 validates strings against it directly.
    - Export: `export_record` into a connected folder (e.g. `<repo>/_reading_tmp/<paper>/`), then `device_stage_files`.
 3. **Read the whole paper**, including Methods, Extended Data captions and any supplementary pages appended to the PDF.
 4. **Write a mark spec** (list of {colour, type, string, comment}). Strings are copied from the PDFKit text, with `\n` exactly at line breaks. Strings cannot span pages: split a unit at the page break, and put the comment on the first part. Check where a line starts: Methods text often breaks at a different word than you expect (e.g. "We\nused …").
-5. **Validate** that each string occurs exactly once in the PDFKit text:
-   - Normalise NBSP → space.
-   - Avoid soft hyphens (U+00AD), which never match: split around them. Plain end-of-line hyphens ("pro-\nduced") do match.
+5. **Validate** that each string occurs exactly once in the PDFKit text. Save the mark spec as JSON (a list of `{page, string, colour, comment}`, page 0-based) and run `python scripts/validate_marks.py <extract.json> <marks.json>` (path relative to this skill). It parses the extract per page, normalises NBSP, and exits non-zero listing every string that is missing, duplicated, contains a soft hyphen or `***`, or sits on a phantom page. Fix and rerun until it exits 0. Rules behind its checks and what it cannot see:
+   - Soft hyphens (U+00AD) never match: split around them. Plain end-of-line hyphens ("pro-\nduced") do match.
    - Watch for figure text that PDFKit inserts into the flow, and split units there.
    - **DEVONthink's tool output redacts URLs, e-mail addresses and some tokens as `***`** (e.g. `neuromorpho.org` → `***`, `www.sciencemag.org` → `***`). The real PDF text differs there, so never put `***` or the redacted span into a string. End the string before it or start after it.
    - OCR junk lines (stray letters, Cyrillic look-alikes) and lines with run-together words may appear in the extracted text. Body lines still match; just don't include junk or merged lines.
@@ -79,12 +78,7 @@ The DEVONthink tools cannot append pages to an existing PDF in place (merging cr
 ## Calibration loop
 After he reads, export again and diff his new or changed annotations (by author) against Claude's. Classify each one: completed a fragment / definition / conclusion sentence / interpretation / deleted / recoloured. Log it in the project rubric doc if one exists (e.g. `claude/paper-premark-rubric.md`), and propose updates to this skill when a pattern repeats.
 
-Calibration history:
-- Petousakis 2023: he added 19 marks, about half completing fragments. → Led to the logical-unit and back-reference rules.
-- Smith 2013: he made no changes and liked the critical comments and the "skim-safe-ish" sections.
-- Branco 2010 and Goetz 2021: every string matched on the first try when built from the PDFKit text. Lesson: avoid `***` redactions and OCR junk lines.
-- Smith 2013 supplement (appended pp. 20–21): a phantom duplicate text layer caused ~24 misplaced highlights. → Led to the phantom-layer rule and render-to-verify. Afterwards, the extracted text stayed stale even though the file was clean. → Led to the stale-extract rule.
-- Arkhipov 2018, Billeh 2020, Durand 2016 (model/resource papers, 40/75/48 marks): file-based validation gave 100% matches; red went mainly to key assumptions and method conventions; there was a dropped-symbol text layer (Durand).
+Per-paper history: `references/calibration-log.md` (its lessons are already in the rules above).
 
 ## Learning loop
 

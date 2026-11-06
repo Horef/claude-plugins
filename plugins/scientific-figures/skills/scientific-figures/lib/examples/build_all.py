@@ -7,7 +7,8 @@ Each example module exposes draw() (one figure: a Canvas, or (svg, problems) fro
   python examples/build_all.py --out DIR            also write DIR/<name>.svg
   python examples/build_all.py --render SHEET.png   also render all figures on one sheet (Playwright or Chrome)
   python examples/build_all.py saddle_portrait eye  only these modules
-Exit status 1 if any figure has problems or a module fails. Nothing is written into the library folder.
+Exit status 1 if any figure has problems or a module fails; a module whose optional dependency is missing
+is listed as NOT RUN and does not fail the run. Nothing is written into the library folder.
 """
 import argparse
 import importlib.util
@@ -42,10 +43,14 @@ def main(argv=None):
     ap.add_argument("--out")
     ap.add_argument("--render")
     args = ap.parse_args(argv)
-    svgs, failed = {}, 0
+    svgs, failed, skipped = {}, 0, []
     for mod in modules(args.only):
         try:
             figs = figures(mod)
+        except ModuleNotFoundError as e:  # optional dependency (e.g. morphio) missing: not a failure of the figure
+            skipped.append((mod, e.name))
+            print(f"{mod:26s} NOT RUN (missing module {e.name})")
+            continue
         except Exception:
             failed += 1
             print(f"{mod:26s} FAILED\n{traceback.format_exc(limit=3)}")
@@ -62,7 +67,9 @@ def main(argv=None):
     if args.render and svgs:
         C.render(list(svgs.values()), args.render, names=list(svgs))
         print(f"rendered {len(svgs)} figure(s) to {args.render}")
-    print(f"{len(svgs)} figure(s), {failed} with problems")
+    print(f"{len(svgs)} figure(s), {failed} with problems, {len(skipped)} module(s) not run")
+    if skipped:
+        print("NOT RUN: " + ", ".join(f"{m} (needs {d})" for m, d in skipped))
     return 1 if failed else 0
 
 
