@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.4.0 (2026-11-06)
+- Workflow 7: correct anki_blocks.py command line (no --quiet); say what a cross-deck duplicate stop does and how to resume with --from (O2, O4)
+
 ## 1.3.0 (2026-10-31)
 - Workflow step 7 (new): send the finished blocks to Anki with the pipeline's anki_blocks.py batch script (one Gemini run per block, no clipboard, resumable; test one block, then the rest in the background); deck name from AGENTS.local.md. Owner request, 2026-10-31; first used on 76901 Lecture 3. The reply step (now 8) reports blocks and cards. New judged case.
 - Step 5: corrected "Anki cannot show it" (owner: cards show images fine); the real reason figures must be described in prose is that the pipeline builds cards from text only.
