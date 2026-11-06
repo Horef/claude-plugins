@@ -50,6 +50,8 @@ KINDS = ("failure", "friction", "misled", "missing", "workaround", "win", "wish"
 RIPE_KINDS = {"failure", "misled"}       # one is enough to deserve a reflection
 RIPE_COUNT = 2                           # or any observation seen this many times
 RIPE_OPEN = 5                            # or this many open observations in one unit
+READING_AFTER = 3                        # later use-based notes after which an unconfirmed reading note is offered
+READING = re.compile(r"\b(from reading|reading|adopting|adoption)\b", re.I)
 STALE_DAYS = 180                         # an open observation older than this is confirmed or rejected
 SKILL_MAX_LINES = 500                    # Agent Skills guidance: keep SKILL.md under ~500 lines
 DESCRIPTION_MAX = 1024                   # Agent Skills spec limit for the description field
@@ -307,6 +309,22 @@ def similar(a: str, b: str, threshold: float = 0.6) -> bool:
     return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= threshold
 
 
+def from_reading(m: re.Match) -> bool:
+    """A note written from reading a skill (adopting, reviewing), not from using it."""
+    tail = re.search(r"\(([^()]*)\)\s*$", m.group(4))
+    return bool(READING.search(tail.group(1) if tail else "") or re.search(r"\bfrom reading\b", m.group(4), re.I))
+
+
+def reading_to_offer(opened: list[re.Match], resolved: list[re.Match] = ()) -> list[re.Match]:
+    """Open reading notes that use has not confirmed (no ×N) after READING_AFTER later use-based notes
+    (open or resolved: each is evidence the unit was used).
+
+    They are offered to the owner as possible restructures, never dropped automatically (owner, 2026-11-06)."""
+    used = [m for m in list(opened) + list(resolved) if not from_reading(m)]
+    return [m for m in opened if from_reading(m) and not m.group(5)
+            and sum(u.group(2) > m.group(2) for u in used) >= READING_AFTER]
+
+
 def is_ripe(m: re.Match) -> bool:
     return m.group(3) in RIPE_KINDS or int(m.group(5) or 1) >= RIPE_COUNT
 
@@ -357,13 +375,17 @@ def cmd_note(args):
 
 def unit_report(genome: Path, name: str, d: Path) -> tuple[list[re.Match], list[re.Match], list[str]]:
     lp = d / "LEARNINGS.md"
-    opened = [m for _, m in Learnings(lp, name).entries("open")] if lp.exists() else []
+    learn = Learnings(lp, name) if lp.exists() else None
+    opened = [m for _, m in learn.entries("open")] if learn else []
     ripe = [m for m in opened if is_ripe(m)]
     notes = []
     skill = d / "SKILL.md"
     if skill.exists():
         n = len(skill.read_text(encoding="utf-8").splitlines())
         notes.append(f"SKILL.md {n}/{SKILL_MAX_LINES} lines")
+    offer = reading_to_offer(opened, [m for _, m in learn.entries("resolved")] if learn else [])
+    if offer:
+        notes.append(f"reading notes unconfirmed by use, offer to the owner as restructures: {', '.join(m.group(1) for m in offer)}")
     return opened, ripe, notes
 
 
@@ -390,10 +412,11 @@ def cmd_digest(args):
         out = []
         if g and g.is_dir():
             for name, d in units(g).items():
-                opened, ripe, _ = unit_report(g, name, d)
+                opened, ripe, notes = unit_report(g, name, d)
                 if ripe or len(opened) >= RIPE_OPEN:
                     top = max(opened, key=lambda m: (m.group(3) in RIPE_KINDS, int(m.group(5) or 1)))
                     out.append(f"{name}: {len(opened)} open ({len(ripe)} ripe), e.g. {top.group(1)} {top.group(4)[:80]}")
+                out += [f"{name}: {n}" for n in notes if n.startswith("reading notes")]
         inbox = INBOX.read_text(encoding="utf-8").splitlines() if INBOX.exists() else []
         if inbox:
             out.append(f"{len(inbox)} observation(s) waiting in {INBOX}")
