@@ -1,0 +1,3 @@
+Produces `.gitignore`; read when it is written or when a never-commit path is found tracked.
+
+Always: `.env`, `.env.*` + `!.env.example`, `*.pem`, `*.key`, `*.local.md` (covers `AGENTS.local.md` and `CLAUDE.local.md`, not `AGENTS.local.example.md`), `.claude/settings.local.json`, scratch folders that AI tools write into the repo (e.g. `Claude outputs/`), OS/editor junk, caches, `*.egg-info/`, `.venv/`, plus data/output/cache/checkpoint dirs and machine-local config (with a commented line for sensitive entries). Commit a `*.example` for each ignored config, with variable names taken from the code, never by reading the secret file. A never-commit file already tracked: `git rm --cached`, commit, tell the user it stays in history; purge history only on explicit request.

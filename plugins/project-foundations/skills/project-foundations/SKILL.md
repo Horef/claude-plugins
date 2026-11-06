@@ -60,7 +60,7 @@ Guiding principles - explain these if the user asks why:
 
 Use these unless the project's own rules or the user's defaults file say otherwise; confirm them in the interview instead of asking from scratch. They are generic on purpose, because this skill is meant to be shared.
 
-**User defaults file.** A person's standing conventions (git host and account, commit style, their machines and limits, sensitive-data rules, editor quirks) live outside the skill and outside every repository, in `~/.config/project-foundations/defaults.md` (Windows: `%USERPROFILE%\.config\project-foundations\defaults.md`). Read it in Step 0 if it exists and offer its values as the pre-selected interview answers. If it does not exist and the user states conventions that will recur, offer to create it (template in Step 3). Its machine facts go into each project's `AGENTS.local.md`, never into tracked files.
+**User defaults file.** A person's standing conventions (git host and account, commit style, their machines and limits, sensitive-data rules, editor quirks) live outside the skill and outside every repository, in `~/.config/project-foundations/defaults.md` (Windows: `%USERPROFILE%\.config\project-foundations\defaults.md`). Read it in Step 0 if it exists and offer its values as the pre-selected interview answers. If it does not exist and the user states conventions that will recur, offer to create it (template: `templates/user-defaults.md`). Its machine facts go into each project's `AGENTS.local.md`, never into tracked files.
 
 - Canonical rules in `AGENTS.md`; `CLAUDE.md` is `@AGENTS.md` plus Claude-only notes; `.github/copilot-instructions.md` is a pointer with a top-3 fallback; Kiro reads `AGENTS.md` natively, so steering files hold only Kiro-specific additions.
 - Portable tooling only: no plugins, MCP servers or tool-specific hooks in the project setup. Everything must work for Claude Code, Copilot, Kiro and a human with a shell.
@@ -114,7 +114,7 @@ Ask only what Step 0 didn't answer; offer the owner defaults as the pre-selected
 
 ## Step 2 - Choose modules
 
-Core set (always): `AGENTS.md`, `AGENTS.local.example.md` (tracked) and `AGENTS.local.md` (ignored), `CLAUDE.md` shim, `docs/BRIEF.md`, `docs/STATUS.md`, `docs/WORKLOG.md`, `docs/DECISIONS.md`, `.gitignore`, `tools/docmap.py` with `docs/MAP.md`, a README in every folder that contains code, a header docstring/comment in every code file, tests and a CI workflow running tests + `docmap.py check`.
+Core set (always; each has its template in the Step 3 table): `AGENTS.md`, `AGENTS.local.example.md` (tracked) and `AGENTS.local.md` (ignored), `CLAUDE.md` shim, `docs/BRIEF.md`, `docs/STATUS.md`, `docs/WORKLOG.md`, `docs/DECISIONS.md`, `.gitignore`, `tools/docmap.py` with `docs/MAP.md`, a README in every folder that contains code, a header docstring/comment in every code file, tests and a CI workflow running tests + `docmap.py check`.
 
 | Add                                                       | When                                                                                                                                                         |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -127,6 +127,7 @@ Core set (always): `AGENTS.md`, `AGENTS.local.example.md` (tracked) and `AGENTS.
 | `docs/archive/`, `backlog/`                               | Finished specs and plans; parked code with restore instructions                                                                                              |
 | Nested `AGENTS.md` in a folder                            | That folder has rules an agent must see automatically whenever it works there (agents auto-load nested AGENTS.md; they only read a README if they choose to) |
 | Copilot / Kiro shims                                      | Those agents are used                                                                                                                                        |
+| User defaults file (`~/.config/project-foundations/defaults.md`) | The user states conventions that will recur across projects                                                                                           |
 
 Git-ignored directories that docs mention (`data/`, `outputs/`) don't exist in a fresh clone: track a short README in each (`/data/*` + `!/data/README.md` in `.gitignore`).
 
@@ -134,270 +135,25 @@ Git-ignored directories that docs mention (`data/`, `outputs/`) don't exist in a
 
 Fill templates with real, specific facts; delete sections that don't apply; no `<placeholder>` may survive (except in `AGENTS.local.example.md`, which is a template); absolute dates (`2026-10-23`). Tracked files must stay machine-independent: where a template needs a path, interpreter or limit, name its `AGENTS.local.md` key.
 
-### `AGENTS.md`
-
-```markdown
-# <Project name> - agent instructions
-
-<One or two sentences: what this project is.> It is **not** <the main non-goal>.
-Goal, scope and open questions: `docs/BRIEF.md`. Scaffolding: the project-foundations skill (version in `tools/docmap.py`, `DOCMAP_VERSION`).
-
-## Start of every session
-1. `git status` (and `git pull --rebase` if there is a remote). Do not commit, discard or overwrite changes you did not make; ask.
-2. Read `AGENTS.local.md` (git-ignored): this machine's interpreter, paths, limits and quirks. If it is missing, create it from `AGENTS.local.example.md` with `python tools/docmap.py local` and the user's answers.
-3. Read `docs/STATUS.md`; skim the latest entry in `docs/WORKLOG.md`.
-4. Before changing behavior covered by a decision, find it with `python tools/docmap.py find <topic>` and read it with `python tools/docmap.py get D<n>`. Never read `docs/DECISIONS.md` or `docs/RESULTS.md` whole: they only grow.
-
-## Finding your way
-1. `docs/MAP.md` (generated): every folder and code file with a one-line summary.
-2. The folder's `README.md`: purpose, folder rules, and a generated table of its files and who imports them.
-3. The file's header docstring; `python tools/docmap.py show <path>` lists its symbols, signatures and importers.
-4. Before changing a function or class: `python tools/docmap.py where <Name>` (definition, importers, every use); run the tests it lists. `calls <Name>` shows its callers and callees, `deps <folder>` how modules depend on each other, `map --budget 2000` the repo's most-used symbols.
-
-## Environment and commands
-- `python` means the interpreter named by `python` in `AGENTS.local.md` (<how the env is built, e.g. `conda env create -f env/environment.yml`>); never the base interpreter.
-- Install: `<command>`. Tests (offline, fast): `<command>`. Docs check: `python tools/docmap.py check`.
-- Limits: stay within `memory_budget` (AGENTS.local.md); ask before <heavy work>; heavy jobs run on <where; access details under `compute` in AGENTS.local.md>.
-
-## Boundaries
-- Read-only: <paths in the repo; checkouts outside it by their AGENTS.local.md key>. Never commit: <paths/patterns> (in `.gitignore`; never `git add -f`).
-- Tracked files name AGENTS.local.md keys, never their values: no absolute paths, user or host names (`docmap.py check` flags home paths and the local file's paths).
-- Import boundaries are enforced by `docmap.py check` (`[tool.docmap.forbid]` in `pyproject.toml`; listed in `docs/MAP.md`).
-- <Sensitive-data rule, if any.>
-
-## Conventions
-- **Design for what will vary next.** Before building something that will keep being used (a screen, a config schema, a file format, a function's signature, a report or figure layout), ask what it will have to hold next: new parameters, conditions, item kinds, tests. Make it handle them from the data (iterate over fields, diff an item against its siblings, name values from their keys and units) rather than from a hand-written list of today's cases; where a special case stays, anything it does not list must still show or fail loudly, never vanish.
-<Only project-wide rules an agent would get wrong. Folder-specific rules live in that folder's README.>
-
-## Keeping the project maintained
-Update in the same commit as the change that requires it:
-
-| When you… | Update |
-|---|---|
-| add a code file | its header docstring/comment: first line = what it is for (shown in the map), then how to use it |
-| add a folder with code | its `README.md`: a purpose paragraph whose first sentence stands alone |
-| change what a file or folder is for | that first line / paragraph |
-| add, move, rename or delete files | run `python tools/docmap.py update` |
-| learn a fact about this machine (path, interpreter, limit, quirk) | `AGENTS.local.md` only; if every machine needs that key, add it to `AGENTS.local.example.md` |
-| finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results (`python tools/docmap.py worklog "TITLE" body.md --status` inserts it dated, rotates old months and sets STATUS's date) |
-| choose between alternatives, or fill a gap | the next D entry in `docs/DECISIONS.md`; to reverse one, a new entry that supersedes it |
-| add or change a module boundary | `docs/ARCHITECTURE.md` and `[tool.docmap.forbid]` |
-| change user-visible behavior, CLI or config | `README.md` and `CHANGELOG.md` |
-| run an experiment | `python tools/docmap.py runs`; a numbered section in `docs/RESULTS.md` citing the run id |
-| start multi-session work | a plan in `docs/plans/` with a Status line |
-| write or substantially revise a doc in `docs/` | its Status line: `current (verified <today>)`, `proposal (<today>)`, `superseded by <id>` or `historical`; a decided proposal is superseded by its D entry |
-| change a default, preset or key number | its source (config/code); `docmap.py update` regenerates `docs/FACTS.md`. Docs cite FACTS.md rather than copying the value |
-| supersede a decision | the old entry's heading says `superseded by D<n>`; fix the live docs that `check` then lists |
-| find that this scaffolding itself (a template rule, the docs layout, a `docmap.py` check or command) misleads you, is missing something or costs too much | nothing here: send it to the skill that installed it, `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note project-foundations <kind> "<what happened, what would have helped>" --context <this project>` (if that fails and the person takes part in improving their skills, an `Observations for project-foundations` block in your reply); lessons about other skills go to that skill the same way |
-| reach a milestone (a result merged, a phase closed) | a docs audit: `python tools/docmap.py docs`, re-read the oldest or affected docs against code, DECISIONS and RESULTS, fix them and re-date their Status lines |
-
-- Before every commit: `python tools/docmap.py update`, then `python tools/docmap.py check` (CI runs it too). When `check` warns about old WORKLOG months, run `python tools/docmap.py rotate` (`rotate --keep N` also moves older entries of the current month).
-- Never describe planned or partial work as done; say how it was verified.
-- Keep this file short; add a rule only when an agent got something wrong.
-
-## Git
-- One logical, tested change per commit: <commit style>, summary ≤72 chars, body says why; cite D/R ids.
-- Before committing: tests and docs check green, `git diff --check` clean, staged diff reviewed for never-commit files.
-- After committing: `git push origin <branch>` (run unpiped if the SSH key prompts; never ask for or store the passphrase). If you can't push, say so.
-- Never force-push, rewrite pushed history or amend pushed commits. Ask before anything destructive.
-```
-
-### Shims
-
-`CLAUDE.md`:
-
-```markdown
-@AGENTS.md
-
-<!-- Claude Code-only additions below. Shared rules belong in AGENTS.md. -->
-```
-
-`.github/copilot-instructions.md` (if Copilot is used):
-
-```markdown
-Follow [AGENTS.md](../AGENTS.md) at the repository root; its rules are mandatory. Read it and `AGENTS.local.md` (this machine), then `docs/STATUS.md` and `docs/MAP.md`, before any change. Most important if it is not loaded:
-- <the 3 rules whose violation does the most damage, e.g. never commit data/secrets; run tests and `python tools/docmap.py check` before committing; never force-push>
-```
-
-Kiro reads root `AGENTS.md` natively: don't create a steering file just to point at it. Create `.kiro/steering/<topic>.md` only for Kiro-specific additions. Don't restate rules in shims beyond the top-3 fallback.
-
-### `AGENTS.local.example.md` (tracked) and `AGENTS.local.md` (git-ignored)
-
-The example lists every key a machine needs; the local file holds this machine's values in the same `- key: value` form, so `docmap.py check` can warn about missing keys. Agents create the local file when it is missing (`python tools/docmap.py local` prints what it can detect; ask the user for the rest) and update it when a machine fact changes. Add project-specific keys for anything outside the repo (sibling checkouts, data roots, cluster login). No secrets: agents read this file into their context. A machine's quirks the user wants agents to respect (an editor that rewrites tables, a passphrase-protected SSH key) go under `notes`.
-
-```markdown
-# AGENTS.local.md template
-
-Copy to `AGENTS.local.md` (git-ignored) and fill it in for this machine; agents create and update it. One `- key: value` line per fact. Tracked files refer to these keys, never to their values. No secrets: agents read this file into their context.
-
-- machine: <host name (OS, arch, CPUs, RAM)> - from `python tools/docmap.py local`
-- python: <absolute path of the project interpreter> - what `python` in AGENTS.md means
-- memory_budget: <peak RAM that local runs may use, e.g. "6 GB, never above 10 GB">
-- compute: <where heavy jobs run and how to reach them, or "none">
-- <one key per location outside the repo, e.g. upstream_checkout: <path to the read-only checkout>>
-- notes: <quirks agents must respect here, e.g. the SSH key asks for a passphrase, so push unpiped>
-```
-
-### User defaults file (outside every repository)
-
-`~/.config/project-foundations/defaults.md` - only if the user wants their conventions reused across projects:
-
-```markdown
-# Project-foundations defaults (<name>)
-Read by the project-foundations skill in Step 0. Not part of any repository.
-
-## Conventions
-- Git: <host and account, e.g. git@github.com:<account>/<repo>.git>; <commit style>; push after committing.
-- Never commit: <personal additions, e.g. an employer's internal documents>.
-- <research, language or review conventions>
-
-## Machines (copied into each checkout's AGENTS.local.md, never into tracked files)
-- <machine>: <OS; agents used; memory budget; where heavy jobs run; quirks>
-```
-
-### Folder `README.md` (every folder that contains code)
-
-`docmap.py update` creates a stub with `TODO(docmap)` and keeps the generated table current; `check` fails until the stub is replaced. Write:
-
-```markdown
-# <folder>/
-
-<Purpose paragraph. The first sentence must stand alone - it becomes this folder's line in docs/MAP.md and in the parent's table. Then: when to look here, the main entry points, and what does NOT belong here.>
-
-## Rules here
-- <Optional: conventions that apply only to this folder. If an agent must see them automatically, use a nested AGENTS.md instead.>
-
-<!-- docmap:begin (generated by tools/docmap.py; do not edit) -->
-(generated table)
-<!-- docmap:end -->
-```
-
-### File headers (every code file)
-
-Python - a module docstring:
-
-```python
-"""<One line: what this module is for. Shown in docs/MAP.md and the folder README.>
-
-<How to use it: the main classes/functions and how to call them (or the command line).>
-<Contracts: inputs/outputs, units, shapes, side effects, invariants; cite D/R ids for choices.>
-"""
-```
-
-Other languages: the first comment line (after any shebang) is the summary, followed by usage lines. Do not hand-write "used by" lists: they go stale; the generated tables and `docmap.py uses/where` provide them. Describe only what the code shows; if a file's purpose is unclear, say so in the docstring ("Purpose unclear: …") and add an open question to BRIEF.
-
-### `docs/BRIEF.md`
-
-```markdown
-# Brief
-Updated <YYYY-MM-DD>.
-
-## Goal
-<What success looks like, in 2-5 sentences.>
-
-## Non-goals
-- <Explicitly out of scope, and why.>
-
-## Users / stakeholders
-<Who uses it, who approves what.>
-
-## Success criteria
-- <Observable, checkable.>
-
-## Constraints
-<Data sensitivity, compute, deadlines, platforms.>
-
-## Open questions (for the owner)
-- [ ] <question> - <why it matters / what it blocks>
-```
-
-### `docs/STATUS.md` - snapshot, overwritten each session (≤ ~80 lines)
-
-```markdown
-# Status
-Updated <YYYY-MM-DD>. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
-
-## Works (verified)
-| Capability | How verified |
-|---|---|
-| <thing> | `<command>` → <result>, <date> |
-
-## Doesn't work yet / known issues
-- <issue> (<D/R/B id>)
-
-## Next actions
-1. <smallest next step> - <what it needs>
-
-## Blockers
-- <blocker> - <who/what unblocks it>
-```
-
-Anything added but not verifiable here (CI without a remote, tests in an env this machine lacks) goes under "Doesn't work yet / unverified", with what was verified instead.
-
-### `docs/WORKLOG.md` - append-only, newest first
-
-```markdown
-# Work log
-Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
-Earlier months: `docs/worklog/YYYY-MM.md`.
-
-## <YYYY-MM-DD> - <short title>
-Changed: <summary>. Decisions: <D ids, or none>.
-
-| Verification command | Result |
-|---|---|
-| `<cmd>` | <result> |
-
-Next: <one line>
-```
-
-Entry headings must contain a date (`2026-10-23` or `23 October 2026`) so `docmap.py rotate` can move past months into `docs/worklog/`. Migrated entries keep their original wording.
-
-### `docs/DECISIONS.md` - append-only, stable IDs
-
-```markdown
-# Decision log
-Every choice between alternatives, and every gap the code or sources leave that we filled ourselves. IDs are permanent. To change a decision, add a new entry and set the old one's status to "superseded by" the new ID; do not rewrite it.
-
-## D1. <Decision title> (<YYYY-MM-DD>; status: accepted | provisional - confirm with owner | superseded by D7)
-- **Context:** <the problem and constraints>
-- **Decision:** <what we do>
-- **Alternatives:** <option> - <why not>
-- **Consequences:** <what this makes easy/hard; when to revisit>
-- **Evidence / source:** <link, paper, benchmark, commit; research: established/plausible/unresolved>
-```
-
-`docmap.py update` inserts and refreshes an ID index after the intro paragraph; `check` warns when a doc cites a D-id that doesn't exist. Headings must match `## D<n>. <title>`. For many large independent decisions in a team service, one file per decision (`docs/decisions/NNNN-title.md`, MADR) also works; then set `indexes` in the config accordingly.
-
-### `docs/ARCHITECTURE.md`
-
-```markdown
-# Architecture
-Updated <YYYY-MM-DD>. Only what rarely changes; the file-level map is generated in docs/MAP.md.
-
-## Overview
-<The problem and the main data/control flow, possibly as a small text diagram.>
-
-## Boundaries and invariants
-- <"core never imports torch, NEURON or TwinProp at module level"> - enforced by `[tool.docmap.forbid]`
-- <"every model output passes validation before it is accepted"> - enforced by tests in <file>
-
-## Cross-cutting concerns
-<Config, logging, cache keys, errors, persistence.>
-```
-
-A long design reference (rationale per component) can live alongside as `docs/design/*.md` split per component, so agents read one part instead of one huge file.
-
-### Other templates
-
-- `CHANGELOG.md`: Keep a Changelog - `## [Unreleased]` with `### Added / Changed / Fixed / Removed`.
-- `docs/RESULTS.md`: numbered sections `## N. <run name> (<date>, run id, commit, config)` - setup, numbers with units, interpretation labelled established/plausible/unresolved, open problems. Corrections are new sections. The generated index lists them.
-- `docs/plans/<slug>.md`: `Status: proposed | in progress | done <date> | abandoned (<why>)`; Objective, Non-goals, Steps, Verification, Risks.
-- `docs/reviews/…`: findings B/Q/M with severity, evidence, fix; a resolution log at the top.
-
-### `.gitignore`
-
-Always: `.env`, `.env.*` + `!.env.example`, `*.pem`, `*.key`, `*.local.md` (covers `AGENTS.local.md` and `CLAUDE.local.md`, not `AGENTS.local.example.md`), `.claude/settings.local.json`, scratch folders that AI tools write into the repo (e.g. `Claude outputs/`), OS/editor junk, caches, `*.egg-info/`, `.venv/`, plus data/output/cache/checkpoint dirs and machine-local config (with a commented line for sensitive entries). Commit a `*.example` for each ignored config, with variable names taken from the code, never by reading the secret file. A never-commit file already tracked: `git rm --cached`, commit, tell the user it stays in history; purge history only on explicit request.
+The templates are not in this file: for each module chosen in Step 2, read its template from `templates/` (next to this file) when you write that file, and only those. Keep the template's headings and section order; delete a section only when it does not apply. If this harness shows only SKILL.md and not the skill's other files, fetch the template from `https://raw.githubusercontent.com/Horef/claude-plugins/main/plugins/project-foundations/skills/project-foundations/templates/<file>`.
+
+| Module (Step 2)                                             | Template                    |
+| ----------------------------------------------------------- | --------------------------- |
+| `AGENTS.md` (core, and a nested `AGENTS.md` in a folder)    | `templates/agents.md`       |
+| `CLAUDE.md` (core), Copilot / Kiro shims                    | `templates/shims.md`        |
+| `AGENTS.local.example.md` and `AGENTS.local.md` (core)      | `templates/agents-local.md` |
+| User defaults file (only if the user wants one)             | `templates/user-defaults.md` |
+| A README in every folder that contains code (core)          | `templates/folder-readme.md` |
+| A header docstring/comment in every code file (core)        | `templates/file-headers.md` |
+| `docs/BRIEF.md` (core)                                      | `templates/brief.md`        |
+| `docs/STATUS.md` (core)                                     | `templates/status.md`       |
+| `docs/WORKLOG.md` (core)                                    | `templates/worklog.md`      |
+| `docs/DECISIONS.md` (core)                                  | `templates/decisions.md`    |
+| `docs/ARCHITECTURE.md` + `[[tool.docmap.forbid]]` rules     | `templates/architecture.md` |
+| `CHANGELOG.md`, `docs/RESULTS.md` + `docs/RUNS.md`, `docs/plans/<slug>.md`, `docs/reviews/…` | `templates/other-docs.md` |
+| `.gitignore` (core)                                         | `templates/gitignore.md`    |
+
+No template: `tools/docmap.py` with `docs/MAP.md` and the CI workflow (Step 4), `docs/CONTRACTS.md` and `docs/archive/`, `backlog/` (write them from the "When" column in Step 2).
 
 ## Step 4 - Install the map and the checks
 
@@ -432,6 +188,8 @@ reason = "core runs without heavy backends"
 
 ## Retrofit procedure
 
+Templates: read one only when you create that file or restructure an existing one into its shape (Step 3 table): usually `agents.md`, `agents-local.md`, `status.md`, `worklog.md`, `decisions.md`; the others only for modules the project lacks. Moving existing content (steps 5-6) needs no template.
+
 1. **Inventory** every instruction file and doc; build a table *rule or fact → where it appears → conflicts*.
 2. **Classify and route** each piece: session rules → `AGENTS.md`; machine facts (absolute paths, interpreter, host, RAM budget, local checkouts, editor or SSH quirks) → `AGENTS.local.md`, with the key in `AGENTS.local.example.md`; a person's cross-project conventions → their defaults file; current state → STATUS; dated history and command/result tables → WORKLOG (verbatim, original dates); choices with reasons → DECISIONS (keep existing IDs and files); folder-specific rules → that folder's README (or nested AGENTS.md); how-to for humans → README or docs; finished specs → `docs/archive/`.
 3. **Respect what works**: keep names and formats other docs or commits reference.
@@ -444,6 +202,8 @@ reason = "core runs without heavy backends"
 
 ## Upgrade procedure (core docs exist, map layer missing)
 
+Templates: `agents.md` (steps 3 and 6b), `agents-local.md` (3a), `folder-readme.md` and `file-headers.md` (step 2); `shims.md` when step 6 updates the Copilot fallback. Do not read the others: the core docs already exist.
+
 1. Step 4.1–4.2: install and configure `tools/docmap.py`; turn the invariants already written in AGENTS.md/ARCHITECTURE (e.g. "core never imports heavy backends") into `forbid` rules, and check they pass. If a rule fails on a designed exception (e.g. an optional training package that exists to import torch), add it to `except` and record a decision; if it fails on a real violation, ask the owner.
 2. `update`, then work through `check` errors folder by folder: README purpose paragraphs, module docstrings. Commit per folder.
 3. Shrink `AGENTS.md`: move folder-specific rules into the folder READMEs (or a nested AGENTS.md if they must load automatically), add the "Finding your way" section and the new rows of the maintenance table, keep it under ~120 lines.
@@ -451,7 +211,7 @@ reason = "core runs without heavy backends"
 4. Split a very long design document into per-component files if agents keep reading all of it; keep `ARCHITECTURE.md` short.
 5. `rotate` the WORKLOG; set up `[tool.docmap.runs]` for research repos and run `runs`.
 6. Add `python tools/docmap.py check` to CI; update the Copilot shim's fallback rules.
-6b. Coming from an older `tools/docmap.py` (compare `DOCMAP_VERSION`): replace the script, then bring AGENTS.md's session-start and finding-your-way lines up to the template (since 5.2: `find` and `get D<n>` instead of reading DECISIONS whole; since 5.3: the Scaffolding line under the title and the maintenance row that sends lessons about the scaffolding to the skill; since 5.6: the "Design for what will vary next" line under Conventions), run `update`, and `stats` to see what a session now reads.
+6b. Coming from an older `tools/docmap.py` (compare `DOCMAP_VERSION`): replace the script, then bring AGENTS.md's session-start and finding-your-way lines up to `templates/agents.md` (since 5.2: `find` and `get D<n>` instead of reading DECISIONS whole; since 5.3: the Scaffolding line under the title and the maintenance row that sends lessons about the scaffolding to the skill; since 5.6: the "Design for what will vary next" line under Conventions), run `update`, and `stats` to see what a session now reads.
 6a. Doc lifecycle: give every doc in `docs/` a Status line (read it against the code, DECISIONS and RESULTS first: current, proposal, superseded or historical; move fully historical docs to `docs/archive/`). Mark superseded decisions in their headings. Configure `[tool.docmap.facts]` with the values docs keep repeating (defaults, presets, counts) and replace copied values with a reference to `docs/FACTS.md`. Keep `lifecycle_strict = false` until every doc has a Status line, then switch it on.
 7. Fix what `check` finds in old docs (broken links: fix the link or exempt truly historical folders via `link_exempt`; never delete history to silence a check).
 8. WORKLOG entry with the before/after `check` summary; commit; push.
@@ -468,11 +228,11 @@ git ls-files | grep -iE '(^|/)\.env(\.|$)|\.pem$|\.key$|secret' | grep -v '\.exa
 python tools/docmap.py where <a central class>                  # sanity: definition, importers and uses look right
 ```
 
-Also read: no rule contradicts another across AGENTS.md, shims and nested files; STATUS has a date and every "Works" row a verification; the brief has non-goals (or `TBD (owner)`); a few generated README tables and docstrings read correctly.
+Also check that every file written has the headings of its template (compare each against its `templates/` file; a missing heading means the section was dropped, not that it did not apply). Also read: no rule contradicts another across AGENTS.md, shims and nested files; STATUS has a date and every "Works" row a verification; the brief has non-goals (or `TBD (owner)`); a few generated README tables and docstrings read correctly.
 
 ## Step 6 - Audit mode
 
-Run Step 5 and `python tools/docmap.py docs` (the audit queue: oldest verification first; docs with no Status line on top), then look for: **staleness** (docs whose Status is current but whose claims no longer match code, configs, FACTS.md or the latest DECISIONS/RESULTS; proposals that were decided; live docs citing superseded decisions; STATUS behind the last commits; ARCHITECTURE naming modules that no longer exist; plans "in progress" with no recent commits; docstrings whose first line no longer matches the code); **bloat** (AGENTS.md over ~120 lines; huge single docs; rules agents follow anyway); **drift** (rules duplicated across files; shims restating rules; decisions contradicted by code without a superseding entry); **portability** (machine facts in tracked files that `check` cannot see: host or user names, a machine's RAM limit, "on my Mac"; keys missing from `AGENTS.local.example.md`); **gaps** (decisions visible in git log - `git log --oneline -i -E --grep='switch|instead|replace|chose|decid'` - with no D entry; boundaries stated in prose but not in `forbid`). Output a short findings list, most important first, with fixes; apply what the user approves.
+Run Step 5 and `python tools/docmap.py docs` (the audit queue: oldest verification first; docs with no Status line on top), then look for: **staleness** (docs whose Status is current but whose claims no longer match code, configs, FACTS.md or the latest DECISIONS/RESULTS; proposals that were decided; live docs citing superseded decisions; STATUS behind the last commits; ARCHITECTURE naming modules that no longer exist; plans "in progress" with no recent commits; docstrings whose first line no longer matches the code); **bloat** (AGENTS.md over ~120 lines; huge single docs; rules agents follow anyway); **drift** (rules duplicated across files; shims restating rules; decisions contradicted by code without a superseding entry); **portability** (machine facts in tracked files that `check` cannot see: host or user names, a machine's RAM limit, "on my Mac"; keys missing from `AGENTS.local.example.md`); **gaps** (decisions visible in git log - `git log --oneline -i -E --grep='switch|instead|replace|chose|decid'` - with no D entry; boundaries stated in prose but not in `forbid`). Output a short findings list, most important first, with fixes; apply what the user approves. Templates: Audit reads none by default; open one only to compare a file you suspect has drifted from its shape (e.g. an AGENTS.md without the maintenance table against `templates/agents.md`, a STATUS without the verification column against `templates/status.md`) or when a fix creates a missing file.
 
 ## Step 7 - Finish
 

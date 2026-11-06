@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.8.0 (2026-11-06)
+- templates on demand: one file per template, read only for chosen modules (O3)
+
 ## 5.7.0 (2026-11-06)
 - docmap: read_total_max_tokens budget checked by check and named in stats; rotate --keep N moves older WORKLOG entries regardless of month (O12)
 
