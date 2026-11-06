@@ -1,5 +1,5 @@
 # Status
-Updated 2026-11-05. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -22,6 +22,7 @@ Updated 2026-11-05. Snapshot only - overwrite each session; history is in `docs/
 | Copilot Fusion as an opt-in helper: herdr-delegate 0.2.0 templates, model-router 0.12.0 setting | Fusion Max one-prompt run → `syntheticModel: hydrafusion-max`; `hc run copilot-fusion-high` → "Copilot Fusion · High"; `claude plugin test plugins/model-router` → 10 pass, 2026-11-01. Quality below Max unmeasured |
 | gui-design 0.4.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py`; 0.4.0 adds 'what will vary next?' (data-driven labels), one control per outcome, overlay colours against the base layer, window-filling embedded viewers, Zoom and pan | `loop.py eval gui-design` → pass, 2026-11-04; rules come from the simple_complex_v1 Replay rounds (2026-11-03/04). Judged cases (4 new) not run blind; mod panes cannot be seen |
 | herdr-delegate 0.4.0: `helpers.py prompt`, AFK helper choice, cost-aware briefs | `loop.py eval herdr-delegate` pass, 2026-11-02; Kiro helpers used unattended in the GUI-wide pass (4 batches), 2026-11-01 |
+| Reflection pass 2026-11-06 (owner-reviewed): course-lecture-notes 1.4.0, scientific-figures 7.0.3, local-run-queue 0.2.0 (`runq.py wait`), project-foundations 5.7.0 (`read_total_max_tokens`, `rotate --keep`), paper-premark 1.1.0 (`validate_marks.py`), herdr-delegate 0.5.0 (argon via agy, long jobs survive `hc kill`, mixed families), research-writing 0.3.0 (condition column, figure height and number checks, mixed-family readers) | each unit's `loop.py eval` → pass (scientific-figures with a matplotlib venv: 28 figures, 3 NOT RUN without MorphIO); `loop.py check --base origin/main` → 0 errors; `docmap.py check` → 0 errors, 2026-11-06. validate_marks.py not yet tried on a real DEVONthink extract |
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 
 ## Doesn't work yet / known issues
@@ -29,7 +30,8 @@ Updated 2026-11-05. Snapshot only - overwrite each session; history is in `docs/
 - The Claude Code session-start hook (`plugins/strange-loop/hooks/hooks.json`) has not been tried in an installed session.
 - course-lecture-notes has judged cases only; its DEVONthink steps need the owner's Mac.
 - The judged cases (`evals/cases.md`) have never been run; no tooling for blind A/B yet (strange-loop O1).
-- Ripe now: scientific-figures O5 (eigen-directions in the saddle portrait, now `examples/saddle_portrait.py`, differ by hue only), seen by looking at the renders.
+- course-lecture-notes O4: the pipeline (owner's `GeminiAnkiCards` repo) still stops on a cross-deck duplicate; the skill documents the workaround. Fix there: `duplicateScope: "deck"` and skip duplicates.
+- model-router: lifetime totals reset at an update/restart (store file survives; suspected race between `loadRemembered` and `account()`); postponed by the owner to a batch with other router changes.
 
 ## Next actions
 1. Owner: on the Mac, `git pull` in the clone and `echo on > ~/.config/strange-loop/auto_sync` (D10); add the marketplace in claude.ai with Sync automatically, then remove the hand-uploaded skills; install strange-loop locally in Claude Code; run `loop.py eval scientific-figures` on the Mac, then retire `~/Scripts/ScientificFigures`.
@@ -37,7 +39,7 @@ Updated 2026-11-05. Snapshot only - overwrite each session; history is in `docs/
 2. Use the skills normally; real observations are what the loop needs.
 2b. Existing projects: run project-foundations' Upgrade (step 6b) once each, so their AGENTS.md routes scaffolding lessons to the skill and their docmap warns about newer versions.
 2a. To add a skill: `loop.py new <name> --description ... --category ... --from <folder>` (strange-loop section 8); run it with the global `--genome "$PWD"` when working in a git worktree. paper-premark 1.0.0 is adopted on branch `paper-premark-skill` (PR open, not merged); its judged cases have never been run and it needs the owner's Mac with DEVONthink.
-3. Reflection passes when units turn ripe: scientific-figures O5; project-foundations O3 (templates on demand, which also fixes the line budget).
+3. Proposed, awaiting owner: project-foundations O3 (templates/ per module, read on demand); paper-premark O3 + course-lecture-notes O3 (harness-routes table, osascript recipes; first check whether the DEVONthink MCP server can run in Claude Code); strange-loop O5 (reading-based observations expire after ~5 uses unconfirmed).
 
 ## Blockers
 - None.
