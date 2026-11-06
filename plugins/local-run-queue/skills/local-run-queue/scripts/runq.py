@@ -33,6 +33,7 @@ Policy:
 - Stopping the driver (SIGTERM) leaves running jobs alone (own process groups); use `stop` for a clean drain.
 
 Exit codes: 0 ok, 1 usage/state error, 2 a needed system tool missing (e.g. `footprint` on macOS).
+`wait` adds: 3 the driver is gone but not every job is done (failed, blocked or never run), 4 --timeout reached.
 """
 
 from __future__ import annotations
@@ -712,6 +713,30 @@ def cmd_status(a) -> int:
     return 0
 
 
+def cmd_wait(a) -> int:
+    """Block until the driver exits (liveness from driver.pid, checked as in status), then print the status summary.
+    Exit 0 all jobs done, 3 some job not done, 4 timeout (summary printed too). Never match the driver by name."""
+    q = need_qdir(a)
+    t0 = time.time()
+    timed_out = False
+    while driver_pid(q):
+        if a.timeout is not None and time.time() - t0 >= a.timeout:
+            timed_out = True
+            break
+        time.sleep(min(a.poll_s, 1.0) if a.timeout is None else min(a.poll_s, max(0.05, a.timeout - (time.time() - t0))))
+    cmd_status(a)
+    recs = view(q)[4]
+    bad = {n: r["status"] for n, r in recs.items() if r["status"] != "done"}
+    if timed_out:
+        print(f"wait: timeout after {a.timeout:g} s, driver still running; {len(bad)} job(s) not done", file=sys.stderr)
+        return 4
+    if bad:
+        print(f"wait: driver exited; not done: {bad}", file=sys.stderr)
+        return 3
+    print("wait: driver exited; all jobs done", file=sys.stderr)
+    return 0
+
+
 def cmd_plan(a) -> int:
     q = need_qdir(a)
     ov, st, defs, problems, recs = view(q)
@@ -807,6 +832,10 @@ def main(argv=None) -> int:
     s.add_argument("pairs", nargs="+")
     s.set_defaults(fn=cmd_set)
     qp("status", "table of jobs, totals, driver state").set_defaults(fn=cmd_status)
+    s = qp("wait", "block until the driver exits, print the status; exit 0 all done, 3 not all done, 4 timeout")
+    s.add_argument("--timeout", type=float, help="seconds; exit 4 if the driver is still running then")
+    s.add_argument("--poll-s", type=float, default=1.0)
+    s.set_defaults(fn=cmd_wait)
     qp("plan", "dry run: order and what would start now").set_defaults(fn=cmd_plan)
     s = sub.add_parser("measure", help="peak private memory of a command's whole process tree, or of a pid")
     s.add_argument("--pid", type=int)
