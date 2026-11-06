@@ -23,6 +23,7 @@ Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/
 | gui-design 0.4.0: layer rule, references from 10 UI sources, `shot.py` and `lint_ui.py`; 0.4.0 adds 'what will vary next?' (data-driven labels), one control per outcome, overlay colours against the base layer, window-filling embedded viewers, Zoom and pan | `loop.py eval gui-design` → pass, 2026-11-04; rules come from the simple_complex_v1 Replay rounds (2026-11-03/04). Judged cases (4 new) not run blind; mod panes cannot be seen |
 | herdr-delegate 0.4.0: `helpers.py prompt`, AFK helper choice, cost-aware briefs | `loop.py eval herdr-delegate` pass, 2026-11-02; Kiro helpers used unattended in the GUI-wide pass (4 batches), 2026-11-01 |
 | Reflection pass 2026-11-06 (owner-reviewed): course-lecture-notes 1.4.0, scientific-figures 7.0.3, local-run-queue 0.2.0 (`runq.py wait`), project-foundations 5.7.0 (`read_total_max_tokens`, `rotate --keep`), paper-premark 1.1.0 (`validate_marks.py`), herdr-delegate 0.5.0 (argon via agy, long jobs survive `hc kill`, mixed families), research-writing 0.3.0 (condition column, figure height and number checks, mixed-family readers) | each unit's `loop.py eval` → pass (scientific-figures with a matplotlib venv: 28 figures, 3 NOT RUN without MorphIO); `loop.py check --base origin/main` → 0 errors; `docmap.py check` → 0 errors, 2026-11-06. validate_marks.py not yet tried on a real DEVONthink extract |
+| Second pass 2026-11-06: project-foundations 5.8.0 (templates/ on demand, SKILL.md 491 -> 251 lines), strange-loop 1.1.0 (unconfirmed reading notes offered as restructures), paper-premark 1.2.0 and course-lecture-notes 1.5.0 (DEVONthink MCP only; harness file routes; step 7 images and duplicate skip) | `loop.py eval` per unit → pass; strange-loop 18 unit tests OK; DEVONthink MCP in Claude Code CLI: 63 tools, 3 databases listed (`claude -p`), 2026-11-06 |
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 
 ## Doesn't work yet / known issues
@@ -30,7 +31,7 @@ Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/
 - The Claude Code session-start hook (`plugins/strange-loop/hooks/hooks.json`) has not been tried in an installed session.
 - course-lecture-notes has judged cases only; its DEVONthink steps need the owner's Mac.
 - The judged cases (`evals/cases.md`) have never been run; no tooling for blind A/B yet (strange-loop O1).
-- course-lecture-notes O4: the pipeline (owner's `GeminiAnkiCards` repo) still stops on a cross-deck duplicate; the skill documents the workaround. Fix there: `duplicateScope: "deck"` and skip duplicates.
+- Anki pipeline (owner's repo, 3 commits 2026-11-06, not pushed): in-deck duplicates skipped, figures and images on cards; 132 tests pass, never run against real Anki/Gemini. First real run: check images on cards (blocks with figures).
 - model-router: lifetime totals reset at an update/restart (store file survives; suspected race between `loadRemembered` and `account()`); postponed by the owner to a batch with other router changes.
 
 ## Next actions
@@ -39,7 +40,7 @@ Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/
 2. Use the skills normally; real observations are what the loop needs.
 2b. Existing projects: run project-foundations' Upgrade (step 6b) once each, so their AGENTS.md routes scaffolding lessons to the skill and their docmap warns about newer versions.
 2a. To add a skill: `loop.py new <name> --description ... --category ... --from <folder>` (strange-loop section 8); run it with the global `--genome "$PWD"` when working in a git worktree. paper-premark 1.0.0 is adopted on branch `paper-premark-skill` (PR open, not merged); its judged cases have never been run and it needs the owner's Mac with DEVONthink.
-3. Proposed, awaiting owner: project-foundations O3 (templates/ per module, read on demand); paper-premark O3 + course-lecture-notes O3 (harness-routes table, osascript recipes; first check whether the DEVONthink MCP server can run in Claude Code); strange-loop O5 (reading-based observations expire after ~5 uses unconfirmed).
+3. Offer to the owner (status lists them): reading notes unconfirmed by use, course-lecture-notes O1. Next: model-router lifetime reset and the owner's other router changes. validate_marks.py on a real extract at the next paper-premark run.
 
 ## Blockers
 - None.

@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-06 - Second reflection pass: templates, reading notes, DEVONthink MCP
+
+Second pass, owner's decisions on the proposals. Branch genome/reflection-2-2026-11-06.
+- project-foundations 5.8.0: templates moved to templates/ (13 files), read per chosen module; SKILL.md 491 -> 251; evals 44 -> 48 checks, 0 failures before and after.
+- strange-loop 1.1.0: `from_reading` / `reading_to_offer` in loop.py; status and digest list reading notes with no recurrence after three later use notes (now: course-lecture-notes O1). Owner: offer, never drop.
+- paper-premark 1.2.0, course-lecture-notes 1.5.0: DEVONthink only through MCP (checked: `claude -p` with mcp__devonthink__* listed 63 tools and 3 databases); stop when unavailable; one harness table for file moves; step 7 follows the pipeline's figures and duplicate skip.
+- Anki pipeline repo (outside the genome): owner's pending edits committed (100 tests OK), then duplicate skip and images on cards (132 tests OK). Not pushed; no real Anki/Gemini run.
+
 ## 2026-11-06 - Reflection pass over all units
 
 Owner-reviewed reflection over all open observations (48). Done on branch genome/reflection-2026-11-06, one commit per unit; five units by Sonnet subagents, paper-premark and research-writing by Copilot helpers (Kiro needed a login).
