@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-07 - model-router 0.16-0.18 and course-notes lint
+
+Owner's model-router batch and course-lecture-notes O1, on branch model-router/0.16; all four steps run on helpers (Copilot standard for c1 and r1, Kiro standard for r2, Kiro deep for r3) with briefs in a git-excluded .helper-briefs/ folder inside the repo (scratchpad paths trigger Copilot path prompts, herdr-delegate O10).
+- course-lecture-notes 1.6.0: lint_notes.py; docmap.toml exempts eval fixtures from the link check.
+- model-router 0.16.0 (persistence: load gate, merge on write, ~/.config mirror; helper order; coalesced mid-run notes), 0.17.0 (nested parts, count, helper and model, helper usage per provider), 0.18.0 (verdicts, kinds, learned advice with Apply, auto mode, open model list, genome note; O1). evals/run.py wraps the engine tests.
+- Commands: `claude plugin test plugins/model-router` → 45 pass; `claude plugin validate` → passed (old icon/author warnings); `loop.py check --base origin/main`; `docmap.py check` → 0 errors.
+- Kiro had been skipped since a `helpers.py login kiro` mark never expires (herdr-delegate O11); kiro-cli 3.1.0 template flags verified with a one-prompt run.
+
 ## 2026-11-06 - Second reflection pass: templates, reading notes, DEVONthink MCP
 
 Second pass, owner's decisions on the proposals. Branch genome/reflection-2-2026-11-06.

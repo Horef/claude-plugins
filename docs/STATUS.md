@@ -1,5 +1,5 @@
 # Status
-Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-07. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -24,6 +24,8 @@ Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/
 | herdr-delegate 0.4.0: `helpers.py prompt`, AFK helper choice, cost-aware briefs | `loop.py eval herdr-delegate` pass, 2026-11-02; Kiro helpers used unattended in the GUI-wide pass (4 batches), 2026-11-01 |
 | Reflection pass 2026-11-06 (owner-reviewed): course-lecture-notes 1.4.0, scientific-figures 7.0.3, local-run-queue 0.2.0 (`runq.py wait`), project-foundations 5.7.0 (`read_total_max_tokens`, `rotate --keep`), paper-premark 1.1.0 (`validate_marks.py`), herdr-delegate 0.5.0 (argon via agy, long jobs survive `hc kill`, mixed families), research-writing 0.3.0 (condition column, figure height and number checks, mixed-family readers) | each unit's `loop.py eval` → pass (scientific-figures with a matplotlib venv: 28 figures, 3 NOT RUN without MorphIO); `loop.py check --base origin/main` → 0 errors; `docmap.py check` → 0 errors, 2026-11-06. validate_marks.py not yet tried on a real DEVONthink extract |
 | Second pass 2026-11-06: project-foundations 5.8.0 (templates/ on demand, SKILL.md 491 -> 251 lines), strange-loop 1.1.0 (unconfirmed reading notes offered as restructures), paper-premark 1.2.0 and course-lecture-notes 1.5.0 (DEVONthink MCP only; harness file routes; step 7 images and duplicate skip) | `loop.py eval` per unit → pass; strange-loop 18 unit tests OK; DEVONthink MCP in Claude Code CLI: 63 tools, 3 databases listed (`claude -p`), 2026-11-06 |
+| model-router 0.16-0.18 (2026-11-07): settings gated on load, merged on write and mirrored to ~/.config/model-router; helper order editor; coalesced mid-run notes; nested parts with count; helper and model shown; helper usage per provider; verdicts, per-kind advice, auto mode, open model list | `claude plugin test plugins/model-router` → 45 pass; `loop.py eval model-router` (new evals/run.py) → pass, 2026-11-07. Not yet seen in a real session; Agent tool's model enum may refuse a model outside haiku/sonnet/opus/fable |
+| course-lecture-notes 1.6.0: `lint_notes.py` | `loop.py eval course-lecture-notes` → pass (2 fixtures), 2026-11-07; not run on a real study guide |
 | CI (unit tests, both skills' evals with the figure benchmarks on a GitHub runner, both checks) | PR #1 check run on bb21ada → success, 2026-10-30 |
 
 ## Doesn't work yet / known issues
@@ -32,7 +34,6 @@ Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/
 - course-lecture-notes has judged cases only; its DEVONthink steps need the owner's Mac.
 - The judged cases (`evals/cases.md`) have never been run; no tooling for blind A/B yet (strange-loop O1).
 - Anki pipeline (owner's repo, 3 commits 2026-11-06, not pushed): in-deck duplicates skipped, figures and images on cards; 132 tests pass, never run against real Anki/Gemini. First real run: check images on cards (blocks with figures).
-- model-router: lifetime totals reset at an update/restart (store file survives; suspected race between `loadRemembered` and `account()`); postponed by the owner to a batch with other router changes.
 
 ## Next actions
 1. Owner: on the Mac, `git pull` in the clone and `echo on > ~/.config/strange-loop/auto_sync` (D10); add the marketplace in claude.ai with Sync automatically, then remove the hand-uploaded skills; install strange-loop locally in Claude Code; run `loop.py eval scientific-figures` on the Mac, then retire `~/Scripts/ScientificFigures`.
@@ -40,7 +41,7 @@ Updated 2026-11-06. Snapshot only - overwrite each session; history is in `docs/
 2. Use the skills normally; real observations are what the loop needs.
 2b. Existing projects: run project-foundations' Upgrade (step 6b) once each, so their AGENTS.md routes scaffolding lessons to the skill and their docmap warns about newer versions.
 2a. To add a skill: `loop.py new <name> --description ... --category ... --from <folder>` (strange-loop section 8); run it with the global `--genome "$PWD"` when working in a git worktree. paper-premark 1.0.0 is adopted on branch `paper-premark-skill` (PR open, not merged); its judged cases have never been run and it needs the owner's Mac with DEVONthink.
-3. Offer to the owner (status lists them): reading notes unconfirmed by use, course-lecture-notes O1. Next: model-router lifetime reset and the owner's other router changes. validate_marks.py on a real extract at the next paper-premark run.
+3. Offer to the owner (status lists them): reading notes unconfirmed by use, course-lecture-notes O1. Next: use model-router 0.18 in real chats (verdicts, parts, helper usage) and watch for engine issues the tests cannot show. validate_marks.py on a real extract at the next paper-premark run.
 
 ## Blockers
 - None.
