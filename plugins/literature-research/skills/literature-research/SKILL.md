@@ -15,8 +15,8 @@ Rules with sources, by stage: `references/search-rules.md` (its "Most important 
 
 1. `SKILL` = this skill's folder. `lit.py` needs Python 3.10+; `pdftotext` (poppler) for full text; on macOS, DEVONthink through `osascript`. A missing tool gives exit 2: that source or step is not available, never "nothing found".
 2. Read the person's profile if there is one, `~/.config/literature-research/profile.md` (format: `profile.example.md`): default sources, where their papers live (DEVONthink databases, a project's `references/papers/`), how to get paywalled papers, API keys in the environment, model tiers per step.
-3. `python3 SKILL/scripts/lit.py devonthink-status`: if DEVONthink is not reachable (not this machine, not running, automation not allowed), say so once and continue with the other sources. The automation permission belongs to the terminal app the agent runs in (System Settings > Privacy & Security > Automation): a helper in another terminal may reach DEVONthink when the lead cannot.
-4. Semantic Scholar answers HTTP 429 without a key: set `S2_API_KEY` (free) or rely on OpenAlex for search and citation chasing, and say so in the log.
+3. DEVONthink, two ways in. If the agent has DEVONthink MCP tools (`search_records`, `get_imported_record_path`, ...), use them: they need no automation permission. Otherwise `python3 SKILL/scripts/lit.py devonthink-status`; if it is not reachable (not this machine, not running, automation not allowed), say so once and continue with the other sources. The automation permission belongs to the terminal app the agent runs in (System Settings > Privacy & Security > Automation): a helper in another terminal may reach DEVONthink when the lead cannot.
+4. Without `S2_API_KEY`, Semantic Scholar shares one busy public pool: the same call flips between 200 and 429. `lit.py` retries patiently and, when relevance search stays busy, falls back to `/search/bulk` (most-cited first, not relevance-ranked; whitespace is AND, `|` is OR, `"…"` a phrase), which the log records. Write keyless S2 queries in that syntax; if S2 still fails, rely on OpenAlex and say so in the log.
 
 ## 1. Frame the question (search-rules A)
 
@@ -38,7 +38,9 @@ Titles and abstracts first, over-inclusively; then full text. `lit.py screen DIR
 
 ## 4. Read and fill the ledger (E)
 
-Get the full text with `lit.py fetch DIR <key>`: DEVONthink first, then the project's papers folder, then open access. A paper none of these has goes to `to_fetch.md` for the person (title, DOI, why it is needed); continue with its abstract and mark the rows `abstract-only`. Extract text with `lit.py text <pdf>`.
+Get the full text with `lit.py fetch DIR <key>`: DEVONthink first, then the project's papers folder, then open access (the candidate's OA link, arXiv, bioRxiv/medRxiv at the latest version, eLife, OpenAlex locations, then Europe PMC's open-access full text found from the DOI). With DEVONthink MCP tools, look the paper up yourself first: `search_records` with the bare DOI as the query (hits carry `doi`; fall back to the title), `get_imported_record_path` for the file, then `lit.py fetch DIR <key> --file PATH`, which runs the same page-1 identity check (exit 1: not this paper). Never edit files inside a `.dtBase2` package; `lit.py text` caches outside it.
+
+A paper none of these has goes to `to_fetch.md` for the person (title, DOI, why it is needed); continue with its abstract and mark the rows `abstract-only`. Publisher sites (J Neurosci, APS, OUP, Nature, Elsevier) refuse scripted downloads even for free papers, so to_fetch.md is still the way for those; put the DOI link in each row and give the person's paper folder (profile) where they should save them. Extract text with `lit.py text <pdf>`.
 
 One ledger row per finding, before any prose: the claim in one sentence, the **value with units**, the **conditions** (species, age, layer, preparation, temperature, method, the measurement's definition), the source key, the **locator** (page, figure, table), a **verbatim quote** of the passage, and the **evidence type**: `measured` (the paper's own data), `modelled`, `cited` (the paper cites another for it: trace it, F3) or `inferred` (our conversion or reasoning: show it in the note). A claim taken from a review is traced to the paper with the data; record the chain in the note.
 

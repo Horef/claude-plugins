@@ -22,6 +22,7 @@ import difflib
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -47,7 +48,7 @@ LOG_HEADER = "| # | date | source | query | filters | hits | new | note |"
 LOG_SEP = "|---|------|--------|-------|---------|------|-----|------|"
 FETCH_HEADER = "| key | title | DOI | why needed |"
 FETCH_SEP = "|-----|-------|-----|------------|"
-S2_HINT = "set S2_API_KEY (free) or rely on OpenAlex"
+S2_HINT = "the keyless pool is shared and busy; retry later, set S2_API_KEY (free), or rely on OpenAlex"
 PUBMED_HINT = ("PubMed ANDs every word; use short boolean queries, e.g. thalamocortical AND NMDA AND layer 2/3")
 MIN_PDF_BYTES = 20_000
 S2_FIELDS = "title,authors,year,venue,abstract,externalIds,openAccessPdf"
@@ -84,8 +85,8 @@ def http_get(url, headers=None, timeout=30, retries=3):
                     wait = min(float(e.headers.get("Retry-After", delay)), 30)
                 except (TypeError, ValueError):
                     pass
-                time.sleep(wait)
-                delay *= 2
+                time.sleep(wait + random.uniform(0, 1))  # jitter: shared pools punish lockstep retries
+                delay = min(delay * 2, 30)
                 continue
             hint = (f" ({S2_HINT})" if e.code == 429 and "semanticscholar" in url and not os.environ.get("S2_API_KEY")
                     else "")
@@ -95,9 +96,9 @@ def http_get(url, headers=None, timeout=30, retries=3):
     raise NetError("unreachable")
 
 
-def get_json(url, headers=None):
+def get_json(url, headers=None, retries=3):
     try:
-        return json.loads(http_get(url, headers))
+        return json.loads(http_get(url, headers, retries=retries))
     except ValueError:
         raise NetError(f"non-JSON response from {urllib.parse.urlsplit(url).netloc}")
 
@@ -455,17 +456,51 @@ def search_pubmed(query, maxn, since):
     return records, f"total {res.get('count', len(records))}"
 
 
+def s2_get(url, retries=7):
+    """Semantic Scholar GET. Without S2_API_KEY every caller shares one public pool, so the
+    same request flips between 200 and 429: retry patiently (about two minutes at retries=7)."""
+    if os.environ.get("S2_API_KEY"):
+        return get_json(url, {"x-api-key": os.environ["S2_API_KEY"]})
+    return get_json(url, retries=retries)
+
+
 def search_s2(query, maxn, since):
-    hdrs = {"x-api-key": os.environ["S2_API_KEY"]} if os.environ.get("S2_API_KEY") else {}
+    try:
+        return search_s2_relevance(query, maxn, since)
+    except NetError as e:
+        if "429" not in str(e) or os.environ.get("S2_API_KEY"):
+            raise
+    # /search/bulk has its own, much less crowded limit; it is not relevance-ranked, so most-cited first
+    records, note = search_s2_bulk(query, maxn, since)
+    return records, note + "; relevance search rate-limited, used /search/bulk sorted by citations"
+
+
+def search_s2_relevance(query, maxn, since):
     records, offset = [], 0
     while len(records) < maxn:
         limit = min(100, maxn - len(records))
         p = {"query": query, "limit": limit, "offset": offset, "fields": S2_FIELDS, "year": f"{since}-" if since else ""}
-        js = get_json("https://api.semanticscholar.org/graph/v1/paper/search?" + qs(p), hdrs)
+        # keyless relevance search is the most crowded endpoint: two quick tries, then fall back to bulk
+        js = s2_get("https://api.semanticscholar.org/graph/v1/paper/search?" + qs(p), retries=7 if offset else 2)
         data = js.get("data") or []
         records += [norm_s2(x) for x in data]
         offset += limit
         if len(data) < limit or "next" not in js:
+            break
+        time.sleep(1)
+    return records[:maxn], f"total {js.get('total', len(records))}"
+
+
+def search_s2_bulk(query, maxn, since):
+    """Bulk search: whitespace = AND; supports + | - "phrase" and * (Semantic Scholar syntax)."""
+    records, token, js = [], "", {}
+    while len(records) < maxn:
+        p = {"query": query, "fields": S2_FIELDS, "sort": "citationCount:desc",
+             "year": f"{since}-" if since else "", "token": token}
+        js = s2_get("https://api.semanticscholar.org/graph/v1/paper/search/bulk?" + qs(p))
+        records += [norm_s2(x) for x in js.get("data") or []]
+        token = js.get("token") or ""
+        if not token:
             break
         time.sleep(1)
     return records[:maxn], f"total {js.get('total', len(records))}"
@@ -671,10 +706,9 @@ def cites_s2(r, direction, maxn):
     pid = s2_paper_id(r)
     if not pid:
         raise LitError("no identifier for Semantic Scholar")
-    hdrs = {"x-api-key": os.environ["S2_API_KEY"]} if os.environ.get("S2_API_KEY") else {}
     ep, field = ("references", "citedPaper") if direction == "refs" else ("citations", "citingPaper")
-    js = get_json(f"https://api.semanticscholar.org/graph/v1/paper/{urllib.parse.quote(pid, safe=':')}/{ep}?"
-                  + qs({"fields": S2_FIELDS, "limit": min(maxn, 1000)}), hdrs)
+    js = s2_get(f"https://api.semanticscholar.org/graph/v1/paper/{urllib.parse.quote(pid, safe=':')}/{ep}?"
+                + qs({"fields": S2_FIELDS, "limit": min(maxn, 1000)}))
     out = [norm_s2(x[field]) for x in js.get("data") or [] if x.get(field) and x[field].get("title")]
     return out[:maxn]
 
@@ -914,7 +948,40 @@ def oa_urls(rec):
     urls = [rec.get("oa_pdf")]
     if rec.get("arxiv"):
         urls.append(f"https://arxiv.org/pdf/{rec['arxiv']}")
+    m = re.match(r"10\.7554/elife\.(\d+)", rec.get("doi") or "", re.I)
+    if m:  # doi.org serves eLife's HTML page; the PDF has a fixed address
+        urls.append(f"https://elifesciences.org/articles/{m.group(1)}.pdf")
     return [u for u in urls if u]
+
+
+def preprint_urls(rec):
+    """bioRxiv/medRxiv (DOI 10.1101/...): the latest version's PDF from their API; [] otherwise.
+    OpenAlex often has no PDF location for these, and the version suffix (v2) must be right."""
+    doi = rec.get("doi") or ""
+    if not doi.lower().startswith("10.1101/"):
+        return []
+    urls = []
+    for server in ("biorxiv", "medrxiv"):
+        try:
+            coll = get_json(f"https://api.biorxiv.org/details/{server}/{doi}").get("collection") or []
+        except LitError:
+            continue
+        if coll:
+            v = max(int(c.get("version", 1)) for c in coll)
+            urls.append(f"https://www.{server}.org/content/{doi}v{v}.full.pdf")
+            break
+    return urls
+
+
+def epmc_pmcid(doi):
+    """PMCID for a DOI from Europe PMC search ('' when none). Only the open-access subset has
+    full text through fullTextXML; PMC's own PDF links serve a browser check to scripts."""
+    js = get_json("https://www.ebi.ac.uk/europepmc/webservices/rest/search?"
+                  + qs({"query": f'DOI:"{doi}"', "format": "json", "resultType": "lite"}))
+    for r in (js.get("resultList") or {}).get("result") or []:
+        if r.get("pmcid"):
+            return r["pmcid"]
+    return ""
 
 
 def openalex_lookup(rec):
@@ -1055,6 +1122,12 @@ def cmd_fetch(a):
     rec = find_candidate(a.dir, a.key)
     papers = Path(a.papers).expanduser() if a.papers else project_root(a.dir) / "references" / "papers"
     notes = []
+    if a.file:  # a path the agent found itself, e.g. with the DEVONthink MCP tools; same identity check
+        hit = check_candidate_pdf(rec, str(Path(a.file).expanduser()), "given file", notes)
+        if hit:
+            print(f"{hit[0]}\nroute: {hit[1]}")
+            return 0
+        raise LitError("; ".join(notes) or "given file rejected", 1)
     if rec.get("path") and rec["path"].lower().endswith(".pdf") and Path(rec["path"]).exists():
         hit = check_candidate_pdf(rec, rec["path"], "devonthink (candidate record)", notes)
         if hit:
@@ -1077,11 +1150,20 @@ def cmd_fetch(a):
         return 0
     urls, pmcid = oa_urls(rec), rec.get("pmcid", "")
     try:
+        urls += [u for u in preprint_urls(rec) if u not in urls]
+    except LitError as e:
+        notes.append(f"preprint server lookup failed ({e})")
+    try:
         more, pmc = openalex_lookup(rec)
         urls += [u for u in more if u not in urls]
         pmcid = pmcid or pmc
     except LitError as e:
         notes.append(f"openalex lookup failed ({e})")
+    if not pmcid and rec.get("doi"):
+        try:
+            pmcid = epmc_pmcid(rec["doi"])
+        except LitError as e:
+            notes.append(f"europe pmc lookup failed ({e})")
     ok, errs = download_pdf(urls, papers / f"{rec['key']}.pdf")
     notes += errs
     if ok:
@@ -1534,6 +1616,8 @@ def build_parser():
     s.add_argument("key")
     s.add_argument("--papers", help="folder of PDFs (default <repo>/references/papers)")
     s.add_argument("--why", help="reason written to to_fetch.md when the paper cannot be found")
+    s.add_argument("--file", help="check a PDF you found yourself (e.g. a DEVONthink record's path from its MCP tools) "
+                                  "against the candidate instead of searching; exit 1 if it is not this paper")
     s.set_defaults(fn=cmd_fetch)
 
     s = sp.add_parser("text", help="extract text from a PDF with page markers (cached next to it)")
