@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-07 - model-router 0.19 and herdr-delegate 0.5.1
+
+- model-router 0.19.0 (Kiro standard helper): pane edits to a running plan wait in a draft until Send changes; helper thinking level on cards; auto mode thresholds as settings, 5 runs and 90%. 56 tests pass.
+- herdr-delegate 0.5.1: pick/status run kiro-cli whoami and clear a stale login mark (O11).
+- 0.18.0 seen loaded in the owner's session (plan status: version 0.18.0, no errors); settings mirror written with his tiers.
+
 ## 2026-11-07 - model-router 0.16-0.18 and course-notes lint
 
 Owner's model-router batch and course-lecture-notes O1, on branch model-router/0.16; all four steps run on helpers (Copilot standard for c1 and r1, Kiro standard for r2, Kiro deep for r3) with briefs in a git-excluded .helper-briefs/ folder inside the repo (scratchpad paths trigger Copilot path prompts, herdr-delegate O10).
