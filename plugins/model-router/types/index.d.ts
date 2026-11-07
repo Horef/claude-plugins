@@ -1,11 +1,22 @@
 // The state contract of model-router: plan steps, settings, history, cost totals and rule delivery.
-export type Model = 'haiku' | 'sonnet' | 'opus' | 'fable'
+/** A model family alias (haiku, sonnet, opus, fable, or one seen in usage or added in Settings), or an id kept as it came. */
+export type Model = string
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type Tier = 'light' | 'standard' | 'deep'
 export type PlanStatus = 'none' | 'pending' | 'approved'
 
 /** Token counts as the API reports them, summed over a step's turns. */
 export type Usage = { input: number; cacheWrite: number; cacheRead: number; output: number }
+
+/** Dollars per million tokens. */
+export type Price = { input: number; cacheWrite: number; cacheRead: number; output: number }
+
+/** A model and a thinking level: one rung of the ladder. */
+export type Rung = { model: Model; effort: Effort }
+
+/** How the lead judged a delegated step's result. ok: used as returned or with small edits; weak: needed a rerun,
+ *  part redone, or a substantive error found; overkill: plainly mechanical work that ran above the light tier. */
+export type Verdict = 'ok' | 'weak' | 'overkill'
 
 export type TierSetting = { model: Model; effort: Effort; scopeNote: boolean }
 
@@ -36,6 +47,14 @@ export type Settings = {
   helpers: HelperSettings
   /** Opt-in experiment: run a started here step at its tier's effort, lower or higher than the chat's own. */
   hereEffort: HereEffortSettings
+  /** Per kind of work, the rung its steps run on instead of their tier's (set by applying the history's advice). */
+  kinds: Record<string, Rung>
+  /** Auto mode: a subagent step whose kind has enough history runs at the cheapest rung that did it well. */
+  autoRoute: boolean
+  /** Models known beyond the defaults: seen in usage or added by name. */
+  models: Model[]
+  /** Prices set in Settings, over the defaults; a model with none has no price. */
+  prices: Record<string, Price>
 }
 
 export type HereEffortSettings = {
@@ -80,11 +99,50 @@ export type Step = {
   historyKey?: string
   /** Here-step effort: what the router did with this step's effort, for its card. */
   effortNote?: string
+  /** The id of the step this is a part of; absent on a top-level step. Ids are hierarchical: s3, s3.a, s3.a.1. */
+  parent?: string
+  /** The step has parts: a group. Its tier only rates it; its status, cost and usage are those of its parts. */
+  group?: boolean
+  /** N identical agents with this id run at once (a leaf only). */
+  count?: number
+  /** Runs of a counted step that have finished; the step is done at `count`. */
+  runs?: number
+  /** Helper step: the template the main agent launched, and the model the helper reported on screen. */
+  helper?: string
+  helperModel?: string
+  /** When the step's current run started (a helper step: at start; a subagent step: its first Agent call) and, for a helper step, when it was marked done (ISO). */
+  startedAt?: string
+  endedAt?: string
+  /** Helper step: the usage line the helper's screen showed at the end. Recorded once. */
+  helperUsage?: HelperUsage
+  /** A short label for the kind of work (code-review, summarize, ...); a skill-routed step's is the skill's name. */
+  kind?: string
+  /** The lead's verdict on the latest run of a delegated step, and why. */
+  verdict?: Verdict
+  why?: string
+  /** The lead has been asked for this step's missing verdict. */
+  asked?: boolean
+  /** Output tokens of the step's earlier runs, so a run's own output can be told apart. */
+  priorOutput?: number
+  /** Some of the step's tokens ran on a model with no price: its cost is incomplete and it is left out of savings. */
+  unpriced?: boolean
 }
+
+/** A plan step as the plan tool takes it: a step with optional parts, recursively. */
+export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; count?: number; kind?: string; parts?: PlanNode[] }
+
+/** What a helper used on its own subscription, in that provider's unit; never converted to money. */
+export type HelperUsage = { provider: string; amount: number; unit: string }
+
+/** Steps moved off Claude: how many, how long they ran, and the usage per provider and unit. */
+export type HelperTotals = { steps: number; ms: number; usage: HelperUsage[] }
+
+/** What the main agent was last told of a step (the approved plan, or the last note delivered), as values it runs on. */
+export type StepKnown = { where: Where; tier: Tier; model: Model; effort: Effort }
 
 /** Money counted over some span: the main chat, the subagents, and what the
  *  subagents' tokens would have cost on the main chat's model. */
-export type Totals = { mainCost: number; agentCost: number; mainEquivalent: number; steps: number }
+export type Totals = { mainCost: number; agentCost: number; mainEquivalent: number; steps: number; helper: HelperTotals; unpriced?: boolean }
 
 /** Remembered across chats: a few numbers, never per-run detail. */
 export type Lifetime = Totals & { since: string; plans: number; byTier: Record<Tier, number> }
@@ -94,12 +152,26 @@ export type CostView = 'plan' | 'chat' | 'all'
 export type HistoryEntry = {
   key: string
   tier: Tier
-  model: Model
-  effort: Effort
+  /** Where the run happened; absent on entries from before 0.18.0, which are all subagent runs. */
+  where?: Where
+  /** The rung a subagent run ran on (absent on a helper run). */
+  model?: Model
+  effort?: Effort
+  /** The helper template a helper run ran on. */
+  helper?: string
+  kind?: string
   cost: number
   setupHeavy: boolean
-  /** The user asked for this run to be redone on a higher rung. */
+  /** The run was redone (from the pane, or delegated again after it finished). */
   rerun: boolean
+  /** Reruns the step had before this run. */
+  reruns?: number
+  /** Output tokens of this run (subagent runs). */
+  output?: number
+  /** How long the run took, start to finish. */
+  ms?: number
+  verdict?: Verdict
+  why?: string
   at: string
 }
 
@@ -107,7 +179,8 @@ declare module 'claude-code' {
   interface PluginState {
     'model-router': {
       steps: Step[]
-      main: { usage: Usage; cost: number; model?: Model }
+      /** The main chat's tokens and cost; unpriced: some of them ran on a model with no price. */
+      main: { usage: Usage; cost: number; model?: Model; unpriced?: boolean }
       planStatus: PlanStatus
       autoApprove: boolean
       alwaysPlan: boolean
@@ -116,6 +189,10 @@ declare module 'claude-code' {
       seenSkills: string[]
       showSettings: boolean
       notes: string[]
+      /** Per step id, what the main agent was last told; a difference to the step now is a change to announce. */
+      told: Record<string, StepKnown>
+      /** The helper orders the main agent was last told (the rules or a note); absent until the rules are delivered. */
+      toldHelpers: string
       /** The model the routing rules were last sent to, in this chat. */
       policy: { model?: Model; sentAt?: string }
       /**
@@ -134,6 +211,11 @@ declare module 'claude-code' {
       effortLog: EffortSwitch[]
       /** The main chat's last request: the effort it went out with and its context in tokens. */
       lastMain: { effort?: Effort | number; context: number }
+      /** The kinds of work the rules list, taken from the history when the chat starts (so the rules stay stable). */
+      ruleKinds: string[]
+      /** Advice the lead was already asked to record as a strange-loop observation: "<kind>:up" / "<kind>:down". Remembered. */
+      genomeNoted: string[]
+
     }
   }
 }

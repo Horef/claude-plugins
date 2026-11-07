@@ -2,7 +2,13 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { EMPTY_HELPER, EMPTY_USAGE, asHelperUsage, depthOf, fmtCost, fmtMin, genomeNote, helperFacts, helperLine, helperTotalsOf, ladderOf, learnedRungs, mergeSettings, modelOf, nextRung, parsePrice, rollupOf, settleGroups, suggestions } from '../hooks/logic'
+import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
+import type { HistoryEntry, Step } from '../types'
+
 const PLAN = 'mcp__model-router__plan'
+const HOME = '/home/tester'
+const MIRROR = `${HOME}/.config/model-router/settings.json`
 const PANE = {
   plugin: 'model-router',
   component: 'Pane',
@@ -271,8 +277,20 @@ const boot = async (
   on: Parameters<TestBody>[1],
   init: [string, unknown][],
   agents: { id: string; description: string }[] = [],
+  files = new Map<string, string>(),
 ) => {
   const store = new Map<string, unknown>([['autoApprove', true], ...init])
+  // The settings mirror lives in a file under the home directory: here, a map of paths to text.
+  mock.env(on, { HOME: HOME })
+  on('fs.read', (_, e) => {
+    const text = files.get((e as { path: string }).path)
+
+    return text === undefined ? { deny: 'ENOENT' } : { value: text }
+  })
+  on('fs.write', (_, e) => {
+    files.set((e as { path: string }).path, (e as { text: string }).text)
+    return { value: undefined }
+  })
   const registered: Registered[] = []
   const calls: Call[] = []
   const usageFor: Record<string, unknown> = {}
@@ -317,7 +335,7 @@ const boot = async (
     return st.result
   }
 
-  return { store, registered, calls, rows, step, sent }
+  return { store, registered, calls, rows, step, sent, files }
 }
 
 const wheres = (r: Registered | undefined) => r?.inputSchema?.properties?.steps?.items?.properties?.where?.enum
@@ -644,4 +662,887 @@ test('here-step effort: the Settings switch turns it on, adds start to the plan 
   expect((store.get('settings') as { hereEffort: { enabled: boolean } }).hereEffort.enabled).toBe(true)
   expect(props(registered.at(-1)).start).toBeTruthy()
   await pane.unmount()
+})
+
+// --- Persistence, helper order, mid-run notes ------------------------------------------
+
+test('a response that arrives while the store is still loading leaves the stored lifetime intact', async ($, on) => {
+  const seeded = { mainCost: 5, agentCost: 1, mainEquivalent: 3, steps: 4, plans: 2, since: '2026-10-01T00:00:00.000Z', byTier: { light: 1, standard: 2, deep: 1 } }
+  const store = new Map<string, unknown>([['lifetime', seeded]])
+  let release!: () => void
+  const gate = new Promise<void>(r => (release = r))
+  mock.env(on, { HOME })
+  on('fs.read', () => ({ deny: 'ENOENT' }))
+  on('fs.write', () => ({ value: undefined }))
+  on('command.register', () => ({ value: { command: 'router' } }))
+  on('tool.register', () => ({ value: { tool: PLAN } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.status', () => ({ value: undefined }))
+  on('store.get', async (_, e) => {
+    await gate
+    return { value: store.get((e as { key: string }).key) }
+  })
+  on('store.set', (_, e) => {
+    store.set((e as { key: string }).key, (e as { value: unknown }).value)
+    return { value: undefined }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.step', async function* (_, e) {
+    const x = e as { turnId: string; index: number }
+    return { turnId: x.turnId, index: x.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: { model: 'claude-opus-5-5', input_tokens: 1000, output_tokens: 1000 } } as never
+  })
+
+  const starting = $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 5))
+  const st = $.turn.step({ turnId: 't1', index: 0, model: 'x', messageCount: 1 } as never)
+  const stepping = (async () => { for await (const _ of st) void _ })()
+  await new Promise(r => setTimeout(r, 5))
+  release()
+  await starting
+  await stepping
+
+  const life = store.get('lifetime') as typeof seeded
+  expect(life.since).toBe(seeded.since)
+  expect(life.steps).toBe(4)
+  expect(life.plans).toBe(2)
+  expect(life.mainCost).toBeGreaterThan(5)
+})
+
+test('an empty store takes its settings back from the mirror; a store that has them wins, and every change is mirrored', async ($, on) => {
+  const mirror = {
+    settings: { tiers: { light: { model: 'sonnet', effort: 'low', scopeNote: true } }, skills: { 'scientific-figures': 'standard' } },
+    autoApprove: true,
+    alwaysPlan: true,
+  }
+  const files = new Map([[MIRROR, JSON.stringify(mirror)]])
+  const { store, rows } = await boot($, on, [], [], files)
+  const restored = store.get('settings') as { tiers: { light: { model: string; scopeNote: boolean }; deep: { model: string } }; skills: Record<string, string> }
+  expect(restored.tiers.light.model).toBe('sonnet')
+  expect(restored.tiers.light.scopeNote).toBe(true)
+  expect(restored.tiers.deep.model).toBe('opus')
+  expect(restored.skills['scientific-figures']).toBe('standard')
+  expect(store.get('alwaysPlan')).toBe(true)
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('light (sonnet/low)')
+
+  // Every change is written to the mirror too.
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'set-model:deep' })
+  await pane.unmount()
+  const written = JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { tiers: { deep: { model: string } } }; alwaysPlan: boolean }
+  expect(written.settings.tiers.deep.model).toBe('fable')
+  expect(written.alwaysPlan).toBe(true)
+})
+
+test('when the store and the mirror both hold settings the store wins, and the mirror is brought up to date', async ($, on) => {
+  const files = new Map([[MIRROR, JSON.stringify({ settings: { tiers: { deep: { model: 'sonnet', effort: 'low', scopeNote: false } } } })]])
+  const { store } = await boot($, on, [['settings', { tiers: { deep: { model: 'haiku', effort: 'low', scopeNote: false } } }]], [], files)
+  expect((store.get('settings') as { tiers: { deep: { model: string } } }).tiers.deep.model).toBe('haiku')
+  expect((JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { tiers: { deep: { model: string } } } }).settings.tiers.deep.model).toBe('haiku')
+})
+
+test('values that differ from the default carry a dot and a legend', async ($, on) => {
+  await boot($, on, [['autoApprove', false]])
+  const dots = { type: 'Text', text: /^•$/ } as never
+  const legend = { type: 'Text', text: /^• differs from the default$/ } as never
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(legend)).toBeFalsy()
+  expect(await pane.find(dots)).toBeFalsy()
+  await pane.press({ key: 'set-model:light' })
+  expect(await pane.find(legend)).toBeTruthy()
+  expect(await pane.findAll(dots)).toHaveLength(1)
+  await pane.press({ key: 'always' })
+  expect(await pane.findAll(dots)).toHaveLength(2)
+  // Back to the default: the dot goes.
+  await pane.press({ key: 'always' })
+  expect(await pane.findAll(dots)).toHaveLength(1)
+  await pane.unmount()
+})
+
+test('moving or switching off a helper changes the order in the rules, one note says so, and none when it is back', async ($, on) => {
+  const { store, rows } = await boot($, on, [['settings', { helpers: { enabled: true } }]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('light: kiro-light,copilot-light,agy-light')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helper-down:light:kiro-light' })
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light,agy-light')
+  await pane.press({ key: 'helper-off:light:agy-light' })
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light')
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(lastRow(rows)).toContain('light: copilot-light,kiro-light;')
+  expect(lastRow(rows).match(/Helper orders changed/g)?.length).toBe(1)
+
+  // Switching the helper back on puts it last; "Reset to default order" restores the defaults.
+  await pane.press({ key: 'helper-on:light:agy-light' })
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light,agy-light')
+  await pane.press({ key: 'helper-up:light:kiro-light' })
+  await pane.press({ key: 'helper-reset' })
+  await pane.unmount()
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('kiro-light,copilot-light,agy-light')
+  // Back to the first order the chat was told, then to the order of the second.
+  const count = rows.appended().length
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  expect(rows.appended().length).toBeGreaterThan(count)
+  expect(lastRow(rows)).toContain('light: kiro-light,copilot-light,agy-light;')
+})
+
+test('a helper order that returns to what the chat was told sends no note', async ($, on) => {
+  const { rows } = await boot($, on, [['settings', { helpers: { enabled: true } }]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const count = rows.appended().length
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helper-down:deep:kiro-deep' })
+  await pane.press({ key: 'helper-reset' })
+  await pane.unmount()
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
+})
+
+test('a step changed in the pane reaches the agent once at the next turn, with the final value, and not at all when it is put back', async ($, on) => {
+  const { rows } = await boot($, on, [])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Survey', tier: 'standard', where: 'agent' }] } as never)
+  const noted = { type: 'Text', text: /^change noted, applies from the next turn$/ } as never
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await pane.find(noted)).toBeFalsy()
+
+  // Cycling the tier picker round to where it began is no change.
+  const count = rows.appended().length
+  for (let i = 0; i < 3; i++) await pane.press({ key: 'tier:s1' })
+  expect(await pane.find(noted)).toBeFalsy()
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
+
+  // Passing through deep to rest on light: one note, the final value only.
+  await pane.press({ key: 'tier:s1' })
+  expect(await pane.find(noted)).toBeTruthy()
+  await pane.press({ key: 'tier:s1' })
+  for (let i = 0; i < 3; i++) await pane.press({ key: 'model:s1' })
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  const row = lastRow(rows)
+  expect(row.match(/\[s1\]/g)?.length).toBe(1)
+  expect(row).toContain('tier standard → light')
+  expect(row).toContain('model sonnet → opus')
+  expect(row).toContain('thinking medium → low')
+  expect(row).not.toContain('deep')
+  expect(await pane.find(noted)).toBeFalsy()
+
+  // Delivered: the same values send nothing more.
+  const after = rows.appended().length
+  await $.turn.start({ text: 'fourth', turnId: 't3' })
+  expect(rows.appended().length).toBe(after)
+
+  // Where it runs is announced too.
+  await pane.press({ key: 'where:s1' })
+  await $.turn.start({ text: 'fifth', turnId: 't4' })
+  expect(lastRow(rows)).toContain('runs subagent → here')
+  await pane.unmount()
+})
+
+test('before the plan is approved no change is announced, and the plan the agent is handed counts as told', async ($, on) => {
+  const { rows } = await boot($, on, [['autoApprove', false]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const planning = $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Survey', tier: 'standard', where: 'agent' }] } as never)
+  await new Promise(r => setTimeout(r, 5))
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'tier:s1' })
+  await pane.unmount()
+  void planning
+  // Not approved yet: nothing to tell.
+  const count = rows.appended().length
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
+})
+
+// --- Parts, helper and model shown, helper usage (0.17.0) ---------------------------------
+
+const TERMINAL = { ...PANE, surface: 'terminal' } as never
+const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
+const partsPlan = [
+  {
+    id: 's1',
+    title: 'Survey',
+    tier: 'deep',
+    where: 'agent',
+    parts: [
+      {
+        id: 'a',
+        title: 'Read',
+        tier: 'light',
+        where: 'agent',
+        parts: [
+          { id: 's1.a.1', title: 'Readers', tier: 'light', where: 'agent', count: 2 },
+          { id: 'b', title: 'Index', tier: 'light', where: 'agent' },
+        ],
+      },
+      { id: 's1.c', title: 'Write up', tier: 'standard', where: 'here' },
+    ],
+  },
+]
+
+test('a plan nests three levels: ids extend the parent\'s, the tree is shown to the agent, a group follows its parts', async ($, on) => {
+  const { registered, rows, calls } = await boot($, on, [], [
+    { id: 'x1', description: '[s1.a.1] read' },
+    { id: 'x2', description: '[s1.a.1] read' },
+  ])
+  // The schema takes parts, recursively; with helpers off start stays as it was. Since 0.18.0 a done item
+  // may carry a verdict (with helpers off, no usage).
+  const tool = registered.at(-1) as unknown as { inputSchema: { properties: Record<string, any> } }
+  const level1 = tool.inputSchema.properties.steps.items.properties.parts.items.properties
+  expect(level1.parts.items.properties.parts.items.properties.count).toBeTruthy()
+  expect(tool.inputSchema.properties.done.items.anyOf[0]).toEqual({ type: 'string' })
+  expect(tool.inputSchema.properties.done.items.anyOf[1].properties.verdict.enum).toEqual(['ok', 'weak', 'overkill'])
+  expect(tool.inputSchema.properties.done.items.anyOf[1].properties.usage).toBeUndefined()
+  expect(tool.inputSchema.properties.start).toBeUndefined()
+
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('may carry \\"parts\\"')
+  expect(lastRow(rows)).toContain('s3, s3.a, s3.a.1')
+  expect(lastRow(rows)).toContain('N readers')
+
+  const planned = await $.tool.call({ tool: PLAN, steps: partsPlan } as never)
+  expect(String(planned.result)).toContain(
+    [
+      '[s1] Survey: deep (rates the group), 0 of 3 parts done, planned',
+      '  [s1.a] Read: light (rates the group), 0 of 2 parts done, planned',
+      '    [s1.a.1] Readers: light, haiku/low, ×2 in parallel, planned',
+      '    [s1.a.b] Index: light, haiku/low, planned',
+      '  [s1.c] Write up: standard, here, planned',
+    ].join('\n'),
+  )
+
+  // A group is not delegated; a part is, by its dotted tag, and routed by its own tier.
+  const refused = await $.tool.call({ tool: 'Agent', description: '[s1.a] read it all', prompt: 'go' })
+  expect(String(refused.deny ?? '')).toContain('[s1.a.1], [s1.a.b]')
+  await $.tool.call({ tool: 'Agent', description: '[s1.a.1] read', prompt: 'go' })
+  expect(calls.at(-1)?.model).toBe('haiku')
+  await $.tool.call({ tool: 'Agent', description: '[s1.a.1] read', prompt: 'go' })
+  const during = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(during.result)).toContain('[s1.a.1] Readers: light, haiku/low, ×2 in parallel, running')
+  expect(String(during.result)).toContain('[s1] Survey: deep (rates the group), 0 of 3 parts done, running')
+
+  // Two agents, one id: the step is done when the second one ends.
+  await $.turn.complete({ answer: 'one', durationMs: 1, isAborted: false, turnId: 'c1', reason: 'answer', agentId: 'x1' } as never)
+  const half = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(half.result)).toContain('×2 in parallel, running (1 of 2 finished)')
+  await $.turn.complete({ answer: 'two', durationMs: 1, isAborted: false, turnId: 'c2', reason: 'answer', agentId: 'x2' } as never)
+  const both = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(both.result)).toContain('[s1.a.1] Readers: light, haiku/low, ×2 in parallel, done')
+  expect(String(both.result)).toContain('[s1.a] Read: light (rates the group), 1 of 2 parts done, running')
+})
+
+test('a counted step adds up its agents\' cost, counts once, and a group is done when its parts are, or when named done', async ($, on) => {
+  const { store, step } = await boot($, on, [], [
+    { id: 'x1', description: '[s1.a.1] read' },
+    { id: 'x2', description: '[s1.a.1] read' },
+  ])
+  await $.tool.call({ tool: PLAN, steps: partsPlan } as never)
+  const usage = { model: 'claude-haiku-5-5', input_tokens: 2, cache_creation_input_tokens: 4000, cache_read_input_tokens: 37000, output_tokens: 1000 }
+  await step('t1', usage, 'x1')
+  const one = (store.get('lifetime') as { agentCost: number }).agentCost
+  await step('t2', usage, 'x2')
+  const two = (store.get('lifetime') as { agentCost: number }).agentCost
+  expect(Math.abs(two - one * 2)).toBeLessThan(1e-9)
+
+  await $.turn.complete({ answer: 'one', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'x1' } as never)
+  expect((store.get('lifetime') as { steps: number }).steps).toBe(0)
+  // An agent ending twice is still one run.
+  await $.turn.complete({ answer: 'one again', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'x1' } as never)
+  expect((store.get('lifetime') as { steps: number }).steps).toBe(0)
+  await $.turn.complete({ answer: 'two', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer', agentId: 'x2' } as never)
+  expect((store.get('lifetime') as { steps: number }).steps).toBe(1)
+  expect((store.get('history') as { cost: number }[]).length).toBe(1)
+  expect(Math.abs((store.get('history') as { cost: number }[])[0]!.cost - two / 2)).toBeLessThan(1e-9)
+
+  // The group card shows the sum of its parts; the cost line of the plan does not count it twice.
+  const pane = await $.ui.mount(TERMINAL)
+  const cards = await pane.findAll(text(/^≈\$[\d.]+ · [\d.]+k tok/))
+  // The counted step, its group and the group above it show the same sum.
+  expect(cards).toHaveLength(3)
+  const dollars = cards.map(c => /^≈(\$[\d.]+)/.exec(c.text)?.[1])
+  expect(new Set(dollars).size).toBe(1)
+  await pane.unmount()
+
+  // Naming a group done marks its unfinished parts done, and the groups above follow.
+  const marked = await $.tool.call({ tool: PLAN, done: ['s1'] } as never)
+  for (const line of String(marked.result).split('\n').filter(l => /^\s*\[/.test(l))) expect(line).toMatch(/, done$/)
+  expect(String(marked.result)).toContain('[s1] Survey: deep (rates the group), 3 of 3 parts done, done')
+})
+
+test('a group is done with its last part', async ($, on) => {
+  await boot($, on, [])
+  await $.tool.call({ tool: PLAN, steps: partsPlan } as never)
+  const some = await $.tool.call({ tool: PLAN, done: ['s1.a.1', 's1.a.b'] } as never)
+  expect(String(some.result)).toContain('[s1.a] Read: light (rates the group), 2 of 2 parts done, done')
+  expect(String(some.result)).toContain('[s1] Survey: deep (rates the group), 2 of 3 parts done, running')
+  const all = await $.tool.call({ tool: PLAN, done: ['s1.c'] } as never)
+  expect(String(all.result)).toContain('[s1] Survey: deep (rates the group), 3 of 3 parts done, done')
+
+  // Starting a group starts its unfinished parts.
+  const again = await $.tool.call({ tool: PLAN, steps: partsPlan } as never)
+  expect(String(again.result)).toContain('[s1.a.b] Index: light, haiku/low, planned')
+  const started = await $.tool.call({ tool: PLAN, start: ['s1.a'] } as never)
+  expect(String(started.result)).toContain('[s1.a.b] Index: light, haiku/low, running')
+  expect(String(started.result)).toContain('[s1.c] Write up: standard, here, planned')
+
+})
+
+test('parts nest in the pane, the indent stops at three levels, each part has its own pickers, and the minimal view stays compact', async ($, on) => {
+  const { rows } = await boot($, on, [])
+  const deep = [
+    {
+      id: 's1',
+      title: 'L0',
+      tier: 'deep',
+      where: 'agent',
+      parts: [{ id: 'a', title: 'L1', tier: 'standard', where: 'agent', parts: [{ id: 'b', title: 'L2', tier: 'light', where: 'agent', parts: [{ id: 'c', title: 'L3', tier: 'light', where: 'agent', parts: [{ id: 'd', title: 'L4', tier: 'light', where: 'agent' }] }] }] }],
+    },
+  ]
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const res = await $.tool.call({ tool: PLAN, steps: deep } as never)
+  // Deeper than the schema spells out is still taken.
+  expect(String(res.result)).toContain('        [s1.a.b.c.d] L4: light, haiku/low, planned')
+
+  const pane = await $.ui.mount(TERMINAL)
+  const pad = async (id: string) => ((await pane.find({ type: 'Box', key: `row:${id}` } as never))?.props.paddingLeft as number | undefined) ?? 0
+  expect(await pad('s1')).toBe(0)
+  expect(await pad('s1.a')).toBe(2)
+  expect(await pad('s1.a.b')).toBe(4)
+  expect(await pad('s1.a.b.c')).toBe(6)
+  expect(await pad('s1.a.b.c.d')).toBe(6)
+  // A group is a label with its rating; a part has its own pickers.
+  expect(await pane.find({ type: 'Button', key: 'tier:s1' } as never)).toBeFalsy()
+  expect(await pane.find(text(/^rated deep$/))).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'tier:s1.a' } as never)).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'tier:s1.a.b.c.d' } as never)).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'model:s1.a.b.c.d' } as never)).toBeTruthy()
+  // Only the part that does the work is counted as a step.
+  expect(await pane.find(text(/^0 of 1 steps done$/))).toBeTruthy()
+
+  // Minimal: no border around a group, no explanatory text, pickers still there.
+  await pane.press({ key: 'minimal' })
+  expect((await pane.find({ type: 'Box', key: 'card:s1' } as never))?.props.borderStyle).toBeUndefined()
+  expect(await pane.find({ type: 'Button', key: 'tier:s1.a.b.c.d' } as never)).toBeTruthy()
+  expect(await pane.find(text(/^0\/1 done$/))).toBeTruthy()
+  await pane.unmount()
+  expect(lastRow(rows)).toContain('Model routing')
+})
+
+test('a change to a part reaches the agent as one note naming the part', async ($, on) => {
+  const { rows } = await boot($, on, [])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: partsPlan } as never)
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'tier:s1.a.b' })
+  expect(await pane.find(text(/^change noted, applies from the next turn$/))).toBeTruthy()
+  // The first press picks the tier's own model by name, which changes nothing; the second does.
+  await pane.press({ key: 'model:s1.a.1' })
+  await pane.press({ key: 'model:s1.a.1' })
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  const row = lastRow(rows)
+  expect(row).toContain('[s1.a.b]')
+  expect(row).toContain('tier light → standard')
+  expect(row).toContain('[s1.a.1]')
+  expect(row).not.toContain('The user changed step [s1]')
+  // Told once.
+  const count = rows.appended().length
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  expect(rows.appended().length).toBe(count)
+  await pane.unmount()
+})
+
+test('a repeated id in the plan is ignored and the agent is told', async ($, on) => {
+  await boot($, on, [])
+  const res = await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'A', tier: 'light', where: 'here', parts: [{ id: 'x', title: 'B', tier: 'light', where: 'here' }, { id: 's1.x', title: 'C', tier: 'light', where: 'here' }] },
+    ],
+  } as never)
+  expect(String(res.result)).toContain('repeats were ignored: s1.x')
+  expect(String(res.result)).not.toContain(' C: ')
+})
+
+test('helper time, usage and group sums are worked out from the steps', () => {
+  const step = (id: string, over: Partial<Step> = {}): Step => ({
+    id, title: id, tier: 'light', where: 'helper', status: 'done', usage: EMPTY_USAGE, cost: 0, mainCost: 0, reruns: 0, ...over,
+  })
+  const list = [
+    step('g', { group: true }),
+    step('g.a', { parent: 'g', helper: 'copilot-standard', startedAt: '2026-11-07T10:00:00Z', endedAt: '2026-11-07T10:10:30Z', helperUsage: { provider: 'copilot', amount: 30.04, unit: 'AIC' } }),
+    step('g.b', { parent: 'g', helper: 'kiro-light', startedAt: '2026-11-07T10:00:00Z', endedAt: '2026-11-07T11:05:00Z', helperUsage: { provider: 'kiro', amount: 2.1, unit: 'credits' } }),
+    step('g.c', { parent: 'g', where: 'agent' }),
+    step('g.d', { parent: 'g', startedAt: '2026-11-07T10:00:00Z', status: 'running' }),
+  ]
+  const totals = helperTotalsOf(list)
+  // The group and the subagent step are not helper steps; the running one is not done yet.
+  expect(totals.steps).toBe(2)
+  expect(totals.ms).toBe(75.5 * 60_000)
+  expect(helperLine(totals)).toBe('Moved off Claude: 2 helper steps, 1 h 16 min; Copilot 30.04 AIC; Kiro 2.1 credits')
+  expect(helperLine(EMPTY_HELPER)).toBeUndefined()
+  expect(helperLine({ steps: 1, ms: 0, usage: [] })).toBe('Moved off Claude: 1 helper step')
+  expect(helperFacts(list[1]!)).toBe('30.04 AIC · 11 min')
+  expect(fmtMin(20_000)).toBe('<1 min')
+  expect(depthOf(list, list[1]!)).toBe(1)
+  expect(rollupOf(list, list[0]!)).toMatchObject({ total: 4, done: 3 })
+  expect(settleGroups([{ ...list[0]!, status: 'planned' }, ...list.slice(1)])[0]!.status).toBe('running')
+  expect(asHelperUsage({ provider: ' Copilot ', amount: '30.04', unit: 'AIC' })).toEqual({ provider: 'copilot', amount: 30.04, unit: 'AIC' })
+  expect(asHelperUsage({ provider: 'copilot', amount: -1, unit: 'AIC' })).toBeUndefined()
+  expect(asHelperUsage({ provider: 'copilot', amount: 3 })).toBeUndefined()
+})
+
+const HELPERS: [string, unknown][] = [['settings', { helpers: { enabled: true } }]]
+
+test('starting a helper step with the helper and the model it reports shows both, in the plan and on the card', async ($, on) => {
+  const { registered, rows } = await boot($, on, HELPERS)
+  const tool = registered.at(-1) as unknown as { inputSchema: { properties: Record<string, any> } }
+  expect(tool.inputSchema.properties.start.items.anyOf).toHaveLength(2)
+  expect(tool.inputSchema.properties.done.items.anyOf).toHaveLength(2)
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('Session: N AIC used')
+  expect(lastRow(rows)).toContain('the template you launched')
+
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' },
+      { id: 'h2', title: 'Sweep', tier: 'light', where: 'helper' },
+    ],
+  } as never)
+  const started = await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'copilot-standard', model: 'Claude Sonnet 5.5' }, 'h2'] } as never)
+  expect(String(started.result)).toContain('[h1] Survey: standard, helper (copilot-standard · Claude Sonnet 5.5), running')
+  expect(String(started.result)).toContain('[h2] Sweep: light, helper (kiro-light → copilot-light → agy-light), running')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^copilot-standard · Claude Sonnet 5\.5$/))).toBeTruthy()
+  expect(await pane.find(text(/^Runs on another subscription's agent/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('a helper step marked done with its usage: shown on its card, added up per provider and unit in the plan, chat and all-time views, and kept', async ($, on) => {
+  const seeded = {
+    mainCost: 5, agentCost: 1, mainEquivalent: 3, steps: 4, plans: 2, since: '2026-10-01T00:00:00.000Z', byTier: { light: 1, standard: 2, deep: 1 },
+    helper: { steps: 1, ms: 6 * 60_000, usage: [{ provider: 'copilot', amount: 10, unit: 'AIC' }] },
+  }
+  const { store } = await boot($, on, [...HELPERS, ['lifetime', seeded]])
+  const later = () => new Promise(r => setTimeout(r, 5))
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' },
+      { id: 'h2', title: 'Sweep', tier: 'light', where: 'helper' },
+      { id: 'h3', title: 'Check', tier: 'light', where: 'helper' },
+    ],
+  } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'copilot-standard', model: 'Claude Sonnet 5.5' }, { id: 'h2', helper: 'kiro-light', model: 'Haiku' }] } as never)
+  await later()
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h1', usage: { provider: 'copilot', amount: 30.04, unit: 'AIC' } }] } as never)
+  await later()
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h2', usage: { provider: 'Kiro', amount: '2.1', unit: 'credits' } }, 'h3'] } as never)
+
+  // h3 never reported any: it counts as a step, with no usage and no time.
+  const life = store.get('lifetime') as typeof seeded
+  expect(life.steps).toBe(4)
+  expect(life.mainCost).toBe(5)
+  expect(life.helper.steps).toBe(4)
+  expect(life.helper.ms).toBeGreaterThan(6 * 60_000)
+  expect(life.helper.ms).toBeLessThan(7 * 60_000)
+  expect(life.helper.usage).toEqual([
+    { provider: 'copilot', amount: 40.04, unit: 'AIC' },
+    { provider: 'kiro', amount: 2.1, unit: 'credits' },
+  ])
+
+  // The same usage named again changes nothing.
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h1', usage: { provider: 'copilot', amount: 99, unit: 'AIC' } }] } as never)
+  expect((store.get('lifetime') as typeof seeded).helper.steps).toBe(4)
+  expect((store.get('lifetime') as typeof seeded).helper.usage[0]!.amount).toBe(40.04)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^30\.04 AIC · <1 min$/))).toBeTruthy()
+  expect(await pane.find(text(/^2\.1 credits · <1 min$/))).toBeTruthy()
+  const plan = /^Moved off Claude: 3 helper steps, <1 min; Copilot 30\.04 AIC; Kiro 2\.1 credits$/
+  expect(await pane.find(text(plan))).toBeTruthy()
+  await pane.press({ key: 'cost-view:chat' })
+  expect(await pane.find(text(plan))).toBeTruthy()
+  await pane.press({ key: 'cost-view:all' })
+  expect(await pane.find(text(/^Moved off Claude: 4 helper steps, 6 min; Copilot 40\.04 AIC; Kiro 2\.1 credits$/))).toBeTruthy()
+
+  // Never converted to money, and reset with the other statistics.
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'reset-stats' })
+  await pane.unmount()
+  expect((store.get('lifetime') as typeof seeded).helper).toEqual({ steps: 0, ms: 0, usage: [] })
+})
+
+test('a lifetime stored before helper totals existed gains them without losing its numbers', async ($, on) => {
+  const old = { mainCost: 5, agentCost: 1, mainEquivalent: 3, steps: 4, plans: 2, since: '2026-10-01T00:00:00.000Z', byTier: { light: 1, standard: 2, deep: 1 } }
+  const { store } = await boot($, on, [...HELPERS, ['lifetime', old]])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' }] } as never)
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h1', usage: { provider: 'copilot', amount: 1.5, unit: 'AIC' } }] } as never)
+  const life = store.get('lifetime') as typeof old & { helper: { steps: number; usage: unknown[] } }
+  expect(life.since).toBe(old.since)
+  expect(life.steps).toBe(4)
+  expect(life.helper.steps).toBe(1)
+  expect(life.helper.usage).toEqual([{ provider: 'copilot', amount: 1.5, unit: 'AIC' }])
+  // Unusable usage is left out.
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h2', title: 'Sweep', tier: 'light', where: 'helper' }] } as never)
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h2', usage: { provider: 'copilot', amount: 'lots', unit: 'AIC' } }] } as never)
+  expect((store.get('lifetime') as typeof life).helper.usage).toEqual([{ provider: 'copilot', amount: 1.5, unit: 'AIC' }])
+})
+
+test('a helper step run through the Agent tool as the fallback drops the helper it never had', async ($, on) => {
+  const { calls } = await boot($, on, HELPERS)
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' }] } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'kiro-standard', model: 'Sonnet' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[h1] survey', prompt: 'go' })
+  expect(calls.at(-1)?.model).toBe('sonnet')
+  const res = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(res.result)).toContain('[h1] Survey: standard, sonnet/medium, running')
+})
+
+// --- Verdicts, kinds, learned advice, auto mode, open model list (0.18.0) -------------------
+
+/** One run in the history, as the router stores it. */
+const run = (n: number, over: Partial<HistoryEntry> = {}): HistoryEntry => ({
+  key: `k${n}`,
+  tier: 'light',
+  where: 'agent',
+  model: 'haiku',
+  effort: 'low',
+  kind: 'code-review',
+  cost: 0.01,
+  setupHeavy: false,
+  rerun: false,
+  at: `2026-11-0${Math.min(n, 9)}T10:00:00.000Z`,
+  ...over,
+})
+/** A subagent's run ending. */
+const end = ($: Parameters<TestBody>[0], agentId: string, turnId: string) =>
+  $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId, reason: 'answer', agentId } as never)
+const haikuUse = { model: 'claude-haiku-5-5', input_tokens: 2, cache_creation_input_tokens: 400, cache_read_input_tokens: 3000, output_tokens: 1500 }
+
+test('a delegated step asks for a verdict once, records it on its run with the facts, and a finished step delegated again is a rerun', async ($, on) => {
+  const { store, step, calls } = await boot($, on, [], [
+    { id: 'x1', description: '[r1] review' },
+    { id: 'x2', description: '[r1] review' },
+  ])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'r1', title: 'Review the parser', tier: 'light', where: 'agent', kind: 'Code Review' },
+      { id: 'w1', title: 'Write up', tier: 'standard', where: 'here' },
+    ],
+  } as never)
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await new Promise(r => setTimeout(r, 5))
+  await step('t1', haikuUse, 'x1')
+  await end($, 'x1', 't1')
+
+  // The run's facts are recorded without being asked: kind, where, rung, output, reruns, time.
+  const entry = (store.get('history') as HistoryEntry[]).at(-1)!
+  expect(entry).toMatchObject({ kind: 'code-review', where: 'agent', model: 'haiku', effort: 'low', output: 1500, reruns: 0, rerun: false })
+  expect(entry.ms).toBeGreaterThan(0)
+  expect(entry.verdict).toBeUndefined()
+
+  // The next plan call asks for the verdict, once; a here step needs none.
+  const asked = await $.tool.call({ tool: PLAN, done: ['w1'] } as never)
+  expect(String(asked.result)).toContain('[r1] Review the parser: light, haiku/low, kind code-review, done')
+  expect(String(asked.result)).toContain('Verdict needed for [r1]:')
+  expect(String(asked.result)).not.toContain('[w1]:')
+  const again = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(again.result)).not.toContain('Verdict needed')
+  // Named done again without one: asked again.
+  const named = await $.tool.call({ tool: PLAN, done: ['r1'] } as never)
+  expect(String(named.result)).toContain('Verdict needed for [r1]')
+
+  // The verdict goes onto the run it judges and shows in the plan and on the card.
+  const judged = await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'weak', why: 'missed two files' }] } as never)
+  expect(String(judged.result)).toContain('done (verdict weak)')
+  expect(String(judged.result)).not.toContain('Verdict needed')
+  expect((store.get('history') as HistoryEntry[]).at(-1)).toMatchObject({ verdict: 'weak', why: 'missed two files' })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^verdict weak: missed two files$/))).toBeTruthy()
+  expect((await pane.find(text(/^1 runs · 0 reruns · 1 weak$/)))).toBeTruthy()
+  await pane.unmount()
+
+  // Delegated again after it finished: a rerun, so the earlier run counts as weak whatever its verdict.
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'again' })
+  expect(calls.at(-1)?.model).toBe('haiku')
+  const h = store.get('history') as HistoryEntry[]
+  expect(h.at(-1)?.rerun).toBe(true)
+  await step('t2', { ...haikuUse, output_tokens: 700 }, 'x2')
+  await end($, 'x2', 't2')
+  const second = (store.get('history') as HistoryEntry[]).at(-1)!
+  // The second run's own output, and the rerun before it, are its facts; it starts with no verdict.
+  expect(second).toMatchObject({ output: 700, reruns: 1, rerun: false })
+  expect(second.verdict).toBeUndefined()
+})
+
+test('a helper step enters the history when done, with its template, kind and verdict; without one it is asked for', async ($, on) => {
+  const { store } = await boot($, on, HELPERS)
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'h1', title: 'Survey', tier: 'standard', where: 'helper', kind: 'search' },
+      { id: 'h2', title: 'Sweep', tier: 'light', where: 'helper' },
+    ],
+  } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'copilot-standard', model: 'Claude Sonnet 5.5' }, 'h2'] } as never)
+  const res = await $.tool.call({
+    tool: PLAN,
+    done: [{ id: 'h1', verdict: 'ok', why: 'used as is', usage: { provider: 'copilot', amount: 3, unit: 'AIC' } }, 'h2'],
+  } as never)
+  const h = store.get('history') as HistoryEntry[]
+  expect(h).toHaveLength(2)
+  expect(h[0]).toMatchObject({ where: 'helper', helper: 'copilot-standard', kind: 'search', tier: 'standard', verdict: 'ok', why: 'used as is' })
+  expect(h[1]!.verdict).toBeUndefined()
+  expect(String(res.result)).toContain('Verdict needed for [h2]')
+  expect(String(res.result)).not.toContain('[h1],')
+  // Given later, the verdict reaches the same run.
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h2', verdict: 'overkill' }] } as never)
+  expect((store.get('history') as HistoryEntry[])[1]!.verdict).toBe('overkill')
+  expect(store.get('history') as HistoryEntry[]).toHaveLength(2)
+})
+
+test('the rules list the kinds the history has seen, and a skill-routed step takes the skill\'s name as its kind', async ($, on) => {
+  const { rows, store } = await boot(
+    $,
+    on,
+    [
+      ['history', [run(1), run(2), run(3, { kind: 'summarize' })]],
+      ['settings', { skills: { 'scientific-figures': 'standard' } }],
+    ],
+    [{ id: 'x1', description: '[skill:scientific-figures] draw' }],
+  )
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('kinds used so far: code-review, summarize; reuse one when it fits')
+  expect(lastRow(rows)).toContain('done: [{id, verdict, why}]')
+  expect(lastRow(rows)).toContain('\\"overkill\\" = plainly mechanical work')
+
+  await $.tool.call({ tool: 'Agent', description: '[skill:scientific-figures] draw', prompt: 'use the skill' })
+  await end($, 'x1', 't1')
+  expect((store.get('history') as HistoryEntry[]).at(-1)?.kind).toBe('scientific-figures')
+})
+
+test('with no history the rules give example kinds', async ($, on) => {
+  const { rows } = await boot($, on, [])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('e.g. code-review, summarize, search, write-code, figure')
+})
+
+test('learned advice: one rung up at half weak (a rerun counts), down at half overkill with no recent weak, never under three runs', () => {
+  const set = mergeSettings({})
+  // Two runs are not enough.
+  expect(suggestions([run(1, { verdict: 'weak' }), run(2, { verdict: 'weak' })], set)).toEqual([])
+  // Two of three weak, one of them a rerun with an ok verdict: up one rung, with the evidence.
+  const up = suggestions([run(1, { verdict: 'weak' }), run(2, { rerun: true, verdict: 'ok' }), run(3, { verdict: 'ok' })], set)
+  expect(up).toEqual([{ kind: 'code-review', tier: 'light', from: { model: 'haiku', effort: 'low' }, to: { model: 'haiku', effort: 'medium' }, isRaise: true, why: 'code-review on light: 2 of 3 weak' }])
+  // One of three weak: nothing.
+  expect(suggestions([run(1, { verdict: 'weak' }), run(2, { verdict: 'ok' }), run(3, { verdict: 'ok' })], set)).toEqual([])
+  // Overkill on sonnet: down one rung; with a weak run among the last three, not.
+  const std = (n: number, over: Partial<HistoryEntry>) => run(n, { kind: 'search', tier: 'standard', model: 'sonnet', effort: 'medium', ...over })
+  const down = suggestions([std(1, { verdict: 'overkill' }), std(2, { verdict: 'overkill' }), std(3, { verdict: 'ok' })], set)
+  expect(down[0]).toMatchObject({ kind: 'search', isRaise: false, to: { model: 'haiku', effort: 'high' }, why: 'search on standard: 2 of 3 overkill' })
+  expect(suggestions([std(1, { verdict: 'overkill' }), std(2, { verdict: 'overkill' }), std(3, { verdict: 'overkill' }), std(4, { verdict: 'weak' })], set)).toEqual([])
+  // Runs with no kind are judged per tier; runs on another rung than the tier's do not count.
+  const tier = suggestions([run(1, { kind: undefined, rerun: true }), run(2, { kind: undefined, rerun: true }), run(3, { kind: undefined }), run(4, { kind: undefined, model: 'sonnet', effort: 'high', verdict: 'ok' })], set)
+  expect(tier).toEqual([{ tier: 'light', from: { model: 'haiku', effort: 'low' }, to: { model: 'haiku', effort: 'medium' }, isRaise: true, why: 'light steps on haiku/low: 2 of 3 weak' }])
+  // A kind with a default of its own is judged on that rung.
+  const own = mergeSettings({ kinds: { 'code-review': { model: 'sonnet', effort: 'medium' } } })
+  expect(suggestions([run(1, { verdict: 'weak' }), run(2, { verdict: 'weak' }), run(3, { verdict: 'weak' })], own)).toEqual([])
+  // Helper runs are recorded but never move a rung.
+  expect(suggestions([1, 2, 3].map(n => run(n, { where: 'helper', helper: 'kiro-light', model: undefined, effort: undefined, verdict: 'weak' })), set)).toEqual([])
+})
+
+test('applying a kind\'s advice sets its default: persisted, mirrored, marked, used for routing, and reset', async ($, on) => {
+  const weak = [run(1, { verdict: 'weak' }), run(2, { verdict: 'weak' }), run(3, { verdict: 'ok' })]
+  const { store, files, calls } = await boot($, on, [['history', weak]], [{ id: 'x1', description: '[r1] review' }])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^code-review on light: 2 of 3 weak: raise code-review's default to haiku\/medium\.$/))).toBeTruthy()
+  expect(await pane.find(text(/^code-review$/))).toBeTruthy()
+  await pane.press({ key: 'apply-kind:code-review' })
+  expect((store.get('settings') as { kinds: Record<string, unknown> }).kinds['code-review']).toEqual({ model: 'haiku', effort: 'medium' })
+  expect((JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { kinds: Record<string, unknown> } }).settings.kinds['code-review']).toEqual({ model: 'haiku', effort: 'medium' })
+  // The advice is gone (the kind now runs on its own rung, with no runs there yet), and the default is marked.
+  expect(await pane.find({ type: 'Button', key: 'apply-kind:code-review' } as never)).toBeFalsy()
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^→ haiku\/medium$/))).toBeTruthy()
+  expect(await pane.find(text(/^• differs from the default$/))).toBeTruthy()
+
+  // A step of that kind runs on it; one of another kind on its tier.
+  const res = await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'r1', title: 'Review', tier: 'light', where: 'agent', kind: 'code-review' },
+      { id: 'r2', title: 'List', tier: 'light', where: 'agent', kind: 'search' },
+    ],
+  } as never)
+  expect(String(res.result)).toContain('[r1] Review: light, haiku/medium (code-review default), kind code-review, planned')
+  expect(String(res.result)).toContain('[r2] List: light, haiku/low, kind search, planned')
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  expect(calls.at(-1)?.effort).toBe('medium')
+
+  await pane.press({ key: 'kind-reset:code-review' })
+  await pane.unmount()
+  expect((store.get('settings') as { kinds: Record<string, unknown> }).kinds).toEqual({})
+})
+
+test('auto mode is off by default; on, a kind runs on the cheapest rung it did well on, and the owner\'s own pick still wins', async ($, on) => {
+  const ok = (n: number, over: Partial<HistoryEntry>) => run(n, { kind: 'summarize', tier: 'standard', verdict: 'ok', ...over })
+  const past = [
+    ...[1, 2, 3].map(n => ok(n, { model: 'sonnet', effort: 'medium' })),
+    ...[4, 5, 6].map(n => ok(n, { model: 'haiku', effort: 'high' })),
+    // Cheaper, but only 2 of 3 ok: not learned.
+    ok(7, { model: 'haiku', effort: 'low' }), ok(8, { model: 'haiku', effort: 'low' }), ok(9, { model: 'haiku', effort: 'low', verdict: 'weak' }),
+  ]
+  expect(learnedRungs(past, mergeSettings({}))).toEqual({ summarize: { rung: { model: 'haiku', effort: 'high' }, n: 3 } })
+  const { store, calls } = await boot($, on, [['history', past]], [{ id: 'x1', description: '[s1] sum' }])
+  const plan = [
+    { id: 's1', title: 'Summarize', tier: 'standard', where: 'agent', kind: 'summarize' },
+    { id: 's2', title: 'Other', tier: 'standard', where: 'agent' },
+  ]
+
+  // Off: today's routing exactly.
+  const before = await $.tool.call({ tool: PLAN, steps: plan } as never)
+  expect(String(before.result)).toContain('[s1] Summarize: standard, sonnet/medium, kind summarize, planned')
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'medium' })
+
+  // On, from Settings: persisted; the step runs on the learned rung, and its card says so.
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'auto-route' })
+  expect((store.get('settings') as { autoRoute: boolean }).autoRoute).toBe(true)
+  expect(await pane.find(text(/^auto: haiku · high \(learned, 3 runs\)$/))).toBeTruthy()
+  const after = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(after.result)).toContain('[s1] Summarize: standard, haiku/high (auto: learned, 3 runs), kind summarize, running')
+  expect(String(after.result)).toContain('[s2] Other: standard, sonnet/medium, planned')
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'haiku', effort: 'high' })
+
+  // The owner picks a model on the step: it wins; the thinking level still comes from auto mode.
+  await pane.press({ key: 'model:s1' })
+  await pane.press({ key: 'model:s1' })
+  await pane.unmount()
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'high' })
+})
+
+test('a model seen in usage joins the known models and the pickers; with no price its cost is "?" and it saves nothing', async ($, on) => {
+  const { store, step } = await boot($, on, [], [{ id: 'x1', description: '[n1] try' }])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'n1', title: 'Try', tier: 'standard', where: 'agent' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[n1] try', prompt: 'go' })
+  await step('m1', { model: 'claude-opus-5-5', input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: 50 })
+  await step('t1', { model: 'claude-nova-6', input_tokens: 2, cache_creation_input_tokens: 4000, cache_read_input_tokens: 37000, output_tokens: 1000 }, 'x1')
+  // A synthetic id is not a model.
+  await step('m2', { model: '<synthetic>', input_tokens: 0, output_tokens: 0 })
+
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6'])
+  const life = store.get('lifetime') as { agentCost: number; mainEquivalent: number }
+  expect(life.agentCost).toBe(0)
+  expect(life.mainEquivalent).toBe(0)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  const picker = await pane.find({ type: 'Select', key: 'model:n1' } as never)
+  expect((picker?.props.options as { value: string }[]).map(o => o.value)).toEqual(['tier', 'haiku', 'sonnet', 'opus', 'fable', 'claude-nova-6'])
+  expect(await pane.find(text(/^\? · 5\.0k tok \+ 37\.0k cached · no price for claude-nova-6: left out of savings/))).toBeTruthy()
+  expect(await pane.find(text(/^\?$/))).toBeTruthy()
+  // Saved stays empty: nothing was priced on both sides.
+  expect(await pane.find(text(/of the total$/))).toBeFalsy()
+
+  // Settings lists it with no price; a price set there is kept, and a model can be added by name.
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^no price$/))).toBeTruthy()
+  await pane.input({ key: 'price:claude-nova-6', text: '3 15' })
+  expect((store.get('settings') as { prices: Record<string, unknown> }).prices['claude-nova-6']).toEqual({ input: 3, cacheWrite: 3.75, cacheRead: 0.30000000000000004, output: 15 })
+  await pane.input({ key: 'price:claude-nova-6', text: 'cheap' })
+  expect((store.get('settings') as { prices: Record<string, unknown> }).prices['claude-nova-6']).toBeTruthy()
+  await pane.input({ key: 'add-model', text: 'Nova' })
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6', 'nova'])
+  // A model the defaults know is not added twice.
+  await pane.input({ key: 'add-model', text: 'opus' })
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6', 'nova'])
+  await pane.press({ key: 'model-remove:nova' })
+  await pane.unmount()
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6'])
+})
+
+test('the ladder is built from the known models by price, and is the old one when only the defaults are known', () => {
+  expect(ladderOf(DEFAULT_SETTINGS)).toEqual(LADDER)
+  const set = mergeSettings({ models: ['nova', 'dusk'], prices: { nova: { input: 3, cacheWrite: 3.75, cacheRead: 0.3, output: 15 } } })
+  const ladder = ladderOf(set).map(r => `${r.model}/${r.effort}`)
+  // nova sits between Sonnet and Opus by price, on medium and high; dusk has no price and is not on it.
+  expect(ladder).toEqual(['haiku/low', 'haiku/medium', 'haiku/high', 'sonnet/medium', 'sonnet/high', 'nova/medium', 'nova/high', 'opus/high', 'opus/xhigh', 'fable/high'])
+  expect(nextRung({ model: 'sonnet', effort: 'high' }, set)).toEqual({ model: 'nova', effort: 'medium' })
+  expect(nextRung({ model: 'dusk', effort: 'high' }, set)).toBeUndefined()
+  expect(nextRung({ model: 'fable', effort: 'high' }, set)).toBeUndefined()
+  // Ids map to family aliases; an unknown family is kept under its id.
+  expect(modelOf('claude-haiku-5-5', set)).toBe('haiku')
+  expect(modelOf('claude-nova-6-1', set)).toBe('nova')
+  expect(modelOf('claude-ember-7', set)).toBe('claude-ember-7')
+  expect(modelOf('<synthetic>', set)).toBeUndefined()
+  expect(parsePrice('1 2 0.1 5')).toEqual({ input: 1, cacheWrite: 2, cacheRead: 0.1, output: 5 })
+  expect(parsePrice('1')).toBeUndefined()
+  expect(fmtCost(0.5, true)).toBe('≈$0.50 + ?')
+  expect(fmtCost(0, true)).toBe('?')
+})
+
+test('advice for a kind that first reaches its threshold asks the lead, once, to record a strange-loop observation', async ($, on) => {
+  const { store, step } = await boot($, on, [['history', [run(1, { verdict: 'weak' }), run(2, { verdict: 'ok' })]]], [
+    { id: 'x1', description: '[r1] review' },
+    { id: 'x2', description: '[r2] review' },
+  ])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'r1', title: 'Review A', tier: 'light', where: 'agent', kind: 'code-review' },
+      { id: 'r2', title: 'Review B', tier: 'light', where: 'agent', kind: 'code-review' },
+    ],
+  } as never)
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await step('t1', haikuUse, 'x1')
+  await end($, 'x1', 't1')
+  // Two runs of three: the threshold is not reached until the verdict comes.
+  expect(store.get('genomeNoted')).toBeUndefined()
+  const res = await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'weak' }] } as never)
+  expect(store.get('genomeNoted')).toEqual(['code-review:up'])
+  const text0 = String(res.result)
+  expect(text0).toContain('Advice for kind "code-review" reached its threshold (code-review on light: 2 of 3 weak)')
+  expect(text0).toContain('loop.py" note model-router friction "routing: model-router\'s history says code-review on light: 2 of 3 weak; it suggests raising code-review to haiku/medium"')
+
+  // Another weak run of the same kind: no second note.
+  await $.tool.call({ tool: 'Agent', description: '[r2] review', prompt: 'go' })
+  await step('t2', haikuUse, 'x2')
+  await end($, 'x2', 't2')
+  const res2 = await $.tool.call({ tool: PLAN, done: [{ id: 'r2', verdict: 'weak' }] } as never)
+  expect(String(res2.result)).not.toContain('strange-loop observation')
+  expect(store.get('genomeNoted')).toEqual(['code-review:up'])
+
+  // A kind that is a skill's name is noted to that skill; the kind is cleaned before it reaches a shell command.
+  const a = suggestions([1, 2, 3].map(n => run(n, { kind: 'scientific-figures', verdict: 'weak' })), mergeSettings({}))[0]!
+  expect(genomeNote(a, 'scientific-figures')).toContain('note scientific-figures friction')
+})
+
+test('a main chat on a model with no price counts no saving, and a verdict given before the agent ends goes onto its run', async ($, on) => {
+  const { store, step } = await boot($, on, [], [{ id: 'x1', description: '[r1] review' }])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'r1', title: 'Review', tier: 'light', where: 'agent', kind: 'code-review' }] } as never)
+  await step('m1', { model: 'claude-nova-6', input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: 50 })
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await step('t1', haikuUse, 'x1')
+  const life = store.get('lifetime') as { agentCost: number; mainEquivalent: number; mainCost: number }
+  expect(life.agentCost).toBeGreaterThan(0)
+  expect(life.mainEquivalent).toBe(life.agentCost)
+  expect(life.mainCost).toBe(0)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^\?$/))).toBeTruthy()
+  await pane.unmount()
+
+  await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'ok', why: 'fine' }] } as never)
+  await end($, 'x1', 't1')
+  expect((store.get('history') as HistoryEntry[]).at(-1)).toMatchObject({ kind: 'code-review', verdict: 'ok', why: 'fine' })
 })

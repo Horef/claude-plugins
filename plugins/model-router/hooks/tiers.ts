@@ -1,5 +1,5 @@
 // Default tiers, model prices, the escalation ladder and other constants of model-router.
-import type { Effort, Model, Settings, Tier } from '../types'
+import type { Effort, Model, Price, Settings, Tier } from '../types'
 
 // Defaults only: the pane's Settings change them, remembered across sessions.
 // Aliases track the newest release, so a new model version needs no edit here.
@@ -25,6 +25,10 @@ export const DEFAULT_SETTINGS: Settings = {
     fusion: 'off',
   },
   hereEffort: { enabled: false, maxContext: 40_000 },
+  kinds: {},
+  autoRoute: false,
+  models: [],
+  prices: {},
 }
 
 // Context limits offered for here-step effort, in tokens.
@@ -44,10 +48,12 @@ export const TIER_USE: Record<Tier, string> = {
 }
 
 export const TIER_ORDER: Tier[] = ['light', 'standard', 'deep']
+// The default models; Settings and usage add more (an open list, see knownModels in logic.ts).
 export const MODELS: Model[] = ['haiku', 'sonnet', 'opus', 'fable']
 export const EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
 
-// The escalation ladder a rerun climbs: more thinking first, then a bigger model.
+// The escalation ladder a rerun climbs: more thinking first, then a bigger model. With more
+// models known, the ladder is built from them by price (ladderOf in logic.ts); with only these, it is this one.
 export const LADDER: { model: Model; effort: Effort }[] = [
   { model: 'haiku', effort: 'low' },
   { model: 'haiku', effort: 'medium' },
@@ -59,9 +65,12 @@ export const LADDER: { model: Model; effort: Effort }[] = [
   { model: 'fable', effort: 'high' },
 ]
 
+// The thinking levels a model the defaults do not know gets on the ladder.
+export const NEW_MODEL_RUNGS: Effort[] = ['medium', 'high']
+
 // Dollars per million tokens, first-party API list prices as of October 2026.
-// Cache writes are the 5-minute rate (1.25x input). Estimates only.
-export const PRICES: Record<Model, { input: number; cacheWrite: number; cacheRead: number; output: number }> = {
+// Cache writes are the 5-minute rate (1.25x input). Estimates only. Settings can change them and price new models.
+export const PRICES: Record<string, Price> = {
   haiku: { input: 0.1, cacheWrite: 0.125, cacheRead: 0.01, output: 0.5 },
   sonnet: { input: 2, cacheWrite: 2.5, cacheRead: 0.2, output: 10 },
   opus: { input: 4, cacheWrite: 5, cacheRead: 0.2, output: 20 },
@@ -74,3 +83,6 @@ export const SCOPE_NOTE =
 
 // A finished step counts as mostly start-up cost when it wrote little but read a lot.
 export const SETUP_HEAVY = { maxOutput: 2000, minRead: 20000 }
+
+// Learned advice: how many runs it needs, and the shares that move a kind or tier a rung.
+export const LEARN = { minRuns: 3, weakShare: 0.5, overkillShare: 0.5, autoOkShare: 0.8, recent: 3 }

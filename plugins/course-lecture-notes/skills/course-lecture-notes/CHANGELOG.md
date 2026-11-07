@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.6.0 (2026-11-07)
+- scripts/lint_notes.py checks cross-block references, Unicode math, single-backslash display, missing where:, missing --- (owner's request 2026-11-07); evals/run.py with good/bad fixtures; Workflow step 6 runs the lint before saving and before Anki (O1)
+
 ## 1.5.0 (2026-11-06)
 - Workflow step 0: DEVONthink MCP-only check and harness table (owner decision 2026-11-06: MCP only, resolves the osascript recipes of O3); step 7 follows the pipeline's figures on cards (--no-images, --list figure counts) and in-deck duplicate skip (O3)
 
