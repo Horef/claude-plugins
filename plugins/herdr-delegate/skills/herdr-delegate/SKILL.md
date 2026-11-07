@@ -39,7 +39,7 @@ Run `scripts/helpers.py pick <tier>` (light, standard, deep, argon), or `pick a,
 
 **Kiro's login goes stale** after about 8 to 12 hours; that is expected, not a fault. Signs: hc shows the helper `blocked (auth)` and waiting once doesn't clear it, or its screen asks to log in or says the token expired. Then:
 - If the person is around, ask them in one line to log in (`! kiro-cli login` at your prompt), wait, then `helpers.py back kiro` if you had marked it and carry on with the same helper.
-- If they are away (asleep, or they said they're AFK), don't wait: `hc kill`/`hc rm` the helper, run `helpers.py login kiro` (a mark with no expiry, so `pick` skips Kiro), and relaunch with the next pick. Tell them when they're back; `helpers.py back kiro` after they log in.
+- If they are away (asleep, or they said they're AFK), don't wait: `hc kill`/`hc rm` the helper, run `helpers.py login kiro` (a mark with no expiry, so `pick` skips Kiro), and relaunch with the next pick. Tell them when they're back. The mark clears itself: `pick` and `status` run `kiro-cli whoami` and drop it once Kiro is logged in again.
 
 ## Steps
 
