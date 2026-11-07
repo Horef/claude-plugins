@@ -32,10 +32,12 @@ def plane(ax, xlim, ylim, xlabel="x", ylabel="y", ticks=None, grid=False, origin
         ax.spines["bottom"].set_position(("data", 0))
         ax.plot(1, 0, ">", color=S.AXIS, transform=ax.get_yaxis_transform(), clip_on=False, ms=6)
         ax.plot(0, 1, "^", color=S.AXIS, transform=ax.get_xaxis_transform(), clip_on=False, ms=6)
-    if ticks is not None:
+    if ticks is None or ticks is False:  # no ticks
+        ax.set_xticks([]); ax.set_yticks([])
+    elif isinstance(ticks, (tuple, list)) and len(ticks) == 2:
         ax.set_xticks(ticks[0]); ax.set_yticks(ticks[1])
     else:
-        ax.set_xticks([]); ax.set_yticks([])
+        raise ValueError(f"plane(ticks=...) takes None/False (no ticks) or a pair (xticks, yticks), got {ticks!r}")
     if not tick_labels:
         ax.set_xticklabels([]); ax.set_yticklabels([])
     if grid:
