@@ -2,9 +2,15 @@ Status: current (verified {date}). Analysis plan (research-assistant, rules D); 
 
 # Plan
 
+- stop rules: <when to stop running: the approved analyses only; two failures of one run -> escalate; the budget in question.md>
+
+| analysis | hypotheses | compute h | peak memory | wall clock | tokens | person time | value |
+|---|---|---|---|---|---|---|---|
+| <A1> | | | | | | | |
+
 <!-- One section per analysis. Copy the block below; keep the field names. status: proposed | approved | running | done | failed | dropped.
 
-## A1: <what it does, in a few words>
+## A1: <what it does, in a few words; for entry 'review', the reader question it answers>
 - status: proposed
 - hypotheses: <H-ids it separates>
 - data: <inputs, splits, the held-out set no selection step may read>

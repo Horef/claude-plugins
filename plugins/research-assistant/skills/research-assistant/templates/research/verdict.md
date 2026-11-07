@@ -9,7 +9,7 @@ Status: current (verified {date}). Verdicts (research-assistant, rules F); every
 - result: <what came out, each number with its [source]>
 - controls: <negative and positive control results, with [source]>
 - variants: <the spread across variants, with [source]>
-- analyses run: <count, including failed ones>
-- rival: <the nearest rival hypothesis and whether the data separate them>
+- analyses run: <count of runs, including failed ones (no source needed)>
+- rival: <the nearest rival hypothesis and whether the data separate them; numbers with [source]>
 - verdict: <supports Hx | rejects Hx | inconclusive | failed>
 -->
