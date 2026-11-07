@@ -3,6 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 const PLAN = 'mcp__model-router__plan'
+const HOME = '/home/tester'
+const MIRROR = `${HOME}/.config/model-router/settings.json`
 const PANE = {
   plugin: 'model-router',
   component: 'Pane',
@@ -271,8 +273,20 @@ const boot = async (
   on: Parameters<TestBody>[1],
   init: [string, unknown][],
   agents: { id: string; description: string }[] = [],
+  files = new Map<string, string>(),
 ) => {
   const store = new Map<string, unknown>([['autoApprove', true], ...init])
+  // The settings mirror lives in a file under the home directory: here, a map of paths to text.
+  mock.env(on, { HOME: HOME })
+  on('fs.read', (_, e) => {
+    const text = files.get((e as { path: string }).path)
+
+    return text === undefined ? { deny: 'ENOENT' } : { value: text }
+  })
+  on('fs.write', (_, e) => {
+    files.set((e as { path: string }).path, (e as { text: string }).text)
+    return { value: undefined }
+  })
   const registered: Registered[] = []
   const calls: Call[] = []
   const usageFor: Record<string, unknown> = {}
@@ -317,7 +331,7 @@ const boot = async (
     return st.result
   }
 
-  return { store, registered, calls, rows, step, sent }
+  return { store, registered, calls, rows, step, sent, files }
 }
 
 const wheres = (r: Registered | undefined) => r?.inputSchema?.properties?.steps?.items?.properties?.where?.enum
@@ -644,4 +658,199 @@ test('here-step effort: the Settings switch turns it on, adds start to the plan 
   expect((store.get('settings') as { hereEffort: { enabled: boolean } }).hereEffort.enabled).toBe(true)
   expect(props(registered.at(-1)).start).toBeTruthy()
   await pane.unmount()
+})
+
+// --- Persistence, helper order, mid-run notes ------------------------------------------
+
+test('a response that arrives while the store is still loading leaves the stored lifetime intact', async ($, on) => {
+  const seeded = { mainCost: 5, agentCost: 1, mainEquivalent: 3, steps: 4, plans: 2, since: '2026-10-01T00:00:00.000Z', byTier: { light: 1, standard: 2, deep: 1 } }
+  const store = new Map<string, unknown>([['lifetime', seeded]])
+  let release!: () => void
+  const gate = new Promise<void>(r => (release = r))
+  mock.env(on, { HOME })
+  on('fs.read', () => ({ deny: 'ENOENT' }))
+  on('fs.write', () => ({ value: undefined }))
+  on('command.register', () => ({ value: { command: 'router' } }))
+  on('tool.register', () => ({ value: { tool: PLAN } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.status', () => ({ value: undefined }))
+  on('store.get', async (_, e) => {
+    await gate
+    return { value: store.get((e as { key: string }).key) }
+  })
+  on('store.set', (_, e) => {
+    store.set((e as { key: string }).key, (e as { value: unknown }).value)
+    return { value: undefined }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.step', async function* (_, e) {
+    const x = e as { turnId: string; index: number }
+    return { turnId: x.turnId, index: x.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: { model: 'claude-opus-5-5', input_tokens: 1000, output_tokens: 1000 } } as never
+  })
+
+  const starting = $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 5))
+  const st = $.turn.step({ turnId: 't1', index: 0, model: 'x', messageCount: 1 } as never)
+  const stepping = (async () => { for await (const _ of st) void _ })()
+  await new Promise(r => setTimeout(r, 5))
+  release()
+  await starting
+  await stepping
+
+  const life = store.get('lifetime') as typeof seeded
+  expect(life.since).toBe(seeded.since)
+  expect(life.steps).toBe(4)
+  expect(life.plans).toBe(2)
+  expect(life.mainCost).toBeGreaterThan(5)
+})
+
+test('an empty store takes its settings back from the mirror; a store that has them wins, and every change is mirrored', async ($, on) => {
+  const mirror = {
+    settings: { tiers: { light: { model: 'sonnet', effort: 'low', scopeNote: true } }, skills: { 'scientific-figures': 'standard' } },
+    autoApprove: true,
+    alwaysPlan: true,
+  }
+  const files = new Map([[MIRROR, JSON.stringify(mirror)]])
+  const { store, rows } = await boot($, on, [], [], files)
+  const restored = store.get('settings') as { tiers: { light: { model: string; scopeNote: boolean }; deep: { model: string } }; skills: Record<string, string> }
+  expect(restored.tiers.light.model).toBe('sonnet')
+  expect(restored.tiers.light.scopeNote).toBe(true)
+  expect(restored.tiers.deep.model).toBe('opus')
+  expect(restored.skills['scientific-figures']).toBe('standard')
+  expect(store.get('alwaysPlan')).toBe(true)
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('light (sonnet/low)')
+
+  // Every change is written to the mirror too.
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'set-model:deep' })
+  await pane.unmount()
+  const written = JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { tiers: { deep: { model: string } } }; alwaysPlan: boolean }
+  expect(written.settings.tiers.deep.model).toBe('fable')
+  expect(written.alwaysPlan).toBe(true)
+})
+
+test('when the store and the mirror both hold settings the store wins, and the mirror is brought up to date', async ($, on) => {
+  const files = new Map([[MIRROR, JSON.stringify({ settings: { tiers: { deep: { model: 'sonnet', effort: 'low', scopeNote: false } } } })]])
+  const { store } = await boot($, on, [['settings', { tiers: { deep: { model: 'haiku', effort: 'low', scopeNote: false } } }]], [], files)
+  expect((store.get('settings') as { tiers: { deep: { model: string } } }).tiers.deep.model).toBe('haiku')
+  expect((JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { tiers: { deep: { model: string } } } }).settings.tiers.deep.model).toBe('haiku')
+})
+
+test('values that differ from the default carry a dot and a legend', async ($, on) => {
+  await boot($, on, [['autoApprove', false]])
+  const dots = { type: 'Text', text: /^•$/ } as never
+  const legend = { type: 'Text', text: /^• differs from the default$/ } as never
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(legend)).toBeFalsy()
+  expect(await pane.find(dots)).toBeFalsy()
+  await pane.press({ key: 'set-model:light' })
+  expect(await pane.find(legend)).toBeTruthy()
+  expect(await pane.findAll(dots)).toHaveLength(1)
+  await pane.press({ key: 'always' })
+  expect(await pane.findAll(dots)).toHaveLength(2)
+  // Back to the default: the dot goes.
+  await pane.press({ key: 'always' })
+  expect(await pane.findAll(dots)).toHaveLength(1)
+  await pane.unmount()
+})
+
+test('moving or switching off a helper changes the order in the rules, one note says so, and none when it is back', async ($, on) => {
+  const { store, rows } = await boot($, on, [['settings', { helpers: { enabled: true } }]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('light: kiro-light,copilot-light,agy-light')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helper-down:light:kiro-light' })
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light,agy-light')
+  await pane.press({ key: 'helper-off:light:agy-light' })
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light')
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(lastRow(rows)).toContain('light: copilot-light,kiro-light;')
+  expect(lastRow(rows).match(/Helper orders changed/g)?.length).toBe(1)
+
+  // Switching the helper back on puts it last; "Reset to default order" restores the defaults.
+  await pane.press({ key: 'helper-on:light:agy-light' })
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light,agy-light')
+  await pane.press({ key: 'helper-up:light:kiro-light' })
+  await pane.press({ key: 'helper-reset' })
+  await pane.unmount()
+  expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('kiro-light,copilot-light,agy-light')
+  // Back to the first order the chat was told, then to the order of the second.
+  const count = rows.appended().length
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  expect(rows.appended().length).toBeGreaterThan(count)
+  expect(lastRow(rows)).toContain('light: kiro-light,copilot-light,agy-light;')
+})
+
+test('a helper order that returns to what the chat was told sends no note', async ($, on) => {
+  const { rows } = await boot($, on, [['settings', { helpers: { enabled: true } }]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const count = rows.appended().length
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helper-down:deep:kiro-deep' })
+  await pane.press({ key: 'helper-reset' })
+  await pane.unmount()
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
+})
+
+test('a step changed in the pane reaches the agent once at the next turn, with the final value, and not at all when it is put back', async ($, on) => {
+  const { rows } = await boot($, on, [])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Survey', tier: 'standard', where: 'agent' }] } as never)
+  const noted = { type: 'Text', text: /^change noted, applies from the next turn$/ } as never
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await pane.find(noted)).toBeFalsy()
+
+  // Cycling the tier picker round to where it began is no change.
+  const count = rows.appended().length
+  for (let i = 0; i < 3; i++) await pane.press({ key: 'tier:s1' })
+  expect(await pane.find(noted)).toBeFalsy()
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
+
+  // Passing through deep to rest on light: one note, the final value only.
+  await pane.press({ key: 'tier:s1' })
+  expect(await pane.find(noted)).toBeTruthy()
+  await pane.press({ key: 'tier:s1' })
+  for (let i = 0; i < 3; i++) await pane.press({ key: 'model:s1' })
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  const row = lastRow(rows)
+  expect(row.match(/\[s1\]/g)?.length).toBe(1)
+  expect(row).toContain('tier standard → light')
+  expect(row).toContain('model sonnet → opus')
+  expect(row).toContain('thinking medium → low')
+  expect(row).not.toContain('deep')
+  expect(await pane.find(noted)).toBeFalsy()
+
+  // Delivered: the same values send nothing more.
+  const after = rows.appended().length
+  await $.turn.start({ text: 'fourth', turnId: 't3' })
+  expect(rows.appended().length).toBe(after)
+
+  // Where it runs is announced too.
+  await pane.press({ key: 'where:s1' })
+  await $.turn.start({ text: 'fifth', turnId: 't4' })
+  expect(lastRow(rows)).toContain('runs subagent → here')
+  await pane.unmount()
+})
+
+test('before the plan is approved no change is announced, and the plan the agent is handed counts as told', async ($, on) => {
+  const { rows } = await boot($, on, [['autoApprove', false]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const planning = $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Survey', tier: 'standard', where: 'agent' }] } as never)
+  await new Promise(r => setTimeout(r, 5))
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'tier:s1' })
+  await pane.unmount()
+  void planning
+  // Not approved yet: nothing to tell.
+  const count = rows.appended().length
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
 })

@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, Effort, EffortSwitch, HistoryEntry, Lifetime, Settings, Step, Tier, Totals, Usage, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HistoryEntry, Lifetime, Settings, Step, StepKnown, Tier, Totals, Usage, Where } from '../types'
 import {
   EMPTY_USAGE,
   PANE,
@@ -14,16 +14,24 @@ import {
   costOf,
   fmtTok,
   fmtUsd,
+  helperItems,
   helperList,
   helperOrder,
+  helperSignature,
+  helpersOff,
   hereNeeds,
   isSetupHeavy,
   isTier,
+  knownChanges,
+  knownOf,
+  mergeSettings,
   modelHint,
   modelOf,
+  moveHelper,
   newStep,
   nextRung,
   planText,
+  stepChangeNote,
   VERSION,
   rungLabel,
   rungStats,
@@ -45,6 +53,8 @@ const history = atom({ plugin: 'model-router', key: 'history' } as const, [])
 const seenSkills = atom({ plugin: 'model-router', key: 'seenSkills' } as const, [])
 const showSettings = atom({ plugin: 'model-router', key: 'showSettings' } as const, false)
 const notes = atom({ plugin: 'model-router', key: 'notes' } as const, [])
+const told = atom({ plugin: 'model-router', key: 'told' } as const, {})
+const toldHelpers = atom({ plugin: 'model-router', key: 'toldHelpers' } as const, '')
 const policySent = atom({ plugin: 'model-router', key: 'policy' } as const, {})
 const delivery = atom({ plugin: 'model-router', key: 'delivery' } as const, { inChat: false, planDue: false })
 const EMPTY_TOTALS: Totals = { mainCost: 0, agentCost: 0, mainEquivalent: 0, steps: 0 }
@@ -63,56 +73,177 @@ const HISTORY_CAP = 500
 // What the router saw in this load, for the plan tool's status check.
 const diag = { turns: 0, appends: 0, composes: 0, lastError: '' }
 
+// Nothing is written to the store before what it holds has been read: a write that raced
+// ahead of the load would put the defaults over the remembered values.
+let loading: Promise<boolean> | undefined
+
+/** Resolves once the remembered state is loaded (loading it if need be); false when loading failed, so nothing may be written. */
+function ready($: EngineInterface) {
+  loading ??= loadRemembered($).then(
+    () => true,
+    err => {
+      diag.lastError = `load: ${String(err).slice(0, 200)}`
+      loading = undefined
+
+      return false
+    },
+  )
+
+  return loading
+}
+
+// Read-modify-write of one stored value runs one at a time.
+const locks = new Map<string, Promise<unknown>>()
+function locked<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const run = (locks.get(key) ?? Promise.resolve()).then(fn)
+  locks.set(key, run.catch(() => undefined))
+
+  return run
+}
+
+// Settings, auto-approve and always-plan are also kept in a file outside the store, which a
+// new store file (re-adding the marketplace) would otherwise lose.
+const MIRROR = '.config/model-router/settings.json'
+
+async function mirrorPath($: EngineInterface) {
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+
+  return home ? `${home.replace(/[\\/]+$/, '')}/${MIRROR}` : undefined
+}
+
+type Mirror = { settings?: Partial<Settings>; autoApprove?: boolean; alwaysPlan?: boolean }
+
+async function readMirror($: EngineInterface): Promise<Mirror | undefined> {
+  try {
+    const path = await mirrorPath($)
+    if (!path) return undefined
+    const parsed = JSON.parse(String(await $.fs.read(path))) as Mirror
+
+    return parsed && typeof parsed === 'object' ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function writeMirror($: EngineInterface) {
+  try {
+    const path = await mirrorPath($)
+    if (!path) return
+    await locked('mirror', async () => {
+      const body = { settings: await read($, settings), autoApprove: await read($, autoApprove), alwaysPlan: await read($, alwaysPlan) }
+      await $.fs.write(path, `${JSON.stringify(body, null, 2)}\n`)
+    })
+  } catch (err) {
+    diag.lastError = `mirror: ${String(err).slice(0, 200)}`
+  }
+}
+
+const asLifetime = (v: unknown): Lifetime | undefined => {
+  const life = v as Lifetime | undefined
+
+  return life?.since ? { ...newLifetime(), ...life } : undefined
+}
+
 async function loadRemembered($: EngineInterface) {
   const stored = (await $.store.get(STORE.settings)) as Partial<Settings> | undefined
-  await update($, settings, () => ({
-    tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
-    skills: { ...(stored?.skills ?? {}) },
-    openPane: stored?.openPane ?? DEFAULT_SETTINGS.openPane,
-    compact: stored?.compact ?? DEFAULT_SETTINGS.compact,
-    // Settings stored by older versions have no `helpers`: fill from the defaults.
-    helpers: {
-      ...DEFAULT_SETTINGS.helpers,
-      ...(stored?.helpers ?? {}),
-      tiers: { ...DEFAULT_SETTINGS.helpers.tiers, ...(stored?.helpers?.tiers ?? {}) },
-    },
-    hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
-  }))
+  const storedAuto = await $.store.get(STORE.auto)
+  const storedAlways = await $.store.get(STORE.always)
+  // The store wins; the mirror fills what a fresh store lacks.
+  const needsMirror = stored === undefined || storedAuto === undefined || storedAlways === undefined
+  const mirror = needsMirror ? await readMirror($) : undefined
+  const restored = stored ?? (mirror?.settings && typeof mirror.settings === 'object' ? mirror.settings : undefined)
+  const auto = storedAuto ?? (typeof mirror?.autoApprove === 'boolean' ? mirror.autoApprove : undefined)
+  const always = storedAlways ?? (typeof mirror?.alwaysPlan === 'boolean' ? mirror.alwaysPlan : undefined)
+  if (stored === undefined && restored) await $.store.set(STORE.settings, mergeSettings(restored))
+  if (storedAuto === undefined && auto !== undefined) await $.store.set(STORE.auto, auto)
+  if (storedAlways === undefined && always !== undefined) await $.store.set(STORE.always, always)
+
+  await update($, settings, () => mergeSettings(restored))
   const switches = (await $.store.get(STORE.effortLog)) as EffortSwitch[] | undefined
   await update($, effortLog, () => (Array.isArray(switches) ? switches : []))
-  await update($, autoApprove, () => false)
-  if ((await $.store.get(STORE.auto)) === true) await update($, autoApprove, () => true)
-  await update($, alwaysPlan, () => false)
-  if ((await $.store.get(STORE.always)) === true) await update($, alwaysPlan, () => true)
+  await update($, autoApprove, () => auto === true)
+  await update($, alwaysPlan, () => always === true)
   const past = (await $.store.get(STORE.history)) as HistoryEntry[] | undefined
   await update($, history, () => (Array.isArray(past) ? past : []))
-  const life = (await $.store.get(STORE.lifetime)) as Lifetime | undefined
-  await update($, lifetime, () => (life?.since ? { ...newLifetime(), ...life } : newLifetime()))
+  const life = asLifetime(await $.store.get(STORE.lifetime)) ?? newLifetime()
+  await update($, lifetime, () => life)
+  // The store is the source: bring the mirror up to date with it.
+  if (stored !== undefined) await writeMirror($)
 }
 
 async function editLifetime($: EngineInterface, fn: (l: Lifetime) => Lifetime) {
-  await update($, lifetime, fn)
-  await $.store.set(STORE.lifetime, await read($, lifetime))
+  const ok = await ready($)
+  await locked('lifetime', async () => {
+    // Applied to what the store holds, so an atom that is behind never overwrites it.
+    const base = (ok ? asLifetime(await $.store.get(STORE.lifetime)) : undefined) ?? (await read($, lifetime))
+    const next = fn(base)
+    if (ok) await $.store.set(STORE.lifetime, next)
+    await update($, lifetime, () => next)
+  })
 }
 
 async function setAuto($: EngineInterface, on: boolean) {
+  const ok = await ready($)
   await update($, autoApprove, () => on)
+  if (!ok) return
   await $.store.set(STORE.auto, on)
+  await writeMirror($)
 }
 
 async function setAlways($: EngineInterface, on: boolean) {
+  const ok = await ready($)
   await update($, alwaysPlan, () => on)
+  if (!ok) return
   await $.store.set(STORE.always, on)
+  await writeMirror($)
 }
 
 async function editSettings($: EngineInterface, fn: (s: Settings) => Settings) {
+  const ok = await ready($)
   await update($, settings, fn)
+  if (!ok) return
   await $.store.set(STORE.settings, await read($, settings))
+  await writeMirror($)
 }
 
 async function editHistory($: EngineInterface, fn: (h: HistoryEntry[]) => HistoryEntry[]) {
-  await update($, history, h => fn(h).slice(-HISTORY_CAP))
-  await $.store.set(STORE.history, await read($, history))
+  const ok = await ready($)
+  await locked('history', async () => {
+    const stored = ok ? ((await $.store.get(STORE.history)) as HistoryEntry[] | undefined) : undefined
+    const next = fn(Array.isArray(stored) ? stored : await read($, history)).slice(-HISTORY_CAP)
+    if (ok) await $.store.set(STORE.history, next)
+    await update($, history, () => next)
+  })
+}
+
+// --- What the main agent knows of the plan ----------------------------------------------
+
+/** Records every step as the agent now knows it: it was just handed the plan, or told of the change. */
+async function tellSteps($: EngineInterface, only?: readonly string[]) {
+  const set = await read($, settings)
+  const list = (await read($, steps)).filter(s => !only || only.includes(s.id))
+  await update($, told, t => ({ ...t, ...Object.fromEntries(list.map(s => [s.id, knownOf(s, set)])) }))
+}
+
+/** Steps the user changed since the agent last knew them, final value against known value. Only while a plan is approved. */
+async function stepChanges($: EngineInterface) {
+  if ((await read($, planStatus)) !== 'approved') return []
+  const set = await read($, settings)
+  const was = await read($, told)
+
+  return (await read($, steps)).flatMap(s => {
+    const known = was[s.id]
+    const note = s.status !== 'done' && known ? stepChangeNote(s, known, knownOf(s, set)) : undefined
+
+    return note ? [{ id: s.id, note }] : []
+  })
+}
+
+/** Notes reached the agent: if one named the helper orders, it now knows them as they stand. */
+async function noteDelivered($: EngineInterface, delivered: readonly string[]) {
+  if (!delivered.some(n => n.startsWith(HELPER_NOTE))) return
+  const sig = helperSignature(await read($, settings))
+  await update($, toldHelpers, () => sig)
 }
 
 // --- Actions ------------------------------------------------------------------
@@ -167,6 +298,8 @@ async function rerun($: EngineInterface, id: string) {
     await editHistory($, h => h.map(x => (x.key === step.historyKey ? { ...x, rerun: true } : x)))
   }
   await editStep($, id, s => ({ ...s, model: up.model, effort: up.effort, status: 'planned', reruns: s.reruns + 1 }))
+  // The prompt below tells the agent of the new rung itself.
+  await tellSteps($, [id])
   await $.prompt.submit({
     text: `[model-router] Please rerun step [${id}] "${step.title}": its result was not good enough, so it moves up to ${rungLabel(up)}. Delegate it again with the same brief, its description starting "[${id}]".`,
   })
@@ -224,17 +357,20 @@ async function registerPlanTool($: EngineInterface) {
   })
 }
 
+// A router note about the helper orders starts with this, so a newer one replaces it.
+const HELPER_NOTE = 'Helper orders changed'
+
 async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers']>) {
-  const before = await read($, settings)
-  const wasOn = before.helpers.enabled
+  const wasOn = (await read($, settings)).helpers.enabled
   await editSettings($, s => ({ ...s, helpers: { ...s.helpers, ...patch } }))
   const after = await read($, settings)
-  // The rules sit in the chat once; a changed order reaches it as a router note.
-  if (after.helpers.enabled && after.helpers.fusion !== before.helpers.fusion) {
-    await update($, notes, n => [
-      ...n,
-      `Helper orders changed (Copilot Fusion ${after.helpers.fusion}); use these instead of rule 6's: ${TIER_ORDER.map(t => `${t}: ${helperList(after, t).join(',')}`).join('; ')}.`,
-    ])
+  // The rules sit in the chat once; a changed order reaches it as a router note. One note
+  // says where the orders stand, and none when they are back to what the chat was told.
+  const knows = await read($, toldHelpers)
+  await update($, notes, n => n.filter(x => !x.startsWith(HELPER_NOTE)))
+  if (after.helpers.enabled && knows && knows !== helperSignature(after)) {
+    const fusion = after.helpers.fusion === 'off' ? '' : ` (Copilot Fusion ${after.helpers.fusion})`
+    await update($, notes, n => [...n, `${HELPER_NOTE}${fusion}; use these instead of rule 6's: ${helperSignature(after)}.`])
   }
   if (after.helpers.enabled === wasOn) return
   try {
@@ -242,6 +378,13 @@ async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers'
   } catch {
     // Keep the first registration; see registerPlanTool.
   }
+}
+
+/** Switches a helper off, moves one, or puts one back, for a tier. */
+async function editHelperOrder($: EngineInterface, tier: Tier, fn: (list: string[]) => string) {
+  const tiers = { ...(await read($, settings)).helpers.tiers }
+  tiers[tier] = fn(helperItems(await read($, settings), tier))
+  await editHelpers($, { tiers })
 }
 
 async function editHereEffort($: EngineInterface, patch: Partial<Settings['hereEffort']>) {
@@ -285,8 +428,9 @@ function hereEffortFor(set: Settings, step: Step | undefined, own: Effort | numb
 }
 
 async function logSwitch($: EngineInterface, entry: EffortSwitch) {
+  const ok = await ready($)
   await update($, effortLog, l => [...l, entry].slice(-EFFORT_LOG_CAP))
-  await $.store.set(STORE.effortLog, await read($, effortLog))
+  if (ok) await $.store.set(STORE.effortLog, await read($, effortLog))
 }
 
 const hereEffortRule = (set: Settings) =>
@@ -417,6 +561,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const past = await read($, history)
   const seen = await read($, seenSkills)
   const isSettingsOpen = await read($, showSettings)
+  const known = await read($, told)
 
   const done = list.filter(s => s.status === 'done').length
   const agentCost = list.reduce((n, s) => n + s.cost, 0)
@@ -431,6 +576,45 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const hint = mini ? undefined : modelHint(list, m.model)
   const advice = suggestions(past, set)
 
+  // Settings that differ from the defaults get a quiet dot, so it shows which of your own values are active.
+  const D = DEFAULT_SETTINGS
+  const differs = {
+    compact: set.compact !== D.compact,
+    always,
+    auto,
+    openPane: set.openPane !== D.openPane,
+    hereEffort: set.hereEffort.enabled !== D.hereEffort.enabled,
+    hereLimit: set.hereEffort.maxContext !== D.hereEffort.maxContext,
+    helpers: set.helpers.enabled !== D.helpers.enabled,
+    use: set.helpers.use !== D.helpers.use,
+    fusion: set.helpers.fusion !== D.helpers.fusion,
+  }
+  const tierDiffers = (t: Tier) => ({
+    model: set.tiers[t].model !== D.tiers[t].model,
+    effort: set.tiers[t].effort !== D.tiers[t].effort,
+    scope: set.tiers[t].scopeNote !== D.tiers[t].scopeNote,
+  })
+  const orderDiffers = (t: Tier) => set.helpers.tiers[t] !== D.helpers.tiers[t]
+  const anyDiffers =
+    Object.values(differs).some(Boolean) ||
+    Object.keys(set.skills).length > 0 ||
+    TIER_ORDER.some(t => Object.values(tierDiffers(t)).some(Boolean) || (set.helpers.enabled && orderDiffers(t)))
+  const dot = (key: string, on: boolean) =>
+    on ? (
+      <Text key={`dflt:${key}`} dimColor size="footnote">
+        •
+      </Text>
+    ) : null
+
+  // The agent has not heard yet of a change to this step (it is told at its next turn).
+  const changeNoted = (s: Step) => status === 'approved' && s.status !== 'done' && !!known[s.id] && knownChanges(known[s.id]!, knownOf(s, set)).length > 0
+  const notedLine = (s: Step) =>
+    changeNoted(s) ? (
+      <Text key={`noted:${s.id}`} color="suggestion" size="footnote">
+        change noted, applies from the next turn
+      </Text>
+    ) : null
+
   // A picker where the surface has one, else a button that cycles.
   const pick = (key: string, value: string, options: readonly Option[], onPick: (v: string) => void) =>
     Select ? (
@@ -442,10 +626,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     )
 
   // A settings row: what the switch does on the left, On/Off on the right.
-  const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void) => (
+  const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void, isCustom = false) => (
     <Box key={`row:${key}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs" marginTop={mini ? 0 : 1}>
       <Box flexDirection="column" flexShrink={1}>
-        <Text weight="medium">{label}</Text>
+        <Box flexDirection="row" columnGap="xs">
+          <Text weight="medium">{label}</Text>
+          {dot(key, isCustom)}
+        </Box>
         {!mini && <Text dimColor size="footnote" wrap="wrap">{help}</Text>}
       </Box>
       <Button key={key} variant={isOn ? 'primary' : 'secondary'} onPress={onPress}>
@@ -634,6 +821,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             </Button>
           )}
         </Box>
+        {changeNoted(s) && <Box paddingLeft={2}>{notedLine(s)}</Box>}
       </Box>
     )
   }
@@ -661,6 +849,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
           {stepPickers(s)}
         </Box>
+        {notedLine(s)}
         {s.where === 'here' && (
           <Text dimColor size="footnote" wrap="wrap">
             {tty
@@ -743,15 +932,22 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               Done
             </Button>
           </Box>
+          {anyDiffers && (
+            <Text dimColor size="footnote">
+              • differs from the default
+            </Text>
+          )}
 
           {group('Behaviour')}
           {switchRow('compact', 'Minimal view', 'Show only the steps and their settings, with no explanatory text, so a long plan fits without scrolling.', mini, () =>
             void editSettings($, x => ({ ...x, compact: !x.compact })),
+            differs.compact,
           )}
-          {switchRow('always', 'Always plan', 'Plan before any message that needs tools, not only multi-step ones.', always, () => void setAlways($, !always))}
-          {switchRow('auto', 'Auto-approve', 'Run new plans without asking first.', auto, () => void setAuto($, !auto))}
+          {switchRow('always', 'Always plan', 'Plan before any message that needs tools, not only multi-step ones.', always, () => void setAlways($, !always), differs.always)}
+          {switchRow('auto', 'Auto-approve', 'Run new plans without asking first.', auto, () => void setAuto($, !auto), differs.auto)}
           {switchRow('open-pane', 'Open pane on start', 'Open this pane in every new chat.', set.openPane, () =>
             void editSettings($, s => ({ ...s, openPane: !s.openPane })),
+            differs.openPane,
           )}
 
           {group('Experiment', 'Here steps run on this chat\'s model; this tries lowering its thinking level for them instead.')}
@@ -761,10 +957,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             'While a here step runs, send this chat\'s requests at its tier\'s thinking level, lower or higher than the chat\'s own. A change of level makes the API write the conversation to the cache again, so only while the chat is under the limit below.',
             set.hereEffort.enabled,
             () => void editHereEffort($, { enabled: !set.hereEffort.enabled }),
+            differs.hereEffort,
           )}
           {set.hereEffort.enabled && (
             <Box key="here-effort-limit-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm">
               <Text dimColor size="footnote">Switch only while the chat is under</Text>
+              {dot('here-effort-limit', differs.hereLimit)}
               {pick(
                 'here-effort-limit',
                 String(set.hereEffort.maxContext),
@@ -788,14 +986,19 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               <Box key={`tierset:${t}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={TIER_COLOR[t]} paddingX="sm" paddingY={mini ? 0 : 'xs'} marginTop={mini ? 0 : 1}>
                 <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
                   <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
-                  <Button key={`set-scope:${t}`} plain dimColor={!ts.scopeNote} onPress={() => edit({ scopeNote: !ts.scopeNote })}>
-                    {ts.scopeNote ? '✓ Scope note' : 'Scope note off'}
-                  </Button>
+                  <Box flexDirection="row" columnGap="xs" alignItems="center">
+                    {dot(`scope:${t}`, tierDiffers(t).scope)}
+                    <Button key={`set-scope:${t}`} plain dimColor={!ts.scopeNote} onPress={() => edit({ scopeNote: !ts.scopeNote })}>
+                      {ts.scopeNote ? '✓ Scope note' : 'Scope note off'}
+                    </Button>
+                  </Box>
                 </Box>
                 {!mini && <Text dimColor size="footnote" wrap="wrap">{TIER_USE[t]}</Text>}
-                <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
+                <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
                   {pick(`set-model:${t}`, ts.model, MODELS.map(x => ({ value: x, label: x })), v => edit({ model: v as typeof ts.model }))}
+                  {dot(`model:${t}`, tierDiffers(t).model)}
                   {pick(`set-effort:${t}`, ts.effort, EFFORTS.map(x => ({ value: x, label: `${x} thinking` })), v => edit({ effort: v as typeof ts.effort }))}
+                  {dot(`effort:${t}`, tierDiffers(t).effort)}
                 </Box>
               </Box>
             )
@@ -807,12 +1010,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {group('Helpers', 'Run long self-contained steps on agents from other subscriptions (Kiro, Copilot, agy), started by a delegation skill. Needs that skill and herdr-core hc; with none usable, steps run as subagents.')}
           {switchRow('helpers', 'Helpers (other subscriptions)', 'Let plans send steps to a helper.', set.helpers.enabled, () =>
             void editHelpers($, { enabled: !set.helpers.enabled }),
+            differs.helpers,
           )}
           {set.helpers.enabled && (
             <Box key="helpers-detail" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
               <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
                 <Box flexDirection="column" flexShrink={1}>
-                  <Text weight="medium">Use helpers for</Text>
+                  <Box flexDirection="row" columnGap="xs">
+                    <Text weight="medium">Use helpers for</Text>
+                    {dot('use', differs.use)}
+                  </Box>
                   {!mini && (
                     <Text dimColor size="footnote" wrap="wrap">
                       {set.helpers.use === 'long'
@@ -830,7 +1037,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               </Box>
               <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
                 <Box flexDirection="column" flexShrink={1}>
-                  <Text weight="medium">Copilot Fusion</Text>
+                  <Box flexDirection="row" columnGap="xs">
+                    <Text weight="medium">Copilot Fusion</Text>
+                    {dot('fusion', differs.fusion)}
+                  </Box>
                   {!mini && (
                     <Text dimColor size="footnote" wrap="wrap">
                       GitHub's router across Claude and GPT models; tried before the pinned Copilot helper. Max is near Opus 5.5 at max effort for about half the cost; High is unmeasured.
@@ -848,13 +1058,57 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   v => void editHelpers($, { fusion: v === 'deep' || v === 'both' ? v : 'off' }),
                 )}
               </Box>
-              <Text dimColor size="footnote" wrap="wrap">Helper order per tier, first usable wins:</Text>
-              {TIER_ORDER.map(t => (
-                <Text key={`helper-order:${t}`} size="footnote" wrap="wrap">
-                  <Text color={TIER_COLOR[t]} weight="semibold">{t.padEnd(9)}</Text>
-                  <Text dimColor>{helperOrder(set, t).split(`-${t}`).join('')}</Text>
-                </Text>
-              ))}
+              <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+                <Text dimColor size="footnote" wrap="wrap">Helper order per tier, first usable wins:</Text>
+                <Button key="helper-reset" plain dimColor onPress={() => void editHelpers($, { tiers: { ...D.helpers.tiers } })}>
+                  Reset to default order
+                </Button>
+              </Box>
+              {TIER_ORDER.map(t => {
+                const items = helperItems(set, t)
+                const off = helpersOff(set, t)
+                const short = (name: string) => name.split(`-${t}`).join('')
+
+                return (
+                  <Box key={`helper-order:${t}`} flexDirection="column">
+                    <Box flexDirection="row" columnGap="xs" alignItems="center">
+                      <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
+                      {dot(`order:${t}`, orderDiffers(t))}
+                    </Box>
+                    {items.map((name, i) => (
+                      <Box key={`helper:${t}:${name}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
+                        <Text size="footnote">{`${i + 1}. ${short(name)}`}</Text>
+                        {i > 0 && (
+                          <Button key={`helper-up:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, -1))}>
+                            ↑
+                          </Button>
+                        )}
+                        {i < items.length - 1 && (
+                          <Button key={`helper-down:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, 1))}>
+                            ↓
+                          </Button>
+                        )}
+                        <Button key={`helper-off:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => l.filter(x => x !== name).join(','))}>
+                          off
+                        </Button>
+                      </Box>
+                    ))}
+                    {off.length > 0 && (
+                      <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
+                        <Text dimColor size="footnote">off:</Text>
+                        {off.map(name => (
+                          <Button key={`helper-on:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => [...l, name].join(','))}>
+                            {`+ ${short(name)}`}
+                          </Button>
+                        ))}
+                      </Box>
+                    )}
+                    {!mini && helperList(set, t).length !== items.length && (
+                      <Text dimColor size="footnote" wrap="wrap">{`tried: ${helperOrder(set, t).split(`-${t}`).join('')}`}</Text>
+                    )}
+                  </Box>
+                )
+              })}
             </Box>
           )}
 
@@ -864,8 +1118,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           )}
           {[...mapped.map(([n]) => n), ...unmapped].map(name => (
             <Box key={`skill:${name}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
-              <Box flexShrink={1}>
+              <Box flexShrink={1} flexDirection="row" columnGap="xs">
                 <Text mono size="footnote" wrap="truncate">{name}</Text>
+                {dot(`skill:${name}`, name in set.skills)}
               </Box>
               {pick(
                 `skill-tier:${name}`,
@@ -971,7 +1226,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await loadRemembered($)
+    loading = undefined
+    await ready($)
     // A reload mid-plan starts this chat's count from the plan's own, so the views agree.
     const plan = await read($, steps)
     if ((await read($, chatTotals)).agentCost === 0 && plan.some(x => x.cost > 0)) {
@@ -999,9 +1255,12 @@ export const register: Register = on => {
   on('tool.call', { tool: PLAN_TOOL }, async ($, e) => {
     const input = e as unknown as PlanInput
     const set = await read($, settings)
+    // What the agent is handed here is the plan as it stands, so it knows every step now.
     const withNotes = async (text: string) => {
       const pending = await read($, notes)
       await update($, notes, () => [])
+      await noteDelivered($, pending)
+      await tellSteps($)
       return { result: pending.length ? `${text}\n\nRouter notes:\n${pending.map(n => `- ${n}`).join('\n')}` : text }
     }
 
@@ -1089,6 +1348,7 @@ export const register: Register = on => {
     await refreshStatus($)
     const note = answer === REVISE ? 'They gave no details yet: ask them what to change before anything else.' : `What they want changed: ${answer}`
     const kept = planText(await read($, steps), await read($, settings))
+    await tellSteps($)
 
     return {
       result: `The user wants the steps changed before anything runs. ${note}\nTheir pane edits so far are in this version; keep a step's id when you keep the step, so its edits carry over:\n${kept}\nThen call ${PLAN_TOOL} again with the revised steps.`,
@@ -1125,6 +1385,7 @@ export const register: Register = on => {
     // A helper step run through the Agent tool is the fallback: it is a subagent step now.
     if (step.where === 'helper') {
       await editStep($, step.id, s => ({ ...s, where: 'agent' }))
+      await tellSteps($, [step.id])
       step = { ...step, where: 'agent' }
     }
 
@@ -1223,16 +1484,21 @@ export const register: Register = on => {
     diag.turns += 1
     const extra: string[] = []
     const how = await read($, delivery)
-    if (!how.inChat) extra.push(policy(await read($, settings)))
+    const set = await read($, settings)
+    if (!how.inChat) extra.push(policy(set))
     const list = await read($, steps)
-    if (how.planDue && list.length > 0) {
+    const replan = how.planDue && list.length > 0
+    if (replan) {
       extra.push(
-        `Model router: the conversation was summarized. The current plan (${await read($, planStatus)}), from the router's own record:\n${planText(list, await read($, settings))}`,
+        `Model router: the conversation was summarized. The current plan (${await read($, planStatus)}), from the router's own record:\n${planText(list, set)}`,
       )
     }
     if (await read($, alwaysPlan)) extra.push(REMINDER)
+    // A step the user changed since the agent last knew it: one note, the final value.
+    const changes = replan ? [] : await stepChanges($)
     const pending = await read($, notes)
-    if (pending.length) extra.push(`Model router notes:\n${pending.map(n => `- ${n}`).join('\n')}`)
+    const all = [...pending, ...changes.map(c => c.note)]
+    if (all.length) extra.push(`Model router notes:\n${all.map(n => `- ${n}`).join('\n')}`)
 
     if (extra.length > 0) {
       try {
@@ -1240,6 +1506,9 @@ export const register: Register = on => {
         diag.appends += 1
         await update($, delivery, d => ({ ...d, inChat: true, planDue: false }))
         await update($, notes, () => [])
+        if (!how.inChat) await update($, toldHelpers, () => helperSignature(set))
+        await noteDelivered($, pending)
+        await tellSteps($, replan ? undefined : changes.map(c => c.id))
       } catch (err) {
         diag.lastError = `append: ${String(err).slice(0, 200)}`
       }

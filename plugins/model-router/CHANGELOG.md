@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.16.0 (2026-11-07)
+- Settings mirror to ~/.config/model-router, store writes gated on load with merge-on-write, helper order editor, coalesced mid-run step notes (owner's request 2026-11-07)
+
 ## 0.15.0 (2026-11-05)
 - Here-step effort may also raise the chat's level: a started here step runs at its tier's effort, lower or higher than the chat's own (owner's request)
 

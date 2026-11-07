@@ -82,6 +82,9 @@ export type Step = {
   effortNote?: string
 }
 
+/** What the main agent was last told of a step (the approved plan, or the last note delivered), as values it runs on. */
+export type StepKnown = { where: Where; tier: Tier; model: Model; effort: Effort }
+
 /** Money counted over some span: the main chat, the subagents, and what the
  *  subagents' tokens would have cost on the main chat's model. */
 export type Totals = { mainCost: number; agentCost: number; mainEquivalent: number; steps: number }
@@ -116,6 +119,10 @@ declare module 'claude-code' {
       seenSkills: string[]
       showSettings: boolean
       notes: string[]
+      /** Per step id, what the main agent was last told; a difference to the step now is a change to announce. */
+      told: Record<string, StepKnown>
+      /** The helper orders the main agent was last told (the rules or a note); absent until the rules are delivered. */
+      toldHelpers: string
       /** The model the routing rules were last sent to, in this chat. */
       policy: { model?: Model; sentAt?: string }
       /**

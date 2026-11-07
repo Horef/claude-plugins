@@ -1,10 +1,10 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HistoryEntry, Model, Settings, Step, Tier, Usage } from '../types'
-import { EFFORTS, FUSION, LADDER, MODELS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
+import type { Effort, HistoryEntry, Model, Settings, Step, StepKnown, Tier, Usage } from '../types'
+import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, MODELS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.15.0'
+export const VERSION = '0.16.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -80,6 +80,77 @@ export const helperList = (set: Settings, tier: Tier): string[] => {
   if (!f || !on || list.includes(f.template)) return list
   const at = list.indexOf(f.before)
   return at < 0 ? [...list, f.template] : [...list.slice(0, at), f.template, ...list.slice(at)]
+}
+
+const parseList = (v: string) =>
+  v
+    .split(',')
+    .map(x => x.trim())
+    .filter(Boolean)
+
+/** A tier's helpers as stored, in order, without Copilot Fusion (its own setting adds that). */
+export const helperItems = (set: Settings, tier: Tier) => parseList(set.helpers.tiers[tier])
+
+/** The default helper templates of a tier that are switched off now, offered back in the pane. */
+export const helpersOff = (set: Settings, tier: Tier) => {
+  const on = helperItems(set, tier)
+  return parseList(DEFAULT_SETTINGS.helpers.tiers[tier]).filter(x => !on.includes(x))
+}
+
+/** The stored string after moving the helper at `index` one place (-1 up, 1 down); unchanged at an end. */
+export const moveHelper = (list: readonly string[], index: number, by: -1 | 1) => {
+  const to = index + by
+  if (index < 0 || index >= list.length || to < 0 || to >= list.length) return list.join(',')
+  const next = [...list]
+  ;[next[index], next[to]] = [next[to]!, next[index]!]
+
+  return next.join(',')
+}
+
+/** One string for every tier's helper order, to tell whether the orders the agent knows are still current. */
+export const helperSignature = (set: Settings) => TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')
+
+/** Settings as stored, which may be missing parts that older versions did not have, filled from the defaults. */
+export const mergeSettings = (stored: Partial<Settings> | undefined): Settings => ({
+  tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
+  skills: { ...(stored?.skills ?? {}) },
+  openPane: stored?.openPane ?? DEFAULT_SETTINGS.openPane,
+  compact: stored?.compact ?? DEFAULT_SETTINGS.compact,
+  helpers: {
+    ...DEFAULT_SETTINGS.helpers,
+    ...(stored?.helpers ?? {}),
+    tiers: { ...DEFAULT_SETTINGS.helpers.tiers, ...(stored?.helpers?.tiers ?? {}) },
+  },
+  hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
+})
+
+// --- What the agent knows of each step ----------------------------------------------
+
+/** What a step stands at now, as the agent would be told it. */
+export const knownOf = (s: Step, set: Settings): StepKnown => ({ where: s.where, tier: s.tier, ...runsOn(s, set) })
+
+const WHERE_LABEL: Record<Step['where'], string> = { agent: 'subagent', here: 'here', helper: 'helper' }
+
+/** The fields of a step that differ from what the agent was last told. Model and effort count only for a subagent step. */
+export const knownChanges = (was: StepKnown, now: StepKnown): string[] => {
+  const out: string[] = []
+  if (was.where !== now.where) out.push(`runs ${WHERE_LABEL[was.where]} → ${WHERE_LABEL[now.where]}`)
+  if (was.tier !== now.tier) out.push(`tier ${was.tier} → ${now.tier}`)
+  if (now.where === 'agent') {
+    if (was.model !== now.model) out.push(`model ${was.model} → ${now.model}`)
+    if (was.effort !== now.effort) out.push(`thinking ${was.effort} → ${now.effort}`)
+  }
+
+  return out
+}
+
+/** The note for one step whose settings the user changed since the agent was last told. */
+export const stepChangeNote = (s: Step, was: StepKnown, now: StepKnown) => {
+  const changes = knownChanges(was, now)
+  if (changes.length === 0) return undefined
+  const rung = now.where === 'agent' ? ` It now runs on ${rungLabel(now)}.` : ''
+
+  return `The user changed step [${s.id}] "${s.title}" in the pane: ${changes.join('; ')}.${rung} Use the new values from now on.`
 }
 
 // A here step's tier cannot change this chat's model or thinking; it rates the step and is
