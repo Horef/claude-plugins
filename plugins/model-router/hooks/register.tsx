@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, Effort, EffortSwitch, HelperTotals, HelperUsage, HistoryEntry, Lifetime, PlanNode, Rung, Settings, Step, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HelperTotals, HelperUsage, HistoryEntry, Lifetime, PlanNode, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
 import {
   EMPTY_HELPER,
   EMPTY_USAGE,
@@ -13,12 +13,16 @@ import {
   STEP_TAG,
   addHelperTotals,
   addUsage,
+  applyDraft,
+  asHelperEffort,
   asHelperUsage,
   asVerdict,
   baseRung,
   costOf,
   depthOf,
   descendantsOf,
+  draftCount,
+  effortOfTemplate,
   expandIds,
   flattenPlan,
   fmtCost,
@@ -39,6 +43,7 @@ import {
   isDelegated,
   isHelperRun,
   isSetupHeavy,
+  isTemplateName,
   isTier,
   kindStats,
   kindsOf,
@@ -61,6 +66,7 @@ import {
   runSpan,
   settleGroups,
   stepChangeNote,
+  trimDraft,
   VERSION,
   rungLabel,
   rungStats,
@@ -97,6 +103,7 @@ const effortLog = atom({ plugin: 'model-router', key: 'effortLog' } as const, []
 const lastMain = atom({ plugin: 'model-router', key: 'lastMain' } as const, { context: 0 })
 const ruleKinds = atom({ plugin: 'model-router', key: 'ruleKinds' } as const, [])
 const genomeNoted = atom({ plugin: 'model-router', key: 'genomeNoted' } as const, [])
+const draft = atom({ plugin: 'model-router', key: 'draft' } as const, {})
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted' }
 const EFFORT_LOG_CAP = 200
@@ -167,6 +174,21 @@ async function writeMirror($: EngineInterface) {
     })
   } catch (err) {
     diag.lastError = `mirror: ${String(err).slice(0, 200)}`
+  }
+}
+
+const TEMPLATES = '.config/herdr-core/templates'
+
+/** The thinking level a helper's template sets (its `command:` line), or nothing: no home, no such template, or no level on it. */
+async function templateEffort($: EngineInterface, template: string) {
+  try {
+    if (!isTemplateName(template)) return undefined
+    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+    if (!home) return undefined
+
+    return effortOfTemplate(String(await $.fs.read(`${home.replace(/[\\/]+$/, '')}/${TEMPLATES}/${template}.md`)))
+  } catch {
+    return undefined
   }
 }
 
@@ -373,8 +395,43 @@ async function editStep($: EngineInterface, id: string, fn: (s: Step) => Step) {
 
 async function clearPlan($: EngineInterface) {
   await update($, steps, () => [])
+  await update($, draft, () => ({}))
   await update($, planStatus, () => 'none')
   await refreshStatus($)
+}
+
+/**
+ * A change made in the pane to where, tier, model or thinking of a step. While the plan is running it goes to a draft,
+ * which neither the routing nor the agent sees until Send; before approval the plan takes it at once, since approval sends it.
+ */
+async function paneEdit($: EngineInterface, id: string, patch: StepDraft) {
+  if ((await read($, planStatus)) !== 'approved') {
+    await editStep($, id, s => applyDraft(s, patch))
+    return
+  }
+  const step = (await read($, steps)).find(s => s.id === id)
+  if (!step) return
+  await update($, draft, d => {
+    const next = { ...d }
+    const kept = trimDraft(step, { ...d[id], ...patch })
+    if (kept) next[id] = kept
+    else delete next[id]
+
+    return next
+  })
+}
+
+/** Send changes: the draft becomes the plan's values (routing of steps not yet started uses them at once); the next turn's note carries the final values. */
+async function sendDraft($: EngineInterface) {
+  const held = await read($, draft)
+  if (draftCount(held) === 0) return
+  await setSteps($, list => list.map(s => applyDraft(s, held[s.id])))
+  await update($, draft, () => ({}))
+  await refreshStatus($)
+}
+
+async function discardDraft($: EngineInterface) {
+  await update($, draft, () => ({}))
 }
 
 /** The fields a step's next run starts from: the verdict and history entry of the last run no longer apply. */
@@ -401,6 +458,14 @@ async function rerun($: EngineInterface, id: string) {
     await editHistory($, h => h.map(x => (x.key === step.historyKey ? { ...x, rerun: true } : x)))
   }
   await editStep($, id, s => ({ ...freshRun(s), model: up.model, effort: up.effort }))
+  // The rerun sets the step's model and thinking itself: unsent edits of those no longer apply.
+  await update($, draft, d => {
+    const { [id]: mine, ...rest } = d
+    if (!mine) return d
+    const { model: _m, effort: _e, ...others } = mine
+
+    return Object.keys(others).length > 0 ? { ...rest, [id]: others } : rest
+  })
   // The prompt below tells the agent of the new rung itself.
   await tellSteps($, [id])
   await $.prompt.submit({
@@ -506,8 +571,15 @@ async function verdictsMissing($: EngineInterface, named: readonly string[]) {
 async function markStarted($: EngineInterface, named: { id: string; ref: StartRef }[]) {
   const targets = expandIds(await read($, steps), named.map(n => n.id))
   const launched = new Map(
-    named.flatMap(n => (typeof n.ref === 'object' && (n.ref.helper || n.ref.model) ? [[n.id, n.ref] as const] : [])),
+    named.flatMap(n => (typeof n.ref === 'object' && (n.ref.helper || n.ref.model || n.ref.effort) ? [[n.id, n.ref] as const] : [])),
   )
+  // The thinking level shown beside the model: what the lead reported, else what the helper's template sets.
+  const efforts = new Map<string, string | undefined>()
+  for (const [id, ref] of launched) {
+    const reported = asHelperEffort(ref.effort)
+    if (reported) efforts.set(id, reported)
+    else if (ref.helper) efforts.set(id, await templateEffort($, ref.helper.trim()))
+  }
   const now = new Date().toISOString()
   // One here step runs at a time: starting one sets an unfinished other back to planned.
   await setSteps($, list =>
@@ -518,6 +590,7 @@ async function markStarted($: EngineInterface, named: { id: string; ref: StartRe
       const next: Step = { ...s, status: 'running' }
       if (on?.helper) next.helper = on.helper.trim()
       if (on?.model) next.helperModel = on.model.trim()
+      if (efforts.has(s.id)) next.helperEffort = efforts.get(s.id)
       if (on || s.where === 'helper') next.startedAt = s.startedAt ?? now
 
       return next
@@ -567,13 +640,14 @@ async function registerPlanTool($: EngineInterface) {
                         id,
                         helper: { type: 'string', description: 'The helper template you launched, e.g. copilot-standard' },
                         model: { type: 'string', description: 'The model the helper reports on its screen' },
+                        effort: { type: 'string', description: 'The thinking level the helper reports on its screen, if it shows one (e.g. high)' },
                       },
                       required: ['id'],
                     },
                   ],
                 }
               : { type: 'string' },
-            description: `Step ids you are starting now${hereOn ? ': the router runs this chat at a here step\'s tier\'s effort' : ''}${helpersOn ? '. A helper step may be {id, helper, model}: the template you launched and the model it reports' : ''}`,
+            description: `Step ids you are starting now${hereOn ? ': the router runs this chat at a here step\'s tier\'s effort' : ''}${helpersOn ? '. A helper step may be {id, helper, model, effort}: the template you launched, and the model and thinking level its screen shows' : ''}`,
           },
         }
       : {}
@@ -803,7 +877,7 @@ const policy = (set: Settings, kinds: readonly string[] = []) => {
         h.use === 'all'
           ? 'Use it for every self-contained step that would otherwise be "agent".'
           : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
-      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>"}], so the pane shows both. Review the helper's result yourself, then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], taking usage from the line the helper's screen shows at the end (Copilot: "Session: N AIC used" gives provider "copilot", amount N, unit "AIC"; Kiro: its credits line gives provider "kiro", the number, unit "credits"). Leave usage out when the screen shows none.`
+      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself, then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], taking usage from the line the helper's screen shows at the end (Copilot: "Session: N AIC used" gives provider "copilot", amount N, unit "AIC"; Kiro: its credits line gives provider "kiro", the number, unit "credits"). Leave usage out when the screen shows none.`
     : ''
 
   return `# Model routing (model-router mod)
@@ -831,7 +905,7 @@ const usageOf = (u: ModelUsage): Usage => ({
   output: u.output_tokens,
 })
 
-type StartRef = string | { id?: string; helper?: string; model?: string }
+type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string }
 type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown }
 type PlanInput = {
   status?: boolean
@@ -862,6 +936,11 @@ const STATUS_COLOR: Record<Step['status'], string> = { planned: 'inactive', runn
 
 type Option = { value: string; label: string }
 
+// What Settings offers for auto mode's thresholds (a stored value outside these is kept and listed too).
+const AUTO_RUNS = [3, 5, 8, 10, 20]
+const AUTO_OK = [70, 80, 90, 95, 100]
+const withCurrent = (options: readonly number[], now: number) => (options.includes(now) ? options : [...options, now].sort((a, b) => a - b))
+
 const cycle = (values: readonly string[], one: string) => values[(values.indexOf(one) + 1) % values.length]!
 
 type RenderArgs = Parameters<Hook<'ui.render'>>
@@ -878,7 +957,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const Select = hasFields && !tty && 'Select' in ui ? ui.Select : undefined
   const Input = hasFields && 'Input' in ui ? ui.Input : undefined
 
-  const list = await read($, steps)
+  const plan = await read($, steps)
+  // Edits to a running plan wait in a draft: the cards show them laid over the plan's own values.
+  const held = await read($, draft)
+  const list = plan.map(x => applyDraft(x, held[x.id]))
+  const planOf = (id: string) => plan.find(x => x.id === id)
+  const heldCount = draftCount(held)
   const set = await read($, settings)
   const m = await read($, main)
   const status = await read($, planStatus)
@@ -920,6 +1004,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     use: set.helpers.use !== D.helpers.use,
     fusion: set.helpers.fusion !== D.helpers.fusion,
     autoRoute: set.autoRoute !== D.autoRoute,
+    autoMinRuns: set.autoMinRuns !== D.autoMinRuns,
+    autoOkPercent: set.autoOkPercent !== D.autoOkPercent,
   }
   // A model's price differs when Settings set one other than the default table's (or any, for a new model).
   const priceDiffers = (x: string) => !!set.prices[x] && JSON.stringify(set.prices[x]) !== JSON.stringify(PRICES[x])
@@ -944,7 +1030,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ) : null
 
   // The agent has not heard yet of a change to this step (it is told at its next turn).
-  const changeNoted = (s: Step) => status === 'approved' && s.status !== 'done' && !!known[s.id] && knownChanges(known[s.id]!, knownOf(s, set, learned)).length > 0
+  // (Judged on the plan's own values: an edit still in the draft has not been sent, so nothing is noted yet.)
+  const changeNoted = (s: Step) => {
+    const own = planOf(s.id) ?? s
+
+    return status === 'approved' && own.status !== 'done' && !!known[s.id] && knownChanges(known[s.id]!, knownOf(own, set, learned)).length > 0
+  }
   const notedLine = (s: Step) =>
     changeNoted(s) ? (
       <Text key={`noted:${s.id}`} color="suggestion" size="footnote">
@@ -1107,6 +1198,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     // The default a step runs on without picks of its own: its tier's, its kind's, or what auto mode learned.
     const base = baseRung(s, set, learned)
     const from = base.source === 'tier' ? 'tier' : base.source === 'kind' ? 'kind' : 'auto'
+    // An edit not yet sent carries a mark beside its picker.
+    const mark = (field: keyof StepDraft) =>
+      held[s.id] && field in held[s.id]! ? (
+        <Text key={`edited:${field}:${s.id}`} color="suggestion" size="footnote">
+          ✎
+        </Text>
+      ) : null
+
     return [
       pick(
         `where:${s.id}`,
@@ -1116,31 +1215,35 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           { value: 'here', label: 'here' },
           ...(set.helpers.enabled || s.where === 'helper' ? [{ value: 'helper', label: 'helper' }] : []),
         ],
-        v => void editStep($, s.id, x => ({ ...x, where: v as Where })),
+        v => void paneEdit($, s.id, { where: v as Where }),
       ),
+      mark('where'),
       // On a here step the tier is a rating, not a setting of this chat: a label, not a picker.
       // Sending the step to a subagent brings the picker back.
       s.where === 'here' ? (
         <Text key={`tier:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>
       ) : (
         pick(`tier:${s.id}`, s.tier, TIER_ORDER.map(t => ({ value: t, label: t })), v =>
-          void editStep($, s.id, x => ({ ...x, tier: v as Tier })),
+          void paneEdit($, s.id, { tier: v as Tier }),
         )
       ),
+      mark('tier'),
       s.where === 'agent' &&
         pick(
           `model:${s.id}`,
           s.model ?? 'tier',
           [{ value: 'tier', label: `${base.model} (${from})` }, ...models.map(x => ({ value: x, label: x }))],
-          v => void editStep($, s.id, x => ({ ...x, model: v === 'tier' ? undefined : (v as Step['model']) })),
+          v => void paneEdit($, s.id, { model: v === 'tier' ? null : (v as Step['model']) }),
         ),
+      s.where === 'agent' && mark('model'),
       s.where === 'agent' &&
         pick(
           `effort:${s.id}`,
           s.effort ?? 'tier',
           [{ value: 'tier', label: `${base.effort} (${from})` }, ...EFFORTS.map(x => ({ value: x, label: x }))],
-          v => void editStep($, s.id, x => ({ ...x, effort: v === 'tier' ? undefined : (v as Step['effort']) })),
+          v => void paneEdit($, s.id, { effort: v === 'tier' ? null : (v as Step['effort']) }),
         ),
+      s.where === 'agent' && mark('effort'),
     ]
   }
 
@@ -1223,7 +1326,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   }
 
   const miniCard = (s: Step) => {
-    const up = s.where === 'agent' && s.status === 'done' ? nextRung(runsOn(s, set, learned), set) : undefined
+    const own = planOf(s.id) ?? s
+    const up = own.where === 'agent' && own.status === 'done' ? nextRung(runsOn(own, set, learned), set) : undefined
 
     return (
       <Box key={`card:${s.id}`} flexDirection="column">
@@ -1259,7 +1363,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     if (s.group) return groupCard(s)
     if (mini) return miniCard(s)
     const now = runsOn(s, set, learned)
-    const up = s.where === 'agent' && s.status === 'done' ? nextRung(now, set) : undefined
+    const own = planOf(s.id) ?? s
+    const up = own.where === 'agent' && own.status === 'done' ? nextRung(runsOn(own, set, learned), set) : undefined
     const tokens = s.usage.input + s.usage.cacheWrite + s.usage.output
     return (
       <Box
@@ -1466,11 +1571,23 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {switchRow(
             'auto-route',
             'Auto mode',
-            'A subagent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least 80% of 3 or more runs there). Your own picks on a step still win.',
+            `A subagent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.`,
             set.autoRoute,
             () => void editSettings($, s => ({ ...s, autoRoute: !s.autoRoute })),
             differs.autoRoute,
           )}
+          <Box key="auto-thresholds" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="xs" rowGap="xs">
+            <Text dimColor size="footnote">Auto picks a rung with at least</Text>
+            {pick('auto-min-runs', String(set.autoMinRuns), withCurrent(AUTO_RUNS, set.autoMinRuns).map(n => ({ value: String(n), label: `${n} runs` })), v =>
+              void editSettings($, s => ({ ...s, autoMinRuns: Number(v) })),
+            )}
+            {dot('auto-min-runs', differs.autoMinRuns)}
+            <Text dimColor size="footnote">and</Text>
+            {pick('auto-ok-percent', String(set.autoOkPercent), withCurrent(AUTO_OK, set.autoOkPercent).map(n => ({ value: String(n), label: `${n}% ok` })), v =>
+              void editSettings($, s => ({ ...s, autoOkPercent: Number(v) })),
+            )}
+            {dot('auto-ok-percent', differs.autoOkPercent)}
+          </Box>
           {Object.entries(set.kinds).map(([kind, r]) => (
             <Box key={`kind-default:${kind}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
               <Box flexDirection="row" columnGap="xs" flexShrink={1}>
@@ -1744,6 +1861,23 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
 
       {section('Plan', list.length > 0 ? `${work.length} steps` : undefined)}
+      {heldCount > 0 && (
+        <Box key="draft-bar" flexDirection="column" borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY={mini ? 0 : 'xs'}>
+          <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+            <Button key="draft-send" variant="primary" onPress={() => void sendDraft($)}>
+              {`Send changes (${heldCount})`}
+            </Button>
+            <Button key="draft-discard" plain onPress={() => void discardDraft($)}>
+              Discard
+            </Button>
+          </Box>
+          {!mini && (
+            <Text dimColor size="footnote" wrap="wrap">
+              ✎ marks your edits. They are held back: the routing and the main agent use the plan as it was until you send them.
+            </Text>
+          )}
+        </Box>
+      )}
       {list.length === 0 && !mini && (
         <Text dimColor size="footnote">The main agent posts a plan here for multi-step tasks. Turn on Always plan in Settings to plan every message.</Text>
       )}
@@ -1871,6 +2005,8 @@ export const register: Register = on => {
 
     const old = await read($, steps)
     const flat = flattenPlan(input.steps)
+    // A plan posted anew: edits not yet sent were made to the old one.
+    await update($, draft, () => ({}))
     // A plan that shares no step with the last one, or follows a finished one (ids may
     // repeat), starts its own cost count and its own steps.
     const isNewPlan = (old.length > 0 && old.every(o => o.status === 'done')) || !old.some(o => flat.steps.some(s => s.id === o.id))
@@ -1979,7 +2115,7 @@ export const register: Register = on => {
     }
     // A helper step run through the Agent tool is the fallback: it is a subagent step now, and no helper ran it.
     if (step.where === 'helper') {
-      await editStep($, step.id, s => ({ ...s, where: 'agent', helper: undefined, helperModel: undefined, startedAt: undefined }))
+      await editStep($, step.id, s => ({ ...s, where: 'agent', helper: undefined, helperModel: undefined, helperEffort: undefined, startedAt: undefined }))
       await tellSteps($, [step.id])
       step = { ...step, where: 'agent' }
     }

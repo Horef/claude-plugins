@@ -27,6 +27,9 @@ export const DEFAULT_SETTINGS: Settings = {
   hereEffort: { enabled: false, maxContext: 40_000 },
   kinds: {},
   autoRoute: false,
+  // Auto mode changes routing without asking, so it wants more evidence than the advice does.
+  autoMinRuns: 5,
+  autoOkPercent: 90,
   models: [],
   prices: {},
 }
@@ -85,4 +88,5 @@ export const SCOPE_NOTE =
 export const SETUP_HEAVY = { maxOutput: 2000, minRead: 20000 }
 
 // Learned advice: how many runs it needs, and the shares that move a kind or tier a rung.
-export const LEARN = { minRuns: 3, weakShare: 0.5, overkillShare: 0.5, autoOkShare: 0.8, recent: 3 }
+// (Auto mode has its own thresholds, in Settings: autoMinRuns and autoOkPercent.)
+export const LEARN = { minRuns: 3, weakShare: 0.5, overkillShare: 0.5, recent: 3 }

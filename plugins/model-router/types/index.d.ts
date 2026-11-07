@@ -51,6 +51,9 @@ export type Settings = {
   kinds: Record<string, Rung>
   /** Auto mode: a subagent step whose kind has enough history runs at the cheapest rung that did it well. */
   autoRoute: boolean
+  /** Auto mode picks a rung only with at least this many runs on it, and at least `autoOkPercent` of them ok. */
+  autoMinRuns: number
+  autoOkPercent: number
   /** Models known beyond the defaults: seen in usage or added by name. */
   models: Model[]
   /** Prices set in Settings, over the defaults; a model with none has no price. */
@@ -110,6 +113,8 @@ export type Step = {
   /** Helper step: the template the main agent launched, and the model the helper reported on screen. */
   helper?: string
   helperModel?: string
+  /** The thinking level of the helper, as the lead reported it or the helper's template sets it; absent when neither says. */
+  helperEffort?: string
   /** When the step's current run started (a helper step: at start; a subagent step: its first Agent call) and, for a helper step, when it was marked done (ISO). */
   startedAt?: string
   endedAt?: string
@@ -127,6 +132,9 @@ export type Step = {
   /** Some of the step's tokens ran on a model with no price: its cost is incomplete and it is left out of savings. */
   unpriced?: boolean
 }
+
+/** Pane edits to a step of a running plan, held back until sent: only the fields changed. model/effort null = the tier's own. */
+export type StepDraft = { where?: Where; tier?: Tier; model?: Model | null; effort?: Effort | null }
 
 /** A plan step as the plan tool takes it: a step with optional parts, recursively. */
 export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; count?: number; kind?: string; parts?: PlanNode[] }
@@ -215,7 +223,8 @@ declare module 'claude-code' {
       ruleKinds: string[]
       /** Advice the lead was already asked to record as a strange-loop observation: "<kind>:up" / "<kind>:down". Remembered. */
       genomeNoted: string[]
-
+      /** Pane edits to a running plan, per step id, not yet sent: the plan and the routing do not see them until Send. */
+      draft: Record<string, StepDraft>
     }
   }
 }
