@@ -34,6 +34,53 @@ export type HelperSettings = {
   tiers: Record<Tier, string>
   /** Copilot Fusion, opt-in: 'deep' adds Fusion Max to the deep order, 'both' also Fusion High to standard. */
   fusion: 'off' | 'deep' | 'both'
+  /** Path to herdr-delegate's helpers.py; empty: the newest installed herdr-delegate skill is used. */
+  script: string
+  /** Per kind of work, the helper model the router launches (set by applying the history's advice): wins over the tier order. */
+  kinds: Record<string, HelperChoice>
+}
+
+/** A helper provider (kiro, copilot, agy) with a model and a thinking level, as helpers.py takes them. */
+export type HelperChoice = { provider: string; model: string; effort: string }
+
+/** One tier of a provider in helpers.py's config: a model and level, or a fixed command (a router). */
+export type HelperTierConfig = { model?: string; effort?: string; command?: string; description?: string }
+
+/** helpers.py's effective config (`helpers.py config`), the parts the router reads. */
+export type HelperConfig = {
+  providers: Record<
+    string,
+    { label?: string; cli?: string; efforts?: string[]; model_id?: string; models_source?: string; tiers?: Record<string, HelperTierConfig> }
+  >
+  custom?: { provider: string; model: string; effort: string }[]
+}
+
+/** helpers.py's cache of the models each CLI offers (~/.config/herdr-delegate/models.json). */
+export type ModelsCache = Record<string, { date?: string; checked?: string; models?: string[]; error?: string; credits?: Record<string, number> }>
+
+/** What the router has read of helpers.py: where it is, its config, the shipped defaults, the model cache, and the last check's warnings. */
+export type HelperState = {
+  /** 'unknown': not looked for yet; 'missing': no helpers.py found; 'error': it ran and failed; 'ready'. */
+  status: 'unknown' | 'ready' | 'missing' | 'error'
+  script?: string
+  config?: HelperConfig
+  defaults?: HelperConfig
+  models?: ModelsCache
+  /** The lines `helpers.py models` printed about models no longer offered and newer ones. */
+  warnings: string[]
+  /** What went wrong, in a line, for the pane. */
+  message?: string
+  busy?: boolean
+}
+
+/** The model and level the router chose for a helper step, with the template to launch. */
+export type HelperPick = HelperChoice & {
+  /** The template the lead launches ("kiro-claude-haiku-5-5-low", or a tier's own); absent when making it failed. */
+  template?: string
+  source: 'auto' | 'kind'
+  /** Runs auto mode learned it from. */
+  n?: number
+  error?: string
 }
 
 export type Settings = {
@@ -115,6 +162,8 @@ export type Step = {
   helperModel?: string
   /** The thinking level of the helper, as the lead reported it or the helper's template sets it; absent when neither says. */
   helperEffort?: string
+  /** The model and level the router chose for this helper step (auto mode, or its kind's choice), and the template to launch. */
+  helperPick?: HelperPick
   /** When the step's current run started (a helper step: at start; a subagent step: its first Agent call) and, for a helper step, when it was marked done (ISO). */
   startedAt?: string
   endedAt?: string
@@ -167,6 +216,8 @@ export type HistoryEntry = {
   effort?: Effort
   /** The helper template a helper run ran on. */
   helper?: string
+  /** The provider, model and level a helper run ran on, when the router knew them (older entries: read from the template's tier). */
+  hrung?: HelperChoice
   kind?: string
   cost: number
   setupHeavy: boolean
@@ -225,6 +276,8 @@ declare module 'claude-code' {
       genomeNoted: string[]
       /** Pane edits to a running plan, per step id, not yet sent: the plan and the routing do not see them until Send. */
       draft: Record<string, StepDraft>
+      /** What the router has read of helpers.py (this chat only; it is read again at the start and after a change). */
+      helperCfg: HelperState
     }
   }
 }

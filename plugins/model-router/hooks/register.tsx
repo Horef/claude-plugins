@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, Effort, EffortSwitch, HelperTotals, HelperUsage, HistoryEntry, Lifetime, PlanNode, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HelperChoice, HelperPick, HelperState, HelperTotals, HelperUsage, HistoryEntry, Lifetime, PlanNode, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
 import {
   EMPTY_HELPER,
   EMPTY_USAGE,
@@ -16,6 +16,7 @@ import {
   applyDraft,
   asHelperEffort,
   asHelperUsage,
+  asScriptPath,
   asVerdict,
   baseRung,
   costOf,
@@ -23,12 +24,14 @@ import {
   descendantsOf,
   draftCount,
   effortOfTemplate,
+  compareVersions,
   expandIds,
   flattenPlan,
   fmtCost,
   fmtTok,
   fmtUsd,
   genomeNote,
+  helperEfforts,
   helperFacts,
   helperGain,
   helperItems,
@@ -36,6 +39,13 @@ import {
   helperList,
   helperName,
   helperOrder,
+  helperPickFor,
+  helperProviders,
+  helperRungLabel,
+  helperSuggestions,
+  helperTierDiffers,
+  helperTierNames,
+  helperTierRung,
   helperSignature,
   helperTotalsOf,
   helpersOff,
@@ -50,20 +60,28 @@ import {
   knownChanges,
   knownModels,
   knownOf,
+  learnedHelpers,
   learnedRungs,
   leavesOf,
   mergeSettings,
+  modelsChecked,
+  modelWarnings,
   modelHint,
   modelOf,
   moveHelper,
   newStep,
   nextRung,
   normKind,
+  offeredModels,
+  parseHelperConfig,
+  parseModelsCache,
   parsePrice,
+  pickSource,
   planText,
   priceOf,
   rollupOf,
   runSpan,
+  samePick,
   settleGroups,
   stepChangeNote,
   trimDraft,
@@ -72,9 +90,11 @@ import {
   rungStats,
   runsOn,
   suggestions,
+  templateOfRung,
+  templateRung,
   verdictLine,
 } from './logic'
-import type { Learned, Suggestion } from './logic'
+import type { HelperAdvice, Learned, Suggestion } from './logic'
 import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
 
 // --- State: the session's (atoms) and what is remembered across sessions ($.store) --
@@ -104,6 +124,7 @@ const lastMain = atom({ plugin: 'model-router', key: 'lastMain' } as const, { co
 const ruleKinds = atom({ plugin: 'model-router', key: 'ruleKinds' } as const, [])
 const genomeNoted = atom({ plugin: 'model-router', key: 'genomeNoted' } as const, [])
 const draft = atom({ plugin: 'model-router', key: 'draft' } as const, {})
+const helperCfg = atom({ plugin: 'model-router', key: 'helperCfg' } as const, { status: 'unknown', warnings: [] })
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted' }
 const EFFORT_LOG_CAP = 200
@@ -271,6 +292,7 @@ async function editHistory($: EngineInterface, fn: (h: HistoryEntry[]) => Histor
     await update($, history, () => next)
   })
   await noteForGenome($)
+  await resolveHelperPicks($)
 }
 
 /** Auto mode's learned rung per kind, or nothing while auto mode is off. */
@@ -407,6 +429,7 @@ async function clearPlan($: EngineInterface) {
 async function paneEdit($: EngineInterface, id: string, patch: StepDraft) {
   if ((await read($, planStatus)) !== 'approved') {
     await editStep($, id, s => applyDraft(s, patch))
+    await resolveHelperPicks($)
     return
   }
   const step = (await read($, steps)).find(s => s.id === id)
@@ -428,6 +451,7 @@ async function sendDraft($: EngineInterface) {
   await setSteps($, list => list.map(s => applyDraft(s, held[s.id])))
   await update($, draft, () => ({}))
   await refreshStatus($)
+  await resolveHelperPicks($)
 }
 
 async function discardDraft($: EngineInterface) {
@@ -511,17 +535,27 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
   // A helper run enters the history when it is first done; a verdict goes onto the run it judges.
   const added: HistoryEntry[] = []
   const keyOf = new Map<string, string>()
+  const hcfg = (await read($, helperCfg)).config
   for (const s of after) {
     const was = before.find(x => x.id === s.id)
     if (s.group || !isHelperRun(s) || s.status !== 'done' || was?.status === 'done' || s.historyKey) continue
     const ms = runSpan(s)
     const key = `${now}:${s.id}`
     keyOf.set(s.id, key)
+    // The model and level it ran on: the router's own pick if that is what was launched, else what the template stands for now.
+    const picked = s.helperPick?.template && s.helperPick.template === s.helper ? s.helperPick : undefined
+    const tpl = s.helper ? templateRung(hcfg, s.helper) : undefined
+    const hrung: HelperChoice | undefined = picked
+      ? { provider: picked.provider, model: picked.model, effort: picked.effort }
+      : tpl
+        ? { provider: tpl.provider, model: tpl.model, effort: tpl.effort }
+        : undefined
     added.push({
       key,
       tier: s.tier,
       where: 'helper',
       ...(s.helper ? { helper: s.helper } : {}),
+      ...(hrung ? { hrung } : {}),
       ...(s.kind ? { kind: s.kind } : {}),
       cost: 0,
       setupHeavy: false,
@@ -608,6 +642,231 @@ async function applySuggestion($: EngineInterface, s: Suggestion) {
   if (!s.tier) return
   const tier = s.tier
   await editSettings($, set => ({ ...set, tiers: { ...set.tiers, [tier]: { ...set.tiers[tier], ...to } } }))
+}
+
+// --- Helper models: helpers.py's config, read and changed through $.process ----------------
+
+// One-off templates made in this chat, by provider, model and level; a failed attempt is kept too, so a plan does not retry it at every call.
+const madeTemplates = new Map<string, { template?: string; error?: string }>()
+
+const readText = async ($: EngineInterface, path: string) => {
+  try {
+    return String(await $.fs.read(path))
+  } catch {
+    return undefined
+  }
+}
+
+const firstLine = (text: string) =>
+  text
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .find(Boolean)
+    ?.replace(/^error:\s*/i, '')
+    .slice(0, 200) ?? ''
+
+/** helpers.py: the path set in Settings, else the newest installed herdr-delegate skill's (~/.claude/plugins/cache/<marketplace>/herdr-delegate/<version>/...). */
+async function findHelpers($: EngineInterface, set: Settings): Promise<string | undefined> {
+  if (set.helpers.script) return set.helpers.script
+  try {
+    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+    const claude = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? (home ? `${home.replace(/[\\/]+$/, '')}/.claude` : undefined)
+    if (!claude) return undefined
+    const root = `${claude.replace(/[\\/]+$/, '')}/plugins/cache`
+    const found: { path: string; version: string }[] = []
+    for (const market of await $.fs.list(root)) {
+      if (market.kind === 'file') continue
+      const base = `${root}/${market.name}/herdr-delegate`
+      let versions: Awaited<ReturnType<typeof $.fs.list>>
+      try {
+        versions = await $.fs.list(base)
+      } catch {
+        continue
+      }
+      for (const v of versions) {
+        const path = `${base}/${v.name}/skills/herdr-delegate/scripts/helpers.py`
+        if (v.kind !== 'file' && (await $.fs.exists(path))) found.push({ path, version: v.name })
+      }
+    }
+
+    return found.sort((a, b) => compareVersions(b.version, a.version))[0]?.path
+  } catch {
+    return undefined
+  }
+}
+
+/** Runs helpers.py with python; rejects when python cannot start or the run times out. */
+async function runHelpers($: EngineInterface, script: string, args: string[], timeoutMs = 60_000) {
+  const python = (await $.env.get('HOME')) ? 'python3' : 'python'
+
+  return $.process.run([python, script, ...args], { timeoutMs })
+}
+
+const modelsPath = async ($: EngineInterface) => {
+  const xdg = await $.env.get('XDG_CONFIG_HOME')
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  const base = xdg || (home ? `${home.replace(/[\\/]+$/, '')}/.config` : undefined)
+
+  return base ? `${base.replace(/[\\/]+$/, '')}/herdr-delegate/models.json` : undefined
+}
+
+/** Reads helpers.py's effective config, the shipped defaults beside it and the model cache; run at the start, when Helpers go on, and after a change. */
+async function loadHelperConfig($: EngineInterface) {
+  const set = await read($, settings)
+  if (!set.helpers.enabled) return
+  madeTemplates.clear()
+  const keep = (await read($, helperCfg)).warnings
+  const script = await findHelpers($, set)
+  if (!script) {
+    await update($, helperCfg, () => ({ status: 'missing', warnings: [] }))
+    return
+  }
+  try {
+    const r = await runHelpers($, script, ['config'], 30_000)
+    const config = r.exitCode === 0 ? parseHelperConfig(r.stdout) : undefined
+    if (!config) {
+      const message = r.exitCode === 2 ? 'This helpers.py has no config command: update herdr-delegate to 0.6.0 or later.' : `helpers.py config failed: ${firstLine(r.stderr || r.stdout) || `exit ${r.exitCode}`}`
+      await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message }))
+      return
+    }
+    const skill = script.replace(/[\\/]scripts[\\/][^\\/]*$/, '')
+    const defaults = parseHelperConfig((await readText($, `${skill}/helpers.default.json`)) ?? '')
+    const path = await modelsPath($)
+    const models = path ? parseModelsCache((await readText($, path)) ?? '') : undefined
+    await update($, helperCfg, () => ({ status: 'ready', script, config, ...(defaults ? { defaults } : {}), ...(models ? { models } : {}), warnings: keep }))
+  } catch (err) {
+    await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
+    return
+  }
+  await resolveHelperPicks($)
+}
+
+/** The shell line for changing a tier by hand, shown where the router cannot run helpers.py itself. */
+const SET_BY_HAND = 'python3 <path to herdr-delegate>/skills/herdr-delegate/scripts/helpers.py set <provider> <tier> model=<model> effort=<effort>'
+
+/**
+ * Changes a provider's tier through `helpers.py set` (which checks the model and level and renders the template), then reads the config again.
+ * Runs that happened before this change and have no recorded model stay with the model they ran on.
+ */
+async function changeHelperTier($: EngineInterface, provider: string, tier: string, patch: Partial<HelperChoice>) {
+  await locked('helper-set', async () => {
+    const st = await read($, helperCfg)
+    const now = helperTierRung(st.config, provider, tier)
+    if (st.status !== 'ready' || !st.script || !now) return
+    const next = { model: patch.model ?? now.model, effort: patch.effort ?? now.effort }
+    if (next.model === now.model && next.effort === now.effort) return
+    await stampHelperRuns($, `${provider}-${tier}`, { provider, ...now })
+    try {
+      const r = await runHelpers($, st.script, ['set', provider, tier, `model=${next.model}`, `effort=${next.effort}`])
+      if (r.exitCode !== 0) {
+        await update($, helperCfg, x => ({ ...x, message: firstLine(r.stderr || r.stdout) || `helpers.py set failed (exit ${r.exitCode})` }))
+        return
+      }
+    } catch (err) {
+      await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
+      return
+    }
+    await update($, helperCfg, x => ({ ...x, message: undefined }))
+    await loadHelperConfig($)
+  })
+}
+
+/** Gives the helper runs of a template that were recorded without a model the one the template stands for now, before it changes. */
+async function stampHelperRuns($: EngineInterface, template: string, was: HelperChoice) {
+  const lacking = (await read($, history)).some(x => x.where === 'helper' && x.helper === template && !x.hrung)
+  if (lacking) await editHistory($, h => h.map(x => (x.where === 'helper' && x.helper === template && !x.hrung ? { ...x, hrung: was } : x)))
+}
+
+/** `helpers.py models`: asks each installed CLI what it offers, then shows what is no longer offered and what is newer. */
+async function checkModels($: EngineInterface) {
+  const st = await read($, helperCfg)
+  if (st.status !== 'ready' || !st.script || st.busy) return
+  await update($, helperCfg, x => ({ ...x, busy: true, message: undefined }))
+  try {
+    const r = await runHelpers($, st.script, ['models'], 180_000)
+    const warnings = modelWarnings(r.stdout)
+    await update($, helperCfg, x => ({ ...x, warnings, message: r.exitCode === 0 ? undefined : firstLine(r.stderr || r.stdout) || `helpers.py models failed (exit ${r.exitCode})` }))
+  } catch (err) {
+    await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
+  }
+  await loadHelperConfig($)
+  await update($, helperCfg, x => ({ ...x, busy: false }))
+}
+
+/** The template to launch for a pick: a tier template that already has this model and level, else a one-off made by `helpers.py custom`. */
+async function templateFor($: EngineInterface, st: HelperState, want: HelperChoice, tier: Tier): Promise<{ template?: string; error?: string }> {
+  const existing = st.config ? templateOfRung(st.config, want.provider, want, tier) : undefined
+  if (existing) return { template: existing }
+  const key = `${want.provider}|${want.model}|${want.effort}`
+  const hit = madeTemplates.get(key)
+  if (hit) return hit
+  if (!st.script) return { error: 'helpers.py not found' }
+  try {
+    const r = await runHelpers($, st.script, ['custom', want.provider, `model=${want.model}`, `effort=${want.effort}`])
+    const name = r.stdout.trim().split(/\r?\n/).at(-1)?.trim() ?? ''
+    const made = r.exitCode === 0 && isTemplateName(name) ? { template: name } : { error: firstLine(r.stderr || r.stdout) || `helpers.py custom failed (exit ${r.exitCode})` }
+    madeTemplates.set(key, made)
+
+    return made
+  } catch (err) {
+    return { error: `helpers.py could not run: ${String(err).slice(0, 120)}` }
+  }
+}
+
+// A router note about a helper step's launch template starts with this, so a newer one replaces it.
+const LAUNCH_NOTE = 'Helper launch'
+
+/**
+ * Gives each helper step that has not started the model and level the router picks for it (auto mode's learned rung for its kind,
+ * else its kind's stored choice) and the template to launch; the plan text and the card say so. A step with no pick keeps the tier order.
+ */
+async function resolveHelperPicks($: EngineInterface) {
+  try {
+    await locked('picks', async () => {
+      const set = await read($, settings)
+      const st = await read($, helperCfg)
+      if (!set.helpers.enabled || st.status !== 'ready' || !st.config) return
+      const learned = set.autoRoute ? learnedHelpers(await read($, history), set, st.config, st.models) : undefined
+      const next = new Map<string, HelperPick | undefined>()
+      for (const s of await read($, steps)) {
+        if (s.group || s.where !== 'helper' || s.status !== 'planned' || s.helper) continue
+        const want = helperPickFor(s, set, learned, st.config)
+        if (!want) {
+          if (s.helperPick) next.set(s.id, undefined)
+          continue
+        }
+        if (samePick(s.helperPick, want) && (s.helperPick?.template || s.helperPick?.error)) continue
+        next.set(s.id, { ...want, ...(await templateFor($, st, want, s.tier)) })
+      }
+      if (next.size === 0) return
+      const before = await read($, steps)
+      await setSteps($, list => list.map(s => (next.has(s.id) ? { ...s, helperPick: next.get(s.id) } : s)))
+      // The lead was told the plan already: it hears of a template that changed.
+      if ((await read($, planStatus)) !== 'approved') return
+      const was = await read($, told)
+      for (const [id, pick] of next) {
+        const old = before.find(x => x.id === id)
+        if (!old || !was[id] || old.helperPick?.template === pick?.template) continue
+        const text = pick?.template
+          ? `${LAUNCH_NOTE} for step [${id}] "${old.title}" changed: launch ${pick.template} (${pickSource(pick)}), then the tier order if it is not usable.`
+          : `${LAUNCH_NOTE} for step [${id}] "${old.title}" changed: no template is named any more; use the tier order.`
+        await update($, notes, n => [...n.filter(x => !x.startsWith(`${LAUNCH_NOTE} for step [${id}]`)), text])
+      }
+    })
+  } catch (err) {
+    diag.lastError = `picks: ${String(err).slice(0, 200)}`
+  }
+}
+
+/** Applies the history's advice for a helper: a tier through `helpers.py set`, a kind as the model the router launches for it. */
+async function applyHelperAdvice($: EngineInterface, a: HelperAdvice) {
+  if (a.kind) {
+    const kind = a.kind
+    await editSettings($, set => ({ ...set, helpers: { ...set.helpers, kinds: { ...set.helpers.kinds, [kind]: { provider: a.provider, model: a.to.model, effort: a.to.effort } } } }))
+    await resolveHelperPicks($)
+    return
+  }
+  if (a.tier) await changeHelperTier($, a.provider, a.tier, a.to)
 }
 
 // --- The plan tool ---------------------------------------------------------------
@@ -738,9 +997,13 @@ function stepSchema(wheres: string[], levels: number): Record<string, unknown> {
 const HELPER_NOTE = 'Helper orders changed'
 
 async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers']>) {
-  const wasOn = (await read($, settings)).helpers.enabled
+  const was = (await read($, settings)).helpers
+  const wasOn = was.enabled
   await editSettings($, s => ({ ...s, helpers: { ...s.helpers, ...patch } }))
   const after = await read($, settings)
+  // Helpers just went on, or helpers.py is somewhere else now: read its config.
+  if (after.helpers.enabled && (!wasOn || after.helpers.script !== was.script)) await loadHelperConfig($)
+  await resolveHelperPicks($)
   // The rules sit in the chat once; a changed order reaches it as a router note. One note
   // says where the orders stand, and none when they are back to what the chat was told.
   const knows = await read($, toldHelpers)
@@ -877,7 +1140,7 @@ const policy = (set: Settings, kinds: readonly string[] = []) => {
         h.use === 'all'
           ? 'Use it for every self-contained step that would otherwise be "agent".'
           : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
-      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself, then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], taking usage from the line the helper's screen shows at the end (Copilot: "Session: N AIC used" gives provider "copilot", amount N, unit "AIC"; Kiro: its credits line gives provider "kiro", the number, unit "credits"). Leave usage out when the screen shows none.`
+      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. When a helper step's plan line says "launch <template>", the router chose that model and level for it (the template already exists): give the picker that template first, then the tier's order (pick <template>,<the order>), and launch what it prints. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself, then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], taking usage from the line the helper's screen shows at the end (Copilot: "Session: N AIC used" gives provider "copilot", amount N, unit "AIC"; Kiro: its credits line gives provider "kiro", the number, unit "credits"). Leave usage out when the screen shows none.`
     : ''
 
   return `# Model routing (model-router mod)
@@ -987,6 +1250,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const mini = set.compact
   const hint = mini ? undefined : modelHint(list, m.model)
   const advice = suggestions(past, set)
+  // Helper models: what helpers.py holds (read at the start and after a change), and the advice the history gives for them.
+  const hs = await read($, helperCfg)
+  const hcfg = hs.status === 'ready' ? hs.config : undefined
+  const helperAdvice = set.helpers.enabled ? helperSuggestions(past, set, hcfg, hs.models) : []
   // Auto mode: the rung each kind has learned, for the cards (nothing while it is off).
   const learned = set.autoRoute ? learnedRungs(past, set) : undefined
   const models = knownModels(set)
@@ -1015,7 +1282,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     scope: set.tiers[t].scopeNote !== D.tiers[t].scopeNote,
   })
   const orderDiffers = (t: Tier) => set.helpers.tiers[t] !== D.helpers.tiers[t]
+  const helperDiffers = (provider: string, tier: string) => helperTierDiffers(hcfg, hs.defaults, provider, tier)
+  const helperModelsDiffer =
+    set.helpers.enabled &&
+    (set.helpers.script !== D.helpers.script ||
+      Object.keys(set.helpers.kinds).length > 0 ||
+      (!!hcfg && helperProviders(hcfg, set).some(p => helperTierNames(hcfg, p).some(t => helperDiffers(p, t).model || helperDiffers(p, t).effort))))
   const anyDiffers =
+    helperModelsDiffer ||
     Object.values(differs).some(Boolean) ||
     Object.keys(set.skills).length > 0 ||
     Object.keys(set.kinds).length > 0 ||
@@ -1272,6 +1546,17 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return <Text key={`from:${s.id}`} color="suggestion" size="footnote">{label}</Text>
   }
+  // A helper step the router picked a model for: the template to launch and why, or that making it failed.
+  const pickLine = (s: Step) => {
+    const p = s.where === 'helper' && !s.helper ? s.helperPick : undefined
+    if (!p) return null
+
+    return p.template ? (
+      <Text key={`pick:${s.id}`} color="suggestion" size="footnote" wrap="wrap">{`launch ${p.template} · ${p.model} ${p.effort} · ${pickSource(p)}`}</Text>
+    ) : (
+      <Text key={`pick:${s.id}`} color="warning" size="footnote" wrap="wrap">{`no template for ${p.model} ${p.effort} (${p.error ?? 'unknown'}): the tier order applies`}</Text>
+    )
+  }
   // The lead's verdict on a finished delegated step, or that it has none yet.
   const verdictText = (s: Step) => {
     if (!isDelegated(s) || s.status !== 'done') return null
@@ -1343,6 +1628,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {s.cost > 0 && !s.unpriced && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
           {unpricedText(s)}
           {rungFrom(s)}
+          {pickLine(s)}
           {verdictText(s)}
           {helperInfo(s)}
           {helperFactsText(s)}
@@ -1387,6 +1673,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {stepPickers(s)}
         </Box>
         {rungFrom(s)}
+        {pickLine(s)}
         {notedLine(s)}
         {s.where === 'here' && (
           <Text dimColor size="footnote" wrap="wrap">
@@ -1571,20 +1858,24 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {switchRow(
             'auto-route',
             'Auto mode',
-            `A subagent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.`,
+            `A subagent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.${set.helpers.enabled ? ' A helper step gets its model the same way.' : ''}`,
             set.autoRoute,
-            () => void editSettings($, s => ({ ...s, autoRoute: !s.autoRoute })),
+            () =>
+              void (async () => {
+                await editSettings($, s => ({ ...s, autoRoute: !s.autoRoute }))
+                await resolveHelperPicks($)
+              })(),
             differs.autoRoute,
           )}
           <Box key="auto-thresholds" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="xs" rowGap="xs">
             <Text dimColor size="footnote">Auto picks a rung with at least</Text>
             {pick('auto-min-runs', String(set.autoMinRuns), withCurrent(AUTO_RUNS, set.autoMinRuns).map(n => ({ value: String(n), label: `${n} runs` })), v =>
-              void editSettings($, s => ({ ...s, autoMinRuns: Number(v) })),
+              void editSettings($, s => ({ ...s, autoMinRuns: Number(v) })).then(() => resolveHelperPicks($)),
             )}
             {dot('auto-min-runs', differs.autoMinRuns)}
             <Text dimColor size="footnote">and</Text>
             {pick('auto-ok-percent', String(set.autoOkPercent), withCurrent(AUTO_OK, set.autoOkPercent).map(n => ({ value: String(n), label: `${n}% ok` })), v =>
-              void editSettings($, s => ({ ...s, autoOkPercent: Number(v) })),
+              void editSettings($, s => ({ ...s, autoOkPercent: Number(v) })).then(() => resolveHelperPicks($)),
             )}
             {dot('auto-ok-percent', differs.autoOkPercent)}
           </Box>
@@ -1785,6 +2076,121 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   </Box>
                 )
               })}
+              <Box key="helper-models" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
+                <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
+                  <Box flexDirection="column" flexShrink={1}>
+                    <Box flexDirection="row" columnGap="xs">
+                      <Text weight="medium">Helper models</Text>
+                      {dot('helper-script', set.helpers.script !== D.helpers.script)}
+                    </Box>
+                    {!mini && (
+                      <Text dimColor size="footnote" wrap="wrap">
+                        Model and thinking level of each helper tier, kept in herdr-delegate's helpers.py (a change runs its set command and rewrites the template).
+                      </Text>
+                    )}
+                  </Box>
+                  <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
+                    {hs.status === 'ready' && (
+                      <Text dimColor size="footnote">{modelsChecked(hs.models) ? `models checked ${modelsChecked(hs.models)}` : 'models not checked yet'}</Text>
+                    )}
+                    {hs.status === 'ready' && (
+                      <Button key="helpers-check" plain onPress={() => void checkModels($)}>
+                        {hs.busy ? 'Checking…' : 'Check models'}
+                      </Button>
+                    )}
+                    {hs.status !== 'ready' && (
+                      <Button key="helpers-reload" plain onPress={() => void loadHelperConfig($)}>
+                        Look again
+                      </Button>
+                    )}
+                  </Box>
+                </Box>
+                {hs.status === 'missing' && (
+                  <Text color="warning" size="footnote" wrap="wrap">
+                    {`helpers.py was not found (herdr-delegate 0.6.0 or later, installed from the marketplace, or the path below). Until then the models cannot be changed here; by hand: ${SET_BY_HAND}`}
+                  </Text>
+                )}
+                {hs.status === 'error' && <Text color="warning" size="footnote" wrap="wrap">{hs.message ?? 'helpers.py did not answer.'}</Text>}
+                {hs.status === 'unknown' && <Text dimColor size="footnote">Not read yet.</Text>}
+                {hs.message && hs.status === 'ready' && <Text color="warning" size="footnote" wrap="wrap">{hs.message}</Text>}
+                {hs.warnings.map((w, i) => (
+                  <Text key={`helper-warning:${i}`} color="warning" size="footnote" wrap="wrap">{w}</Text>
+                ))}
+                {hcfg &&
+                  helperProviders(hcfg, set).map(provider => {
+                    const prov = hcfg.providers[provider]!
+                    const tiers = helperTierNames(hcfg, provider)
+                    if (tiers.length === 0) return null
+
+                    return (
+                      <Box key={`helper-provider:${provider}`} flexDirection="column">
+                        <Text weight="semibold" size="footnote">{prov.label ?? provider}</Text>
+                        {tiers.map(tier => {
+                          const r = helperTierRung(hcfg, provider, tier)!
+                          const d = helperDiffers(provider, tier)
+
+                          return (
+                            <Box key={`helper-tier:${provider}:${tier}`} flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={2}>
+                              <Text color={isTier(tier) ? TIER_COLOR[tier] : undefined} size="footnote">{tier}</Text>
+                              {pick(
+                                `helper-model:${provider}:${tier}`,
+                                r.model,
+                                offeredModels(hcfg, hs.models, provider).map(x => ({ value: x, label: x })),
+                                v => void changeHelperTier($, provider, tier, { model: v }),
+                              )}
+                              {dot(`helper-model:${provider}:${tier}`, d.model)}
+                              {pick(
+                                `helper-effort:${provider}:${tier}`,
+                                r.effort,
+                                helperEfforts(hcfg, provider, r.effort).map(x => ({ value: x, label: `${x} thinking` })),
+                                v => void changeHelperTier($, provider, tier, { effort: v }),
+                              )}
+                              {dot(`helper-effort:${provider}:${tier}`, d.effort)}
+                            </Box>
+                          )
+                        })}
+                      </Box>
+                    )
+                  })}
+                {Object.entries(set.helpers.kinds).map(([kind, c]) => (
+                  <Box key={`helper-kind:${kind}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+                    <Box flexDirection="row" columnGap="xs" flexShrink={1}>
+                      <Text mono size="footnote" wrap="truncate">{kind}</Text>
+                      <Text size="footnote">{`→ ${c.provider} ${helperRungLabel(c)}`}</Text>
+                      {dot(`helper-kind:${kind}`, true)}
+                    </Box>
+                    <Button
+                      key={`helper-kind-reset:${kind}`}
+                      plain
+                      dimColor
+                      onPress={() =>
+                        void (async () => {
+                          await editSettings($, x => {
+                            const kinds = { ...x.helpers.kinds }
+                            delete kinds[kind]
+
+                            return { ...x, helpers: { ...x.helpers, kinds } }
+                          })
+                          await resolveHelperPicks($)
+                        })()
+                      }
+                    >
+                      reset
+                    </Button>
+                  </Box>
+                ))}
+                {Input && (
+                  <Input
+                    key="helpers-script"
+                    placeholder={`Path to helpers.py (now: ${set.helpers.script || 'the newest installed herdr-delegate'}; empty to look it up)`}
+                    submitLabel="Set"
+                    onSubmit={v => {
+                      const path = asScriptPath(v)
+                      if (path !== undefined || !v.trim()) void editHelpers($, { script: path ?? '' })
+                    }}
+                  />
+                )}
+              </Box>
             </Box>
           )}
 
@@ -1891,7 +2297,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
       {tty && status === 'pending' && costCard()}
 
-      {(stats.length > 0 || advice.length > 0) && section('What the history says', mini ? undefined : `${past.length} runs`)}
+      {(stats.length > 0 || advice.length > 0 || helperAdvice.length > 0) && section('What the history says', mini ? undefined : `${past.length} runs`)}
       {advice.map(a => {
         const key = a.kind ? `kind:${a.kind}` : `tier:${a.tier}`
         const what = a.kind ? `${a.kind}'s default` : `the ${a.tier} tier`
@@ -1904,6 +2310,23 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             <Box flexDirection="row">
               <Button key={a.kind ? `apply-kind:${a.kind}` : `apply:${a.tier}`} variant="primary" onPress={() => void applySuggestion($, a)}>
                 {`Apply: ${rungLabel(a.to)}`}
+              </Button>
+            </Box>
+          </Box>
+        )
+      })}
+      {helperAdvice.map(a => {
+        const key = a.kind ? `kind:${a.kind}` : `tier:${a.provider}:${a.tier}`
+        const what = a.kind ? `${a.kind}'s helper` : `${a.provider}'s ${a.tier} helper`
+
+        return (
+          <Box key={`helper-advice:${key}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={a.isRaise ? 'warning' : 'success'} paddingX="sm" paddingY="xs">
+            <Text size="footnote" wrap="wrap">
+              {a.why}: {a.isRaise ? 'raise' : 'try lowering'} {what} from {helperRungLabel(a.from)} to {a.provider} {helperRungLabel(a.to)}.
+            </Text>
+            <Box flexDirection="row">
+              <Button key={a.kind ? `apply-helper-kind:${a.kind}` : `apply-helper:${a.provider}:${a.tier}`} variant="primary" onPress={() => void applyHelperAdvice($, a)}>
+                {`Apply: ${a.provider} ${helperRungLabel(a.to)}`}
               </Button>
             </Box>
           </Box>
@@ -1955,6 +2378,7 @@ export const register: Register = on => {
       await update($, chatTotals, t => ({ ...t, helper: moved }))
     }
     await $.command.register({ name: 'router', description: 'Show the model-router pane' })
+    await loadHelperConfig($)
     await registerPlanTool($)
     await refreshStatus($)
     if ((await read($, settings)).openPane) void $.ui.open({ id: PANE, title: 'Model router' })
@@ -1981,7 +2405,11 @@ export const register: Register = on => {
       await tellSteps($)
       return { result: pending.length ? `${text}\n\nRouter notes:\n${pending.map(n => `- ${n}`).join('\n')}` : text }
     }
-    const shown = async () => planText(await read($, steps), await read($, settings), (await read($, main)).model, await learnedOf($))
+    const shown = async () => {
+      await resolveHelperPicks($)
+
+      return planText(await read($, steps), await read($, settings), (await read($, main)).model, await learnedOf($))
+    }
 
     if (input.status) {
       const report = {
@@ -2064,6 +2492,7 @@ export const register: Register = on => {
     }
     await update($, planStatus, () => 'none')
     await refreshStatus($)
+    await resolveHelperPicks($)
     const note = answer === REVISE ? 'They gave no details yet: ask them what to change before anything else.' : `What they want changed: ${answer}`
     const kept = planText(await read($, steps), await read($, settings), undefined, await learnedOf($))
     await tellSteps($)

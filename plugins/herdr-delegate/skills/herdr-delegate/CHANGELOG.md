@@ -2,6 +2,15 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.6.2 (2026-11-07)
+- helpers.py models stores Kiro's credit multipliers, so model-router can order Kiro models by cost
+
+## 0.6.1 (2026-11-07)
+- pick skips a template whose model the last helpers.py models found not offered (owner's request 2026-11-07)
+
+## 0.6.0 (2026-11-07)
+- helper models and thinking levels are configuration: helpers.default.json + user overrides, helpers.py render/set/models/config/custom, one shared template body, kiro light is Haiku 5.5 low (owner's request 2026-11-07)
+
 ## 0.5.1 (2026-11-07)
 - a Kiro login mark clears itself once kiro-cli whoami reports a login (O11)
 

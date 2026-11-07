@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-07 - Helper models as configuration
+
+- herdr-delegate 0.6.0 (Kiro helper): helpers.default.json + ~/.config/herdr-delegate/helpers.json drive rendered templates; helpers.py config/render/set/custom/models; Copilot models via ACP. 0.6.1: pick skips not-offered models (copilot-argon). 0.6.2: Kiro credit multipliers cached.
+- model-router 0.20.0 (Kiro helper): helper model/thinking pickers in Settings, Check models, helper advice with Apply, per-step custom templates under auto mode or kind choices. 65 tests.
+- Real templates migrated (`helpers.py render --force`, backup kept); a helper's test once wrote the real config (env not persisted between shell calls), removed; herdr-delegate O12.
+
 ## 2026-11-07 - model-router 0.19 and herdr-delegate 0.5.1
 
 - model-router 0.19.0 (Kiro standard helper): pane edits to a running plan wait in a draft until Send changes; helper thinking level on cards; auto mode thresholds as settings, 5 runs and 90%. 56 tests pass.

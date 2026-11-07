@@ -11,17 +11,24 @@ You (the lead) hand a self-contained step to a helper agent running another CLI 
 
 ## Helpers
 
-Templates live in `~/.config/herdr-core/templates/` (`hc templates` lists them). This skill ships them in `templates/`. `scripts/install_templates.sh` installs the ones whose CLI is on PATH and never overwrites without `--force`.
+Templates in `~/.config/herdr-core/templates/` (`hc templates` lists them) are **rendered** from a config by `scripts/helpers.py render`, so models and levels change in one place. The shipped defaults are in `helpers.default.json`; your overrides (only what you changed) live in `~/.config/herdr-delegate/helpers.json`. `scripts/install_templates.sh` is a wrapper around `render`. The names stay `<provider>-<tier>`.
 
-| Template | Model | Permissions |
+| Template | Default model, level | Permissions |
 |---|---|---|
-| `kiro-light` / `-standard` / `-deep` | Sonnet 5.5 low / Sonnet 5.5 high / Opus 5.5 high (v3) | approve for me (a judge): `policies: [approve-for-me]` in `~/.kiro/settings/permissions.yaml` |
+| `kiro-light` / `-standard` / `-deep` | Haiku 5.5 low / Sonnet 5.5 high / Opus 5.5 high (v3) | approve for me (a judge): `policies: [approve-for-me]` in `~/.kiro/settings/permissions.yaml` |
 | `copilot-light` / `-standard` / `-deep` | GPT-6 Luna / Sonnet 5.5 / Opus 5.5, effort high | assisted (a judge): `defaultPermissionMode: "assisted"` in `~/.copilot/settings.json` (the CLI flag is refused in interactive mode) |
 | `agy-light` / `-standard` / `-deep` | Gemini 3.8 Flash / Sonnet 5.5 / Opus 5.5, high | `--mode auto`: edits run, every shell command asks you |
 | `copilot-argon`, `agy-argon` | Gemini 4 Argon (about Sonnet level) | as above |
 | `copilot-fusion-high` / `-max` | Copilot Fusion High / Max: a router, not a model (opt-in) | as Copilot |
 
-Tiers are the model-router's: light = mechanical with a clear rule, standard = following detailed instructions, deep = open judgment. **Argon** is a second opinion from another model family: use it to review a plan or a result, or to answer the same question independently, not as a cheaper standard. `pick argon` tries agy first: the owner's Copilot plan lacks Gemini 4 Argon and falls back to Sonnet.
+### Changing models
+
+- `helpers.py config` prints the effective config. `helpers.py set <provider> <tier> model=X effort=Y` validates (the provider's efforts; the model against the cached list), writes your override and renders. The model-router's Settings can call the same commands.
+- `helpers.py models [provider]` asks each installed CLI which models it offers (Kiro `--list-models`, `agy models`, Copilot through its ACP server, since it has no list command), caches that in `~/.config/herdr-delegate/models.json`, and reports configured models no longer offered and newer ones in the same family. `status` repeats the first when the cache is over 7 days old, and warns when `render --check` finds a template that differs from the config.
+- `render` overwrites only files with a `generated-by: herdr-delegate` line; a hand-made template is kept (`--force` replaces it) and a generated one no longer in the config is removed.
+- **One-off model for one step:** `helpers.py custom <provider> model=X effort=Y` renders `<provider>-<model>-<effort>` (same body), prints its name and keeps it in your config's `custom` list; launch it like any template and give it to `pick` in an order. `custom --prune` forgets them all.
+
+Tiers are the model-router's: light = mechanical with a clear rule, standard = following detailed instructions, deep = open judgment. **Argon** is a second opinion from another model family: use it to review a plan or a result, or to answer the same question independently, not as a cheaper standard. `pick argon` tries agy first, and `pick` skips any template whose model the last `helpers.py models` found not offered (Copilot would silently swap it, e.g. Gemini 4 Argon to Sonnet).
 
 **Choosing for model family.** When a step is a review, a read or an independent check, prefer a helper from a different model family than yours if one is available; if none is, use what is available and do not block on it (a Gemini reader via agy caught factual errors that Claude readers missed, three times in research-writing). When a helper is chosen for its model family, check the model it reports at launch (Copilot prints "Model ... not available. Using X instead" and its status bar shows the model) and treat a fallback as the wrong helper: kill it and pick another.
 

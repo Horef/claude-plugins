@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.20.0 (2026-11-07)
+- Helper models like subagent tiers: Settings > Helpers has model and thinking pickers per provider and tier from herdr-delegate's helpers.py (set), a Check models button with its warnings, and models-checked date; advice per helper tier and kind with Apply (set, or a stored per-kind helper choice); with auto mode on or a kind choice, the router picks a helper model per step and names the template to launch (helpers.py custom) in the plan text, rules and card (owner's request 2026-11-07)
+
 ## 0.19.0 (2026-11-07)
 - Helper steps show the helper's thinking level (reported by the lead or read from its template), pane edits to a running plan wait in a draft until Send changes (Discard drops them), auto mode's minimum runs and ok-share are settings, 5 runs and 90% by default (owner's request 2026-11-07)
 
