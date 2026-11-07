@@ -1,10 +1,10 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperTotals, HelperUsage, HistoryEntry, Model, PlanNode, Settings, Step, StepKnown, Tier, Usage, Where } from '../types'
-import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, MODELS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
+import type { Effort, HelperTotals, HelperUsage, HistoryEntry, Model, PlanNode, Price, Rung, Settings, Step, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.17.0'
+export const VERSION = '0.18.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -16,12 +16,57 @@ export const STATUS_GLYPH: Record<Step['status'], string> = { planned: '○', ru
 
 // --- Models, prices, the ladder ---------------------------------------------
 
-export const modelOf = (id: string | undefined): Model | undefined => MODELS.find(m => id?.includes(m))
+/** Every model the router knows: the defaults, then those seen in usage or added in Settings. */
+export const knownModels = (set?: Pick<Settings, 'models'>): Model[] => [...new Set([...MODELS, ...(set?.models ?? [])])]
 
-export const costOf = (u: Usage, model: Model | undefined) => {
-  const p = PRICES[model ?? 'opus']
+// What a model id looks like; anything else ("<synthetic>", an empty string) is not a model.
+const MODEL_ID = /^[a-z0-9][a-z0-9._:/-]{0,79}$/i
+
+/** The family alias a model id belongs to ("claude-haiku-5-5" is haiku); an unknown family is kept under its id. */
+export const modelOf = (id: string | undefined, set?: Pick<Settings, 'models'>): Model | undefined => {
+  if (!id) return undefined
+  const known = knownModels(set).find(m => id.includes(m))
+  if (known) return known
+
+  return MODEL_ID.test(id) ? id : undefined
+}
+
+/** A model's price: the one set in Settings, else the default table; undefined when it has none. */
+export const priceOf = (model: Model, set?: Pick<Settings, 'prices'>): Price | undefined => set?.prices?.[model] ?? PRICES[model]
+
+/** Dollars for some tokens on a model, or undefined when the model has no price. No model: Opus's price, as before. */
+export const costOf = (u: Usage, model: Model | undefined, set?: Pick<Settings, 'prices'>): number | undefined => {
+  const p = priceOf(model ?? 'opus', set)
+  if (!p) return undefined
+
   return (u.input * p.input + u.cacheWrite * p.cacheWrite + u.cacheRead * p.cacheRead + u.output * p.output) / 1e6
 }
+
+/** "2 15" (input, output; cache write 1.25x and read 0.1x input) or "2 2.5 0.2 15", in dollars per million tokens. */
+export const parsePrice = (v: string): Price | undefined => {
+  const n = v
+    .split(/[\s,/;]+/)
+    .filter(Boolean)
+    .map(x => Number(x.replace(/^\$/, '')))
+  if (!n.every(x => Number.isFinite(x) && x >= 0)) return undefined
+  if (n.length === 2) return { input: n[0]!, cacheWrite: n[0]! * 1.25, cacheRead: n[0]! * 0.1, output: n[1]! }
+  if (n.length === 4) return { input: n[0]!, cacheWrite: n[1]!, cacheRead: n[2]!, output: n[3]! }
+
+  return undefined
+}
+
+/** The known models that have a price, cheapest first (by output price, then input). */
+export const modelOrder = (set?: Pick<Settings, 'models' | 'prices'>): Model[] =>
+  knownModels(set)
+    .filter(m => priceOf(m, set))
+    .sort((a, b) => priceOf(a, set)!.output - priceOf(b, set)!.output || priceOf(a, set)!.input - priceOf(b, set)!.input)
+
+// The default ladder's thinking levels per model, so with only the defaults known the ladder is LADDER.
+const DEFAULT_RUNGS = LADDER.reduce<Record<string, Effort[]>>((by, r) => ({ ...by, [r.model]: [...(by[r.model] ?? []), r.effort] }), {})
+
+/** The escalation ladder from the known models, by price: each default keeps its rungs, a new model gets medium and high. */
+export const ladderOf = (set?: Pick<Settings, 'models' | 'prices'>): Rung[] =>
+  modelOrder(set).flatMap(model => (DEFAULT_RUNGS[model] ?? NEW_MODEL_RUNGS).map(effort => ({ model, effort })))
 
 export const addUsage = (a: Usage, b: Usage): Usage => ({
   input: a.input + b.input,
@@ -33,22 +78,63 @@ export const addUsage = (a: Usage, b: Usage): Usage => ({
 export const isSetupHeavy = (u: Usage) =>
   u.output < SETUP_HEAVY.maxOutput && u.input + u.cacheWrite + u.cacheRead > SETUP_HEAVY.minRead
 
-type Rung = { model: Model; effort: Effort }
+type Ladder = Pick<Settings, 'models' | 'prices'>
 
-const rank = (r: Rung) => MODELS.indexOf(r.model) * 10 + EFFORTS.indexOf(r.effort)
+/** Where a rung sits: by its model's price, then its thinking level; undefined for a model with no price. */
+const rank = (r: Rung, set?: Ladder) => {
+  const at = modelOrder(set).indexOf(r.model)
 
-/** The rung above where a step runs now, or undefined at the top. */
-export const nextRung = (r: Rung) => LADDER.find(x => rank(x) > rank(r))
+  return at < 0 ? undefined : at * 10 + EFFORTS.indexOf(r.effort)
+}
 
-/** The rung below, for a tier that never needed a rerun. */
-export const prevRung = (r: Rung) => [...LADDER].reverse().find(x => rank(x) < rank(r))
+/** The rung above where a step runs now, or undefined at the top (or on a model with no price). */
+export const nextRung = (r: Rung, set?: Ladder) => {
+  const at = rank(r, set)
+
+  return at === undefined ? undefined : ladderOf(set).find(x => rank(x, set)! > at)
+}
+
+/** The rung below, for a tier or kind that runs above what it needs. */
+export const prevRung = (r: Rung, set?: Ladder) => {
+  const at = rank(r, set)
+
+  return at === undefined ? undefined : [...ladderOf(set)].reverse().find(x => rank(x, set)! < at)
+}
 
 export const rungLabel = (r: Rung) => `${r.model}/${r.effort}`
 
-export const runsOn = (s: Step, set: Settings): Rung => ({
-  model: s.model ?? set.tiers[s.tier].model,
-  effort: s.effort ?? set.tiers[s.tier].effort,
-})
+/** Per kind, the rung auto mode runs it on, and from how many runs that was learned. */
+export type Learned = Record<string, { rung: Rung; n: number }>
+
+/** Where a step's rung comes from before the user's own picks: auto mode's learned rung, the kind's default, or the tier. */
+export const baseRung = (s: Step, set: Settings, learned?: Learned): Rung & { source: 'tier' | 'kind' | 'auto'; n?: number } => {
+  const auto = s.kind ? learned?.[s.kind] : undefined
+  if (auto) return { ...auto.rung, source: 'auto', n: auto.n }
+  const own = s.kind ? set.kinds?.[s.kind] : undefined
+  if (own) return { model: own.model, effort: own.effort, source: 'kind' }
+
+  return { model: set.tiers[s.tier].model, effort: set.tiers[s.tier].effort, source: 'tier' }
+}
+
+/** The rung a step runs on: the user's picks on the step win, then auto mode, the kind's default, the tier. */
+export const runsOn = (s: Step, set: Settings, learned?: Learned): Rung => {
+  const base = baseRung(s, set, learned)
+
+  return { model: s.model ?? base.model, effort: s.effort ?? base.effort }
+}
+
+/** A kind label as stored: lower case letters, digits and hyphens, short (it ends up in a shell command, see genomeNote). */
+export const normKind = (v: unknown) => {
+  if (typeof v !== 'string') return undefined
+  const k = v
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[-.]+|-+$/g, '')
+    .slice(0, 40)
+
+  return k || undefined
+}
 
 // --- Plan ---------------------------------------------------------------------
 
@@ -122,12 +208,16 @@ export const mergeSettings = (stored: Partial<Settings> | undefined): Settings =
     tiers: { ...DEFAULT_SETTINGS.helpers.tiers, ...(stored?.helpers?.tiers ?? {}) },
   },
   hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
+  kinds: { ...(stored?.kinds && typeof stored.kinds === 'object' ? stored.kinds : {}) },
+  autoRoute: stored?.autoRoute === true,
+  models: Array.isArray(stored?.models) ? stored.models.filter(m => typeof m === 'string' && !MODELS.includes(m)) : [],
+  prices: { ...(stored?.prices && typeof stored.prices === 'object' ? stored.prices : {}) },
 })
 
 // --- What the agent knows of each step ----------------------------------------------
 
 /** What a step stands at now, as the agent would be told it. */
-export const knownOf = (s: Step, set: Settings): StepKnown => ({ where: s.where, tier: s.tier, ...runsOn(s, set) })
+export const knownOf = (s: Step, set: Settings, learned?: Learned): StepKnown => ({ where: s.where, tier: s.tier, ...runsOn(s, set, learned) })
 
 const WHERE_LABEL: Record<Step['where'], string> = { agent: 'subagent', here: 'here', helper: 'helper' }
 
@@ -155,28 +245,40 @@ export const stepChangeNote = (s: Step, was: StepKnown, now: StepKnown) => {
 
 // A here step's tier cannot change this chat's model or thinking; it rates the step and is
 // the default if the step is sent to a subagent. It matters here only when it asks for more
-// than this chat's model.
-const RANK: Record<Model, number> = { haiku: 0, sonnet: 1, opus: 2, fable: 3 }
+// than this chat's model, which is judged by price.
 
 /** The tier's model when a here step is rated above this chat's model, else undefined. */
 export const hereNeeds = (s: Step, set: Settings, mainModel: Model | undefined): Model | undefined => {
   if (s.where !== 'here' || !mainModel) return undefined
   const want = set.tiers[s.tier].model
-  return RANK[want] > RANK[mainModel] ? want : undefined
+  const order = modelOrder(set)
+  const [a, b] = [order.indexOf(want), order.indexOf(mainModel)]
+  return a >= 0 && b >= 0 && a > b ? want : undefined
 }
 
-const placeOf = (s: Step, set: Settings, mainModel?: Model) => {
+/** How a subagent step's rung came about, when it is not simply its tier's: auto mode, or its kind's default. */
+export const rungSource = (s: Step, set: Settings, learned?: Learned) => {
+  if (s.model && s.effort) return undefined
+  const base = baseRung(s, set, learned)
+  if (base.source === 'auto') return `auto: learned, ${base.n} runs`
+  if (base.source === 'kind') return `${s.kind} default`
+
+  return undefined
+}
+
+const placeOf = (s: Step, set: Settings, mainModel?: Model, learned?: Learned) => {
   if (s.where === 'here') {
     const want = hereNeeds(s, set, mainModel)
     return want ? `here (rated for ${want}, this chat runs ${mainModel}: consider a subagent)` : 'here'
   }
   if (s.where === 'helper') return `helper (${s.helper ? helperName(s) : helperOrder(set, s.tier)})`
+  const why = rungSource(s, set, learned)
 
-  return rungLabel(runsOn(s, set))
+  return `${rungLabel(runsOn(s, set, learned))}${why ? ` (${why})` : ''}`
 }
 
 /** The plan as the agent reads it: one line a step, parts indented under their group. */
-export const planText = (list: readonly Step[], set: Settings, mainModel?: Model) =>
+export const planText = (list: readonly Step[], set: Settings, mainModel?: Model, learned?: Learned) =>
   list
     .map(s => {
       const indent = '  '.repeat(depthOf(list, s))
@@ -186,9 +288,11 @@ export const planText = (list: readonly Step[], set: Settings, mainModel?: Model
         return `${indent}[${s.id}] ${s.title}: ${s.tier} (rates the group), ${r.done} of ${r.total} parts done, ${s.status}`
       }
       const parallel = s.count && s.count > 1 ? `, ×${s.count} in parallel` : ''
+      const kind = s.kind ? `, kind ${s.kind}` : ''
       const status = s.count && s.count > 1 && s.status === 'running' && (s.runs ?? 0) > 0 ? `running (${s.runs} of ${s.count} finished)` : s.status
+      const verdict = s.verdict ? ` (verdict ${s.verdict})` : ''
 
-      return `${indent}[${s.id}] ${s.title}: ${s.tier}, ${placeOf(s, set, mainModel)}${parallel}, ${status}`
+      return `${indent}[${s.id}] ${s.title}: ${s.tier}, ${placeOf(s, set, mainModel, learned)}${parallel}${kind}, ${status}${verdict}`
     })
     .join('\n')
 
@@ -243,7 +347,7 @@ export const expandIds = (list: readonly Step[], ids: readonly string[]) =>
 
 /** The plan tool's steps as a flat list in reading order, parts after their parent, with hierarchical ids. */
 export const flattenPlan = (nodes: readonly PlanNode[]) => {
-  const out: { id: string; title: string; tier: Tier; where: Where; parent?: string; group: boolean; count?: number }[] = []
+  const out: { id: string; title: string; tier: Tier; where: Where; parent?: string; group: boolean; count?: number; kind?: string }[] = []
   const dropped: string[] = []
   const seen = new Set<string>()
   const walk = (list: readonly PlanNode[], up?: { id: string; tier: Tier }) => {
@@ -258,7 +362,8 @@ export const flattenPlan = (nodes: readonly PlanNode[]) => {
       const tier = isTier(n.tier) ? n.tier : (up?.tier ?? 'standard')
       const parts = Array.isArray(n.parts) ? n.parts : []
       const count = !parts.length && typeof n.count === 'number' && n.count >= 2 ? Math.floor(n.count) : undefined
-      out.push({ id, title: n.title, tier, where: n.where ?? 'agent', ...(up ? { parent: up.id } : {}), group: parts.length > 0, ...(count ? { count } : {}) })
+      const kind = parts.length ? undefined : normKind(n.kind)
+      out.push({ id, title: n.title, tier, where: n.where ?? 'agent', ...(up ? { parent: up.id } : {}), group: parts.length > 0, ...(count ? { count } : {}), ...(kind ? { kind } : {}) })
       if (parts.length) walk(parts, { id, tier })
     }
   }
@@ -301,7 +406,8 @@ export const addHelperTotals = (a: HelperTotals | undefined, b: HelperTotals): H
   usage: b.usage.reduce(addHelperUsage, a?.usage ?? []),
 })
 
-const spanOf = (s: Step) => {
+/** How long a step ran, from its start to when it was marked done (helper steps), in ms; 0 when unknown. */
+export const runSpan = (s: Step) => {
   const ms = s.startedAt && s.endedAt ? Date.parse(s.endedAt) - Date.parse(s.startedAt) : 0
 
   return Number.isFinite(ms) && ms > 0 ? ms : 0
@@ -313,7 +419,7 @@ export const helperTotalsOf = (list: readonly Step[]): HelperTotals => {
 
   return {
     steps: run.length,
-    ms: run.reduce((n, s) => n + spanOf(s), 0),
+    ms: run.reduce((n, s) => n + runSpan(s), 0),
     usage: list.flatMap(s => (s.helperUsage ? [s.helperUsage] : [])).reduce(addHelperUsage, [] as HelperUsage[]),
   }
 }
@@ -324,7 +430,7 @@ export const helperGain = (before: readonly Step[], after: readonly Step[]): Hel
   for (const s of after) {
     const was = before.find(x => x.id === s.id)
     if (!s.group && isHelperRun(s) && s.status === 'done' && was?.status !== 'done') {
-      gain = addHelperTotals(gain, { steps: 1, ms: spanOf(s), usage: [] })
+      gain = addHelperTotals(gain, { steps: 1, ms: runSpan(s), usage: [] })
     }
     if (s.helperUsage && !was?.helperUsage) gain = addHelperTotals(gain, { steps: 0, ms: 0, usage: [s.helperUsage] })
   }
@@ -358,7 +464,7 @@ export const helperLine = (h: HelperTotals | undefined) => {
 export const helperFacts = (s: Step) => {
   const parts: string[] = []
   if (s.helperUsage) parts.push(`${fmtAmount(s.helperUsage.amount)} ${s.helperUsage.unit}`)
-  if (spanOf(s) > 0) parts.push(fmtMin(spanOf(s)))
+  if (runSpan(s) > 0) parts.push(fmtMin(runSpan(s)))
   else if (s.startedAt && s.status !== 'done') {
     parts.push(`started ${new Date(s.startedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`)
   }
@@ -368,38 +474,156 @@ export const helperFacts = (s: Step) => {
 
 // --- What the history says ------------------------------------------------------
 
-export type RungStats = { label: string; n: number; reruns: number; avgCost: number; setupHeavy: number }
+/** A verdict from the plan tool, if it is one. */
+export const asVerdict = (v: unknown): Verdict | undefined => {
+  const x = typeof v === 'string' ? v.trim().toLowerCase() : ''
+
+  return x === 'ok' || x === 'weak' || x === 'overkill' ? x : undefined
+}
+
+/** A step the router or a helper ran for the lead, which needs a verdict when it is done: not a group, not a here step. */
+export const isDelegated = (s: Step) => !s.group && (s.where === 'agent' || isHelperRun(s))
+
+const isAgentRun = (x: HistoryEntry) => (x.where ?? 'agent') === 'agent' && !!x.model && !!x.effort
+
+/** The rung a run ran on: model/effort, or the helper template. */
+export const entryRung = (x: HistoryEntry) => (x.where === 'helper' ? (x.helper ?? 'helper') : `${x.model}/${x.effort}`)
+
+// Facts weigh at least as much as verdicts: a rerun makes a run weak whatever its verdict said.
+const isWeak = (x: HistoryEntry) => x.rerun || x.verdict === 'weak'
+const isOk = (x: HistoryEntry) => !x.rerun && x.verdict === 'ok'
+const isOverkill = (x: HistoryEntry) => !x.rerun && x.verdict === 'overkill'
+
+export type VerdictCounts = { ok: number; weak: number; overkill: number; none: number }
+
+const countVerdicts = (xs: readonly HistoryEntry[]): VerdictCounts => ({
+  ok: xs.filter(x => x.verdict === 'ok').length,
+  weak: xs.filter(x => x.verdict === 'weak').length,
+  overkill: xs.filter(x => x.verdict === 'overkill').length,
+  none: xs.filter(x => !x.verdict).length,
+})
+
+/** "2 ok, 1 weak, 1 no verdict", leaving out what is zero. */
+export const verdictLine = (c: VerdictCounts) =>
+  [
+    c.ok ? `${c.ok} ok` : '',
+    c.weak ? `${c.weak} weak` : '',
+    c.overkill ? `${c.overkill} overkill` : '',
+    c.none ? `${c.none} no verdict` : '',
+  ]
+    .filter(Boolean)
+    .join(', ')
+
+export type RungStats = { label: string; n: number; reruns: number; avgCost: number; setupHeavy: number; isHelper: boolean; verdicts: VerdictCounts }
 
 export const rungStats = (h: readonly HistoryEntry[]): RungStats[] => {
   const by = new Map<string, HistoryEntry[]>()
-  for (const x of h) by.set(rungLabel(x), [...(by.get(rungLabel(x)) ?? []), x])
+  for (const x of h) by.set(entryRung(x), [...(by.get(entryRung(x)) ?? []), x])
   return [...by.entries()].map(([label, xs]) => ({
     label,
     n: xs.length,
     reruns: xs.filter(x => x.rerun).length,
     avgCost: xs.reduce((n, x) => n + x.cost, 0) / xs.length,
     setupHeavy: xs.filter(x => x.setupHeavy).length,
+    isHelper: xs.every(x => x.where === 'helper'),
+    verdicts: countVerdicts(xs),
   }))
 }
 
-export type Suggestion = { tier: Tier; to: Rung; why: string; isRaise: boolean }
+/** The kinds the history has seen, most used first. */
+export const kindsOf = (h: readonly HistoryEntry[], cap = 30) => {
+  const n = new Map<string, number>()
+  for (const x of h) if (x.kind) n.set(x.kind, (n.get(x.kind) ?? 0) + 1)
 
-/** Tier defaults the history argues for: up when reruns are common, down when there were none. */
-export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggestion[] =>
-  TIER_ORDER.flatMap(tier => {
+  return [...n.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, cap)
+    .map(([k]) => k)
+}
+
+export type KindStats = { kind: string; n: number; reruns: number; verdicts: VerdictCounts }
+
+export const kindStats = (h: readonly HistoryEntry[]): KindStats[] =>
+  kindsOf(h).map(kind => {
+    const xs = h.filter(x => x.kind === kind)
+
+    return { kind, n: xs.length, reruns: xs.filter(x => x.rerun).length, verdicts: countVerdicts(xs) }
+  })
+
+/** One piece of advice: a kind (or, for runs with no kind, a tier) to move one rung, with its evidence. */
+export type Suggestion = { tier?: Tier; kind?: string; from: Rung; to: Rung; why: string; isRaise: boolean }
+
+const sameRung = (x: HistoryEntry, r: Rung) => x.model === r.model && x.effort === r.effort
+
+/** Up when at least half the runs were weak (a weak verdict or a rerun); down when at least half were overkill and none of the last few was weak. */
+const judge = (xs: readonly HistoryEntry[], from: Rung, label: string, set: Settings) => {
+  if (xs.length < LEARN.minRuns) return undefined
+  const weak = xs.filter(isWeak).length
+  const over = xs.filter(isOverkill).length
+  const up = nextRung(from, set)
+  const down = prevRung(from, set)
+  if (weak / xs.length >= LEARN.weakShare && up) return { to: up, isRaise: true, why: `${label}: ${weak} of ${xs.length} weak` }
+  const recent = [...xs].sort((a, b) => a.at.localeCompare(b.at)).slice(-LEARN.recent)
+  if (over / xs.length >= LEARN.overkillShare && !recent.some(isWeak) && down) {
+    return { to: down, isRaise: false, why: `${label}: ${over} of ${xs.length} overkill` }
+  }
+  return undefined
+}
+
+/** What the history argues for: per kind on the rung it runs on now, and per tier for runs with no kind. Subagent runs only. */
+export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggestion[] => {
+  const runs = h.filter(isAgentRun)
+  const byTier = TIER_ORDER.flatMap(tier => {
     const now = set.tiers[tier]
-    const xs = h.filter(x => x.tier === tier && x.model === now.model && x.effort === now.effort)
-    const reruns = xs.filter(x => x.rerun).length
-    const up = nextRung(now)
-    const down = prevRung(now)
-    if (xs.length >= 4 && reruns / xs.length >= 0.3 && up) {
-      return [{ tier, to: up, isRaise: true, why: `${reruns} of ${xs.length} ${tier} steps on ${rungLabel(now)} needed a rerun` }]
-    }
-    if (xs.length >= 10 && reruns === 0 && down) {
-      return [{ tier, to: down, isRaise: false, why: `none of ${xs.length} ${tier} steps on ${rungLabel(now)} needed a rerun` }]
+    const j = judge(runs.filter(x => !x.kind && x.tier === tier && sameRung(x, now)), now, `${tier} steps on ${rungLabel(now)}`, set)
+    return j ? [{ tier, from: { model: now.model, effort: now.effort }, ...j }] : []
+  })
+  const byKind = kindsOf(runs, Infinity).flatMap(kind => {
+    const own = set.kinds?.[kind]
+    const mine = runs.filter(x => x.kind === kind)
+    // With a default of its own the kind is judged on that rung; else on each tier's rung, the busiest first.
+    const groups = own
+      ? [{ xs: mine.filter(x => sameRung(x, own)), from: own, label: `${kind} on ${rungLabel(own)}`, tier: undefined as Tier | undefined }]
+      : TIER_ORDER.map(t => ({ xs: mine.filter(x => x.tier === t && sameRung(x, set.tiers[t])), from: set.tiers[t] as Rung, label: `${kind} on ${t}`, tier: t as Tier | undefined })).sort(
+          (a, b) => b.xs.length - a.xs.length,
+        )
+    for (const g of groups) {
+      const j = judge(g.xs, g.from, g.label, set)
+      if (j) return [{ kind, ...(g.tier ? { tier: g.tier } : {}), from: { model: g.from.model, effort: g.from.effort }, ...j }]
     }
     return []
   })
+
+  return [...byTier, ...byKind]
+}
+
+/** Auto mode: per kind, the cheapest rung that did it well (ok in at least 80% of at least 3 runs there). */
+export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned => {
+  const out: Learned = {}
+  const runs = h.filter(isAgentRun)
+  for (const kind of kindsOf(runs, Infinity)) {
+    const by = new Map<string, HistoryEntry[]>()
+    for (const x of runs.filter(r => r.kind === kind)) by.set(entryRung(x), [...(by.get(entryRung(x)) ?? []), x])
+    const good = [...by.values()]
+      .filter(xs => xs.length >= LEARN.minRuns && xs.filter(isOk).length / xs.length >= LEARN.autoOkShare)
+      .map(xs => ({ rung: { model: xs[0]!.model!, effort: xs[0]!.effort! }, n: xs.length }))
+      .filter(g => rank(g.rung, set) !== undefined)
+      .sort((a, b) => rank(a.rung, set)! - rank(b.rung, set)!)
+    if (good[0]) out[kind] = good[0]
+  }
+
+  return out
+}
+
+/** The strange-loop observation the lead is asked to record when a kind's advice first reaches its threshold. */
+export const genomeNote = (a: Suggestion, unit: string) => {
+  const what = `model-router's history says ${a.why}; it suggests ${a.isRaise ? 'raising' : 'lowering'} ${a.kind} to ${rungLabel(a.to)}`
+
+  return `Advice for kind "${a.kind}" reached its threshold (${a.why}). Record it once as a strange-loop observation: python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note ${unit} ${a.isRaise ? 'friction' : 'wish'} "routing: ${what}" --harness claude-code --context "model-router history"`
+}
+
+/** "≈$0.12", or with a part that has no price "≈$0.12 + ?", or "?" when none of it has one. */
+export const fmtCost = (n: number, unpriced?: boolean) => (unpriced ? (n > 0 ? `≈${fmtUsd(n)} + ?` : '?') : `≈${fmtUsd(n)}`)
 
 // --- The main chat's model ------------------------------------------------------
 
@@ -407,7 +631,7 @@ export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggesti
 export const modelHint = (list: readonly Step[], mainModel: Model | undefined) => {
   if (!mainModel || list.length === 0 || list.some(s => s.tier === 'deep')) return undefined
   if (mainModel !== 'opus' && mainModel !== 'fable') return undefined
-  const ratio = PRICES.sonnet.output / PRICES[mainModel].output
+  const ratio = PRICES.sonnet!.output / PRICES[mainModel]!.output
 
   return `No step in this plan is deep: Sonnet could run this chat for about ${Math.round(ratio * 100)}% of the cost. Switch it in the model menu if the conversation itself is routine.`
 }

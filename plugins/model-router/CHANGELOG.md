@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.18.0 (2026-11-07)
+- Verdicts and facts per delegated run, kinds of work listed in the rules, learned advice per kind with Apply (kind defaults), auto mode, an open model list with editable prices and a ladder built from it, and a router note asking for a strange-loop observation when a kind's advice first reaches its threshold (owner's request 2026-11-07) (O1)
+
 ## 0.17.0 (2026-11-07)
 - Nested plan parts (groups, count N parallel agents), helper and reported model shown on helper steps, helper usage and time recorded per step and added up per provider and unit in plan, chat and lifetime views (owner's request 2026-11-07)
 

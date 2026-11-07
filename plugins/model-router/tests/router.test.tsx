@@ -2,8 +2,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { EMPTY_HELPER, EMPTY_USAGE, asHelperUsage, depthOf, fmtMin, helperFacts, helperLine, helperTotalsOf, rollupOf, settleGroups } from '../hooks/logic'
-import type { Step } from '../types'
+import { EMPTY_HELPER, EMPTY_USAGE, asHelperUsage, depthOf, fmtCost, fmtMin, genomeNote, helperFacts, helperLine, helperTotalsOf, ladderOf, learnedRungs, mergeSettings, modelOf, nextRung, parsePrice, rollupOf, settleGroups, suggestions } from '../hooks/logic'
+import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
+import type { HistoryEntry, Step } from '../types'
 
 const PLAN = 'mcp__model-router__plan'
 const HOME = '/home/tester'
@@ -889,11 +890,14 @@ test('a plan nests three levels: ids extend the parent\'s, the tree is shown to 
     { id: 'x1', description: '[s1.a.1] read' },
     { id: 'x2', description: '[s1.a.1] read' },
   ])
-  // The schema takes parts, recursively; with helpers off done and start stay as they were.
+  // The schema takes parts, recursively; with helpers off start stays as it was. Since 0.18.0 a done item
+  // may carry a verdict (with helpers off, no usage).
   const tool = registered.at(-1) as unknown as { inputSchema: { properties: Record<string, any> } }
   const level1 = tool.inputSchema.properties.steps.items.properties.parts.items.properties
   expect(level1.parts.items.properties.parts.items.properties.count).toBeTruthy()
-  expect(tool.inputSchema.properties.done.items).toEqual({ type: 'string' })
+  expect(tool.inputSchema.properties.done.items.anyOf[0]).toEqual({ type: 'string' })
+  expect(tool.inputSchema.properties.done.items.anyOf[1].properties.verdict.enum).toEqual(['ok', 'weak', 'overkill'])
+  expect(tool.inputSchema.properties.done.items.anyOf[1].properties.usage).toBeUndefined()
   expect(tool.inputSchema.properties.start).toBeUndefined()
 
   await $.turn.start({ text: 'first', turnId: 't0' })
@@ -1199,4 +1203,346 @@ test('a helper step run through the Agent tool as the fallback drops the helper 
   expect(calls.at(-1)?.model).toBe('sonnet')
   const res = await $.tool.call({ tool: PLAN, done: [] } as never)
   expect(String(res.result)).toContain('[h1] Survey: standard, sonnet/medium, running')
+})
+
+// --- Verdicts, kinds, learned advice, auto mode, open model list (0.18.0) -------------------
+
+/** One run in the history, as the router stores it. */
+const run = (n: number, over: Partial<HistoryEntry> = {}): HistoryEntry => ({
+  key: `k${n}`,
+  tier: 'light',
+  where: 'agent',
+  model: 'haiku',
+  effort: 'low',
+  kind: 'code-review',
+  cost: 0.01,
+  setupHeavy: false,
+  rerun: false,
+  at: `2026-11-0${Math.min(n, 9)}T10:00:00.000Z`,
+  ...over,
+})
+/** A subagent's run ending. */
+const end = ($: Parameters<TestBody>[0], agentId: string, turnId: string) =>
+  $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId, reason: 'answer', agentId } as never)
+const haikuUse = { model: 'claude-haiku-5-5', input_tokens: 2, cache_creation_input_tokens: 400, cache_read_input_tokens: 3000, output_tokens: 1500 }
+
+test('a delegated step asks for a verdict once, records it on its run with the facts, and a finished step delegated again is a rerun', async ($, on) => {
+  const { store, step, calls } = await boot($, on, [], [
+    { id: 'x1', description: '[r1] review' },
+    { id: 'x2', description: '[r1] review' },
+  ])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'r1', title: 'Review the parser', tier: 'light', where: 'agent', kind: 'Code Review' },
+      { id: 'w1', title: 'Write up', tier: 'standard', where: 'here' },
+    ],
+  } as never)
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await new Promise(r => setTimeout(r, 5))
+  await step('t1', haikuUse, 'x1')
+  await end($, 'x1', 't1')
+
+  // The run's facts are recorded without being asked: kind, where, rung, output, reruns, time.
+  const entry = (store.get('history') as HistoryEntry[]).at(-1)!
+  expect(entry).toMatchObject({ kind: 'code-review', where: 'agent', model: 'haiku', effort: 'low', output: 1500, reruns: 0, rerun: false })
+  expect(entry.ms).toBeGreaterThan(0)
+  expect(entry.verdict).toBeUndefined()
+
+  // The next plan call asks for the verdict, once; a here step needs none.
+  const asked = await $.tool.call({ tool: PLAN, done: ['w1'] } as never)
+  expect(String(asked.result)).toContain('[r1] Review the parser: light, haiku/low, kind code-review, done')
+  expect(String(asked.result)).toContain('Verdict needed for [r1]:')
+  expect(String(asked.result)).not.toContain('[w1]:')
+  const again = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(again.result)).not.toContain('Verdict needed')
+  // Named done again without one: asked again.
+  const named = await $.tool.call({ tool: PLAN, done: ['r1'] } as never)
+  expect(String(named.result)).toContain('Verdict needed for [r1]')
+
+  // The verdict goes onto the run it judges and shows in the plan and on the card.
+  const judged = await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'weak', why: 'missed two files' }] } as never)
+  expect(String(judged.result)).toContain('done (verdict weak)')
+  expect(String(judged.result)).not.toContain('Verdict needed')
+  expect((store.get('history') as HistoryEntry[]).at(-1)).toMatchObject({ verdict: 'weak', why: 'missed two files' })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^verdict weak: missed two files$/))).toBeTruthy()
+  expect((await pane.find(text(/^1 runs · 0 reruns · 1 weak$/)))).toBeTruthy()
+  await pane.unmount()
+
+  // Delegated again after it finished: a rerun, so the earlier run counts as weak whatever its verdict.
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'again' })
+  expect(calls.at(-1)?.model).toBe('haiku')
+  const h = store.get('history') as HistoryEntry[]
+  expect(h.at(-1)?.rerun).toBe(true)
+  await step('t2', { ...haikuUse, output_tokens: 700 }, 'x2')
+  await end($, 'x2', 't2')
+  const second = (store.get('history') as HistoryEntry[]).at(-1)!
+  // The second run's own output, and the rerun before it, are its facts; it starts with no verdict.
+  expect(second).toMatchObject({ output: 700, reruns: 1, rerun: false })
+  expect(second.verdict).toBeUndefined()
+})
+
+test('a helper step enters the history when done, with its template, kind and verdict; without one it is asked for', async ($, on) => {
+  const { store } = await boot($, on, HELPERS)
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'h1', title: 'Survey', tier: 'standard', where: 'helper', kind: 'search' },
+      { id: 'h2', title: 'Sweep', tier: 'light', where: 'helper' },
+    ],
+  } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'copilot-standard', model: 'Claude Sonnet 5.5' }, 'h2'] } as never)
+  const res = await $.tool.call({
+    tool: PLAN,
+    done: [{ id: 'h1', verdict: 'ok', why: 'used as is', usage: { provider: 'copilot', amount: 3, unit: 'AIC' } }, 'h2'],
+  } as never)
+  const h = store.get('history') as HistoryEntry[]
+  expect(h).toHaveLength(2)
+  expect(h[0]).toMatchObject({ where: 'helper', helper: 'copilot-standard', kind: 'search', tier: 'standard', verdict: 'ok', why: 'used as is' })
+  expect(h[1]!.verdict).toBeUndefined()
+  expect(String(res.result)).toContain('Verdict needed for [h2]')
+  expect(String(res.result)).not.toContain('[h1],')
+  // Given later, the verdict reaches the same run.
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h2', verdict: 'overkill' }] } as never)
+  expect((store.get('history') as HistoryEntry[])[1]!.verdict).toBe('overkill')
+  expect(store.get('history') as HistoryEntry[]).toHaveLength(2)
+})
+
+test('the rules list the kinds the history has seen, and a skill-routed step takes the skill\'s name as its kind', async ($, on) => {
+  const { rows, store } = await boot(
+    $,
+    on,
+    [
+      ['history', [run(1), run(2), run(3, { kind: 'summarize' })]],
+      ['settings', { skills: { 'scientific-figures': 'standard' } }],
+    ],
+    [{ id: 'x1', description: '[skill:scientific-figures] draw' }],
+  )
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('kinds used so far: code-review, summarize; reuse one when it fits')
+  expect(lastRow(rows)).toContain('done: [{id, verdict, why}]')
+  expect(lastRow(rows)).toContain('\\"overkill\\" = plainly mechanical work')
+
+  await $.tool.call({ tool: 'Agent', description: '[skill:scientific-figures] draw', prompt: 'use the skill' })
+  await end($, 'x1', 't1')
+  expect((store.get('history') as HistoryEntry[]).at(-1)?.kind).toBe('scientific-figures')
+})
+
+test('with no history the rules give example kinds', async ($, on) => {
+  const { rows } = await boot($, on, [])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('e.g. code-review, summarize, search, write-code, figure')
+})
+
+test('learned advice: one rung up at half weak (a rerun counts), down at half overkill with no recent weak, never under three runs', () => {
+  const set = mergeSettings({})
+  // Two runs are not enough.
+  expect(suggestions([run(1, { verdict: 'weak' }), run(2, { verdict: 'weak' })], set)).toEqual([])
+  // Two of three weak, one of them a rerun with an ok verdict: up one rung, with the evidence.
+  const up = suggestions([run(1, { verdict: 'weak' }), run(2, { rerun: true, verdict: 'ok' }), run(3, { verdict: 'ok' })], set)
+  expect(up).toEqual([{ kind: 'code-review', tier: 'light', from: { model: 'haiku', effort: 'low' }, to: { model: 'haiku', effort: 'medium' }, isRaise: true, why: 'code-review on light: 2 of 3 weak' }])
+  // One of three weak: nothing.
+  expect(suggestions([run(1, { verdict: 'weak' }), run(2, { verdict: 'ok' }), run(3, { verdict: 'ok' })], set)).toEqual([])
+  // Overkill on sonnet: down one rung; with a weak run among the last three, not.
+  const std = (n: number, over: Partial<HistoryEntry>) => run(n, { kind: 'search', tier: 'standard', model: 'sonnet', effort: 'medium', ...over })
+  const down = suggestions([std(1, { verdict: 'overkill' }), std(2, { verdict: 'overkill' }), std(3, { verdict: 'ok' })], set)
+  expect(down[0]).toMatchObject({ kind: 'search', isRaise: false, to: { model: 'haiku', effort: 'high' }, why: 'search on standard: 2 of 3 overkill' })
+  expect(suggestions([std(1, { verdict: 'overkill' }), std(2, { verdict: 'overkill' }), std(3, { verdict: 'overkill' }), std(4, { verdict: 'weak' })], set)).toEqual([])
+  // Runs with no kind are judged per tier; runs on another rung than the tier's do not count.
+  const tier = suggestions([run(1, { kind: undefined, rerun: true }), run(2, { kind: undefined, rerun: true }), run(3, { kind: undefined }), run(4, { kind: undefined, model: 'sonnet', effort: 'high', verdict: 'ok' })], set)
+  expect(tier).toEqual([{ tier: 'light', from: { model: 'haiku', effort: 'low' }, to: { model: 'haiku', effort: 'medium' }, isRaise: true, why: 'light steps on haiku/low: 2 of 3 weak' }])
+  // A kind with a default of its own is judged on that rung.
+  const own = mergeSettings({ kinds: { 'code-review': { model: 'sonnet', effort: 'medium' } } })
+  expect(suggestions([run(1, { verdict: 'weak' }), run(2, { verdict: 'weak' }), run(3, { verdict: 'weak' })], own)).toEqual([])
+  // Helper runs are recorded but never move a rung.
+  expect(suggestions([1, 2, 3].map(n => run(n, { where: 'helper', helper: 'kiro-light', model: undefined, effort: undefined, verdict: 'weak' })), set)).toEqual([])
+})
+
+test('applying a kind\'s advice sets its default: persisted, mirrored, marked, used for routing, and reset', async ($, on) => {
+  const weak = [run(1, { verdict: 'weak' }), run(2, { verdict: 'weak' }), run(3, { verdict: 'ok' })]
+  const { store, files, calls } = await boot($, on, [['history', weak]], [{ id: 'x1', description: '[r1] review' }])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^code-review on light: 2 of 3 weak: raise code-review's default to haiku\/medium\.$/))).toBeTruthy()
+  expect(await pane.find(text(/^code-review$/))).toBeTruthy()
+  await pane.press({ key: 'apply-kind:code-review' })
+  expect((store.get('settings') as { kinds: Record<string, unknown> }).kinds['code-review']).toEqual({ model: 'haiku', effort: 'medium' })
+  expect((JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { kinds: Record<string, unknown> } }).settings.kinds['code-review']).toEqual({ model: 'haiku', effort: 'medium' })
+  // The advice is gone (the kind now runs on its own rung, with no runs there yet), and the default is marked.
+  expect(await pane.find({ type: 'Button', key: 'apply-kind:code-review' } as never)).toBeFalsy()
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^→ haiku\/medium$/))).toBeTruthy()
+  expect(await pane.find(text(/^• differs from the default$/))).toBeTruthy()
+
+  // A step of that kind runs on it; one of another kind on its tier.
+  const res = await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'r1', title: 'Review', tier: 'light', where: 'agent', kind: 'code-review' },
+      { id: 'r2', title: 'List', tier: 'light', where: 'agent', kind: 'search' },
+    ],
+  } as never)
+  expect(String(res.result)).toContain('[r1] Review: light, haiku/medium (code-review default), kind code-review, planned')
+  expect(String(res.result)).toContain('[r2] List: light, haiku/low, kind search, planned')
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  expect(calls.at(-1)?.effort).toBe('medium')
+
+  await pane.press({ key: 'kind-reset:code-review' })
+  await pane.unmount()
+  expect((store.get('settings') as { kinds: Record<string, unknown> }).kinds).toEqual({})
+})
+
+test('auto mode is off by default; on, a kind runs on the cheapest rung it did well on, and the owner\'s own pick still wins', async ($, on) => {
+  const ok = (n: number, over: Partial<HistoryEntry>) => run(n, { kind: 'summarize', tier: 'standard', verdict: 'ok', ...over })
+  const past = [
+    ...[1, 2, 3].map(n => ok(n, { model: 'sonnet', effort: 'medium' })),
+    ...[4, 5, 6].map(n => ok(n, { model: 'haiku', effort: 'high' })),
+    // Cheaper, but only 2 of 3 ok: not learned.
+    ok(7, { model: 'haiku', effort: 'low' }), ok(8, { model: 'haiku', effort: 'low' }), ok(9, { model: 'haiku', effort: 'low', verdict: 'weak' }),
+  ]
+  expect(learnedRungs(past, mergeSettings({}))).toEqual({ summarize: { rung: { model: 'haiku', effort: 'high' }, n: 3 } })
+  const { store, calls } = await boot($, on, [['history', past]], [{ id: 'x1', description: '[s1] sum' }])
+  const plan = [
+    { id: 's1', title: 'Summarize', tier: 'standard', where: 'agent', kind: 'summarize' },
+    { id: 's2', title: 'Other', tier: 'standard', where: 'agent' },
+  ]
+
+  // Off: today's routing exactly.
+  const before = await $.tool.call({ tool: PLAN, steps: plan } as never)
+  expect(String(before.result)).toContain('[s1] Summarize: standard, sonnet/medium, kind summarize, planned')
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'medium' })
+
+  // On, from Settings: persisted; the step runs on the learned rung, and its card says so.
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'auto-route' })
+  expect((store.get('settings') as { autoRoute: boolean }).autoRoute).toBe(true)
+  expect(await pane.find(text(/^auto: haiku · high \(learned, 3 runs\)$/))).toBeTruthy()
+  const after = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(after.result)).toContain('[s1] Summarize: standard, haiku/high (auto: learned, 3 runs), kind summarize, running')
+  expect(String(after.result)).toContain('[s2] Other: standard, sonnet/medium, planned')
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'haiku', effort: 'high' })
+
+  // The owner picks a model on the step: it wins; the thinking level still comes from auto mode.
+  await pane.press({ key: 'model:s1' })
+  await pane.press({ key: 'model:s1' })
+  await pane.unmount()
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'high' })
+})
+
+test('a model seen in usage joins the known models and the pickers; with no price its cost is "?" and it saves nothing', async ($, on) => {
+  const { store, step } = await boot($, on, [], [{ id: 'x1', description: '[n1] try' }])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'n1', title: 'Try', tier: 'standard', where: 'agent' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[n1] try', prompt: 'go' })
+  await step('m1', { model: 'claude-opus-5-5', input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: 50 })
+  await step('t1', { model: 'claude-nova-6', input_tokens: 2, cache_creation_input_tokens: 4000, cache_read_input_tokens: 37000, output_tokens: 1000 }, 'x1')
+  // A synthetic id is not a model.
+  await step('m2', { model: '<synthetic>', input_tokens: 0, output_tokens: 0 })
+
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6'])
+  const life = store.get('lifetime') as { agentCost: number; mainEquivalent: number }
+  expect(life.agentCost).toBe(0)
+  expect(life.mainEquivalent).toBe(0)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  const picker = await pane.find({ type: 'Select', key: 'model:n1' } as never)
+  expect((picker?.props.options as { value: string }[]).map(o => o.value)).toEqual(['tier', 'haiku', 'sonnet', 'opus', 'fable', 'claude-nova-6'])
+  expect(await pane.find(text(/^\? · 5\.0k tok \+ 37\.0k cached · no price for claude-nova-6: left out of savings/))).toBeTruthy()
+  expect(await pane.find(text(/^\?$/))).toBeTruthy()
+  // Saved stays empty: nothing was priced on both sides.
+  expect(await pane.find(text(/of the total$/))).toBeFalsy()
+
+  // Settings lists it with no price; a price set there is kept, and a model can be added by name.
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^no price$/))).toBeTruthy()
+  await pane.input({ key: 'price:claude-nova-6', text: '3 15' })
+  expect((store.get('settings') as { prices: Record<string, unknown> }).prices['claude-nova-6']).toEqual({ input: 3, cacheWrite: 3.75, cacheRead: 0.30000000000000004, output: 15 })
+  await pane.input({ key: 'price:claude-nova-6', text: 'cheap' })
+  expect((store.get('settings') as { prices: Record<string, unknown> }).prices['claude-nova-6']).toBeTruthy()
+  await pane.input({ key: 'add-model', text: 'Nova' })
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6', 'nova'])
+  // A model the defaults know is not added twice.
+  await pane.input({ key: 'add-model', text: 'opus' })
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6', 'nova'])
+  await pane.press({ key: 'model-remove:nova' })
+  await pane.unmount()
+  expect((store.get('settings') as { models: string[] }).models).toEqual(['claude-nova-6'])
+})
+
+test('the ladder is built from the known models by price, and is the old one when only the defaults are known', () => {
+  expect(ladderOf(DEFAULT_SETTINGS)).toEqual(LADDER)
+  const set = mergeSettings({ models: ['nova', 'dusk'], prices: { nova: { input: 3, cacheWrite: 3.75, cacheRead: 0.3, output: 15 } } })
+  const ladder = ladderOf(set).map(r => `${r.model}/${r.effort}`)
+  // nova sits between Sonnet and Opus by price, on medium and high; dusk has no price and is not on it.
+  expect(ladder).toEqual(['haiku/low', 'haiku/medium', 'haiku/high', 'sonnet/medium', 'sonnet/high', 'nova/medium', 'nova/high', 'opus/high', 'opus/xhigh', 'fable/high'])
+  expect(nextRung({ model: 'sonnet', effort: 'high' }, set)).toEqual({ model: 'nova', effort: 'medium' })
+  expect(nextRung({ model: 'dusk', effort: 'high' }, set)).toBeUndefined()
+  expect(nextRung({ model: 'fable', effort: 'high' }, set)).toBeUndefined()
+  // Ids map to family aliases; an unknown family is kept under its id.
+  expect(modelOf('claude-haiku-5-5', set)).toBe('haiku')
+  expect(modelOf('claude-nova-6-1', set)).toBe('nova')
+  expect(modelOf('claude-ember-7', set)).toBe('claude-ember-7')
+  expect(modelOf('<synthetic>', set)).toBeUndefined()
+  expect(parsePrice('1 2 0.1 5')).toEqual({ input: 1, cacheWrite: 2, cacheRead: 0.1, output: 5 })
+  expect(parsePrice('1')).toBeUndefined()
+  expect(fmtCost(0.5, true)).toBe('≈$0.50 + ?')
+  expect(fmtCost(0, true)).toBe('?')
+})
+
+test('advice for a kind that first reaches its threshold asks the lead, once, to record a strange-loop observation', async ($, on) => {
+  const { store, step } = await boot($, on, [['history', [run(1, { verdict: 'weak' }), run(2, { verdict: 'ok' })]]], [
+    { id: 'x1', description: '[r1] review' },
+    { id: 'x2', description: '[r2] review' },
+  ])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'r1', title: 'Review A', tier: 'light', where: 'agent', kind: 'code-review' },
+      { id: 'r2', title: 'Review B', tier: 'light', where: 'agent', kind: 'code-review' },
+    ],
+  } as never)
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await step('t1', haikuUse, 'x1')
+  await end($, 'x1', 't1')
+  // Two runs of three: the threshold is not reached until the verdict comes.
+  expect(store.get('genomeNoted')).toBeUndefined()
+  const res = await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'weak' }] } as never)
+  expect(store.get('genomeNoted')).toEqual(['code-review:up'])
+  const text0 = String(res.result)
+  expect(text0).toContain('Advice for kind "code-review" reached its threshold (code-review on light: 2 of 3 weak)')
+  expect(text0).toContain('loop.py" note model-router friction "routing: model-router\'s history says code-review on light: 2 of 3 weak; it suggests raising code-review to haiku/medium"')
+
+  // Another weak run of the same kind: no second note.
+  await $.tool.call({ tool: 'Agent', description: '[r2] review', prompt: 'go' })
+  await step('t2', haikuUse, 'x2')
+  await end($, 'x2', 't2')
+  const res2 = await $.tool.call({ tool: PLAN, done: [{ id: 'r2', verdict: 'weak' }] } as never)
+  expect(String(res2.result)).not.toContain('strange-loop observation')
+  expect(store.get('genomeNoted')).toEqual(['code-review:up'])
+
+  // A kind that is a skill's name is noted to that skill; the kind is cleaned before it reaches a shell command.
+  const a = suggestions([1, 2, 3].map(n => run(n, { kind: 'scientific-figures', verdict: 'weak' })), mergeSettings({}))[0]!
+  expect(genomeNote(a, 'scientific-figures')).toContain('note scientific-figures friction')
+})
+
+test('a main chat on a model with no price counts no saving, and a verdict given before the agent ends goes onto its run', async ($, on) => {
+  const { store, step } = await boot($, on, [], [{ id: 'x1', description: '[r1] review' }])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'r1', title: 'Review', tier: 'light', where: 'agent', kind: 'code-review' }] } as never)
+  await step('m1', { model: 'claude-nova-6', input_tokens: 10, cache_creation_input_tokens: 100, cache_read_input_tokens: 1000, output_tokens: 50 })
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await step('t1', haikuUse, 'x1')
+  const life = store.get('lifetime') as { agentCost: number; mainEquivalent: number; mainCost: number }
+  expect(life.agentCost).toBeGreaterThan(0)
+  expect(life.mainEquivalent).toBe(life.agentCost)
+  expect(life.mainCost).toBe(0)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^\?$/))).toBeTruthy()
+  await pane.unmount()
+
+  await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'ok', why: 'fine' }] } as never)
+  await end($, 'x1', 't1')
+  expect((store.get('history') as HistoryEntry[]).at(-1)).toMatchObject({ kind: 'code-review', verdict: 'ok', why: 'fine' })
 })
