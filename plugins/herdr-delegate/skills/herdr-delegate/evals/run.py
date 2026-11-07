@@ -53,5 +53,14 @@ failures += sub.returncode != 0
 print(f"{'OK  ' if sub.returncode == 0 else 'FAIL'} render_cases.py: {tail}")
 if sub.returncode != 0:
     print("\n".join(l for l in sub.stdout.splitlines() if l.startswith("FAIL")))
+# pick skips a template whose model the cache says is not offered (O7).
+helpers.not_offered = lambda: {"agy-argon"}
+import io as _io, contextlib as _cl
+out = _io.StringIO()
+with _cl.redirect_stdout(out), _cl.redirect_stderr(_io.StringIO()):
+    rc = helpers.main(["pick", "agy-argon,copilot-argon"], _dt.date(2026, 11, 7))
+ok = rc == 0 and out.getvalue().strip() == "copilot-argon"
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} pick skips a template whose model is not offered: {out.getvalue().strip()}")
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)

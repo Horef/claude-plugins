@@ -466,6 +466,14 @@ def load_models():
     return read_json(models_file(), {})
 
 
+def not_offered():
+    """Templates whose model the cached model lists say is not offered (a CLI would silently swap it, O7)."""
+    try:
+        return {name for name, _ in models_report(effective_config(), load_models())[0]}
+    except Exception:  # a broken cache must never stop pick
+        return set()
+
+
 def refresh_models(cfg, providers=None, today=None):
     """Ask the installed CLIs for their models and cache the answer. One CLI failing does not stop the others."""
     today = (today or dt.date.today()).isoformat()
@@ -693,7 +701,11 @@ def main(argv, today=None):
         refresh_logins(state)
     if cmd == "pick" and args:
         order = ORDER.get(args[0]) or [s.strip() for s in args[0].split(",") if s.strip()]
+        absent = not_offered()
         for name in order:
+            if name in absent:
+                print(f"skipped {name}: its model is not offered (last `helpers.py models`)", file=sys.stderr)
+                continue
             if usable(name, state, today):
                 print(name)
                 return 0
