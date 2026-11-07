@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.2.0 (2026-11-07)
+- Lint flags filled patches drawn over text (matplotlib and Canvas), with known-answer eval cases (O2)
+
 ## 7.1.0 (2026-11-07)
 - Setup names the interpreter: the profile's python line or the project's AGENTS.local.md (python_figures, else python), else find one with matplotlib/numpy/scipy/Pillow and ask before a venv (O10, O11: two projects on the Mac had no system python3 with them); profile.example gains a python line. Fix: geom.plane(ticks=False) crashed; False now means no ticks and anything but None/False/a pair raises a clear ValueError (O11, verified). (O10, O11)
 
