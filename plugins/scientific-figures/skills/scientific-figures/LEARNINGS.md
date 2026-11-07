@@ -7,6 +7,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 ## Open
 - O2 2026-10-30 [friction] §5 lint: the skill itself says the linter "does not see filled patches (icon boxes, bands) covering text" and that streamlines are not checked; both are known blind spots handled by looking. Candidates to codify as lint checks once use confirms they still bite (claude-code-web, adopting; from the skill text)
 - O10 2026-11-05 [friction] 0. Setup: no interpreter on PATH had matplotlib on the Mac; the owner keeps one in a conda env (now recorded as python_figures in the 769001 AGENTS.local.md). Setup could tell agents to look for a python_figures key / ask before creating a venv (claude-code, 769001)
+- O11 2026-11-06 [friction] Setup: no system python3 on this Mac has numpy/matplotlib; had to create a scratch venv. Also geom.plane(ticks=False) crashes (expects None or a pair). (claude-code, 76901 Lecture 4)
 
 ## Resolved
 - O9 2026-10-31 [friction] evals/run.py: on the Mac without MorphIO the three reconstruction examples (cortical_column, neuron_illustrated, neuron_styles) fail with ModuleNotFoundError and the eval reports FAIL; the dependency check covers matplotlib only. Treat a missing optional dependency like a missing matplotlib (NOT RUN for those figures, exit 2) or name it in the summary (claude-code-desktop, first eval run on the owner's Mac, neuro conda env (Python 3.12, no morphio)) → 7.0.3
