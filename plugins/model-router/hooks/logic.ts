@@ -1,10 +1,10 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperTotals, HelperUsage, HistoryEntry, Model, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperTotals, HelperUsage, HistoryEntry, Model, ModelsCache, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
 import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.19.0'
+export const VERSION = '0.20.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -199,6 +199,25 @@ export const helperSignature = (set: Settings) => TIER_ORDER.map(t => `${t}: ${h
 /** A whole number within [lo, hi], else undefined (a stored value that is missing or unusable). */
 const wholeIn = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : undefined)
 
+/** A path to helpers.py as stored or typed: it must end in helpers.py (the router runs it with python, so no other file is taken). */
+export const asScriptPath = (v: unknown) => {
+  const t = typeof v === 'string' ? v.trim() : ''
+
+  return /^[^\n\r]*[\\/]helpers\.py$/.test(t) ? t : undefined
+}
+
+/** Per-kind helper choices as stored; anything that is not a provider, model and level of plain words is dropped. */
+const helperChoices = (v: unknown): Record<string, HelperChoice> => {
+  const word = (x: unknown): x is string => typeof x === 'string' && /^[A-Za-z0-9][\w.-]{0,79}$/.test(x)
+  if (!v || typeof v !== 'object') return {}
+
+  return Object.fromEntries(
+    Object.entries(v as Record<string, Partial<HelperChoice>>).flatMap(([kind, c]) =>
+      word(c?.provider) && word(c?.model) && word(c?.effort) ? [[kind, { provider: c.provider, model: c.model, effort: c.effort }]] : [],
+    ),
+  )
+}
+
 /** Settings as stored, which may be missing parts that older versions did not have, filled from the defaults. */
 export const mergeSettings = (stored: Partial<Settings> | undefined): Settings => ({
   tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
@@ -209,6 +228,8 @@ export const mergeSettings = (stored: Partial<Settings> | undefined): Settings =
     ...DEFAULT_SETTINGS.helpers,
     ...(stored?.helpers ?? {}),
     tiers: { ...DEFAULT_SETTINGS.helpers.tiers, ...(stored?.helpers?.tiers ?? {}) },
+    script: asScriptPath(stored?.helpers?.script) ?? DEFAULT_SETTINGS.helpers.script,
+    kinds: helperChoices(stored?.helpers?.kinds),
   },
   hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
   kinds: { ...(stored?.kinds && typeof stored.kinds === 'object' ? stored.kinds : {}) },
@@ -276,7 +297,12 @@ const placeOf = (s: Step, set: Settings, mainModel?: Model, learned?: Learned) =
     const want = hereNeeds(s, set, mainModel)
     return want ? `here (rated for ${want}, this chat runs ${mainModel}: consider a subagent)` : 'here'
   }
-  if (s.where === 'helper') return `helper (${s.helper ? helperName(s) : helperOrder(set, s.tier)})`
+  if (s.where === 'helper') {
+    if (s.helper) return `helper (${helperName(s)})`
+    const pick = s.helperPick
+
+    return pick?.template ? `helper (launch ${pick.template}: ${pick.model} ${pick.effort}, ${pickSource(pick)}; else ${helperOrder(set, s.tier)})` : `helper (${helperOrder(set, s.tier)})`
+  }
   const why = rungSource(s, set, learned)
 
   return `${rungLabel(runsOn(s, set, learned))}${why ? ` (${why})` : ''}`
@@ -615,12 +641,10 @@ export type Suggestion = { tier?: Tier; kind?: string; from: Rung; to: Rung; why
 const sameRung = (x: HistoryEntry, r: Rung) => x.model === r.model && x.effort === r.effort
 
 /** Up when at least half the runs were weak (a weak verdict or a rerun); down when at least half were overkill and none of the last few was weak. */
-const judge = (xs: readonly HistoryEntry[], from: Rung, label: string, set: Settings) => {
+const judgeRuns = <R>(xs: readonly HistoryEntry[], label: string, up: R | undefined, down: R | undefined) => {
   if (xs.length < LEARN.minRuns) return undefined
   const weak = xs.filter(isWeak).length
   const over = xs.filter(isOverkill).length
-  const up = nextRung(from, set)
-  const down = prevRung(from, set)
   if (weak / xs.length >= LEARN.weakShare && up) return { to: up, isRaise: true, why: `${label}: ${weak} of ${xs.length} weak` }
   const recent = [...xs].sort((a, b) => a.at.localeCompare(b.at)).slice(-LEARN.recent)
   if (over / xs.length >= LEARN.overkillShare && !recent.some(isWeak) && down) {
@@ -628,6 +652,8 @@ const judge = (xs: readonly HistoryEntry[], from: Rung, label: string, set: Sett
   }
   return undefined
 }
+
+const judge = (xs: readonly HistoryEntry[], from: Rung, label: string, set: Settings) => judgeRuns(xs, label, nextRung(from, set), prevRung(from, set))
 
 /** What the history argues for: per kind on the rung it runs on now, and per tier for runs with no kind. Subagent runs only. */
 export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggestion[] => {
@@ -701,3 +727,301 @@ export const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100
 
 export const fmtUsd = (n: number) =>
   n === 0 ? '$0' : n < 0.01 ? `$${n.toFixed(4)}` : n < 10 ? `$${n.toFixed(2)}` : `$${n.toFixed(0)}`
+
+// --- Helper models: the config helpers.py holds, its ladder, advice and picks -----------------
+
+/** A model and a thinking level on a helper provider's CLI. */
+export type HelperRung = { model: string; effort: string }
+
+/** helpers.py's `config` output, if it is one: an object with providers. */
+export const parseHelperConfig = (text: string): HelperConfig | undefined => {
+  try {
+    const v = JSON.parse(text) as HelperConfig | null
+
+    return v && typeof v === 'object' && v.providers && typeof v.providers === 'object' ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The cache of offered models (models.json): an object per provider, else nothing. */
+export const parseModelsCache = (text: string): ModelsCache | undefined => {
+  try {
+    const v = JSON.parse(text) as ModelsCache | null
+
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The lines `helpers.py models` printed that need a look: models no longer offered, newer ones, a CLI that failed. */
+export const modelWarnings = (out: string) =>
+  out
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => /^(NOT OFFERED|NEWER)\b/.test(l) || /\bERROR:/.test(l))
+    .map(l => l.replace(/\s{2,}/g, ' '))
+
+/** The day models were last checked, from the cache (the latest of the providers'), or nothing. */
+export const modelsChecked = (cache: ModelsCache | undefined) =>
+  Object.values(cache ?? {})
+    .map(e => e?.checked ?? e?.date)
+    .filter((d): d is string => typeof d === 'string')
+    .sort()
+    .at(-1)
+
+/** A provider's tiers that are a model and a level (not a router's fixed command), the router's tiers first. */
+export const helperTierNames = (cfg: HelperConfig, provider: string): string[] => {
+  const tiers = cfg.providers[provider]?.tiers ?? {}
+  const own = Object.keys(tiers).filter(t => !tiers[t]?.command && tiers[t]?.model && tiers[t]?.effort)
+
+  return [...TIER_ORDER.filter(t => own.includes(t)), ...own.filter(t => !TIER_ORDER.includes(t as Tier)).sort()]
+}
+
+/** The providers of the config, in the order the tiers' helper orders first name them, then the rest. */
+export const helperProviders = (cfg: HelperConfig, set: Settings): string[] => {
+  const named = TIER_ORDER.flatMap(t => providersOf(helperItems(set, t)))
+  const all = Object.keys(cfg.providers)
+
+  return [...new Set([...named.filter(p => all.includes(p)), ...all])]
+}
+
+/** The providers a list of helper templates names, in order ("kiro-deep,agy-deep" gives kiro, agy). */
+export const providersOf = (templates: readonly string[]) => [...new Set(templates.map(t => t.split('-')[0]!).filter(Boolean))]
+
+/** A tier's model and level, or nothing when it has none (a router's fixed command, a missing tier). */
+export const helperTierRung = (cfg: HelperConfig | undefined, provider: string, tier: string): HelperRung | undefined => {
+  const t = cfg?.providers[provider]?.tiers?.[tier]
+
+  return t && !t.command && t.model && t.effort ? { model: t.model, effort: t.effort } : undefined
+}
+
+const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** An id the CLI offers, without the level when the provider's ids carry it (agy: `gemini-4-argon-high`). */
+export const baseModelId = (cfg: HelperConfig, provider: string, id: string) => {
+  const prov = cfg.providers[provider]
+  const efforts = prov?.efforts ?? []
+  if (!prov || !(prov.model_id ?? '{model}').endsWith('-{effort}') || efforts.length === 0) return id
+
+  return new RegExp(`^(.*)-(?:${efforts.map(escapeRe).join('|')})$`).exec(id)?.[1] ?? id
+}
+
+/** The models a provider's picker lists: those its CLI offered (as last checked), then those configured that it did not list. */
+export const offeredModels = (cfg: HelperConfig, cache: ModelsCache | undefined, provider: string, extra: readonly string[] = []) => {
+  const listed = (cache?.[provider]?.models ?? []).map(id => baseModelId(cfg, provider, id))
+  const configured = helperTierNames(cfg, provider).map(t => helperTierRung(cfg, provider, t)!.model)
+
+  return [...new Set([...listed, ...configured, ...extra])]
+}
+
+/** The thinking levels a provider's picker lists: its own, with the current one added if it is not among them. */
+export const helperEfforts = (cfg: HelperConfig, provider: string, current?: string) => {
+  const own = cfg.providers[provider]?.efforts ?? []
+
+  return current && !own.includes(current) ? [...own, current] : own
+}
+
+/** Whether a tier's model and level differ from the shipped defaults; a tier the defaults lack counts as different. */
+export const helperTierDiffers = (cfg: HelperConfig | undefined, defaults: HelperConfig | undefined, provider: string, tier: string) => {
+  const now = helperTierRung(cfg, provider, tier)
+  const was = helperTierRung(defaults, provider, tier)
+  if (!defaults) return { model: false, effort: false }
+
+  return { model: now?.model !== was?.model, effort: now?.effort !== was?.effort }
+}
+
+const slugOf = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+
+/** The name helpers.py gives a one-off template: `<provider>-<model slug>-<effort>`. */
+export const customTemplate = (provider: string, model: string, effort: string) => `${provider}-${slugOf(model)}-${effort}`
+
+/** The provider, tier, model and level a helper template stands for (`kiro-standard`, or a custom one), if it is one the config knows. */
+export const templateRung = (cfg: HelperConfig | undefined, template: string): (HelperChoice & { tier?: string }) | undefined => {
+  if (!cfg) return undefined
+  for (const provider of Object.keys(cfg.providers)) {
+    for (const tier of helperTierNames(cfg, provider)) {
+      const r = helperTierRung(cfg, provider, tier)!
+      if (`${provider}-${tier}` === template) return { provider, tier, ...r }
+    }
+  }
+  for (const c of cfg.custom ?? []) if (customTemplate(c.provider, c.model, c.effort) === template) return { provider: c.provider, model: c.model, effort: c.effort }
+
+  return undefined
+}
+
+/** A tier template that already stands for this provider, model and level (preferring `tier`'s own), so no one-off template is needed. */
+export const templateOfRung = (cfg: HelperConfig, provider: string, r: HelperRung, tier?: string) => {
+  const hits = helperTierNames(cfg, provider).filter(t => {
+    const x = helperTierRung(cfg, provider, t)!
+
+    return x.model === r.model && x.effort === r.effort
+  })
+  const at = tier && hits.includes(tier) ? tier : hits[0]
+
+  return at ? `${provider}-${at}` : undefined
+}
+
+/**
+ * The rungs a provider's helper can climb, weakest first: the models of its light, standard and deep tiers (ordered by Kiro's
+ * credit multiplier when models.json has one for every one of them, else in tier order), each from the lowest level a tier gives
+ * it up to `high`; the top model goes on to the provider's highest level. A model's levels never start below what the owner gave it.
+ */
+export const helperLadder = (cfg: HelperConfig, provider: string, cache?: ModelsCache): HelperRung[] => {
+  const prov = cfg.providers[provider]
+  if (!prov) return []
+  const efforts = (prov.efforts ?? []).filter(e => e !== 'none' && e !== 'minimal')
+  const models: string[] = []
+  const floor = new Map<string, number>()
+  for (const tier of TIER_ORDER) {
+    const r = helperTierRung(cfg, provider, tier)
+    if (!r) continue
+    if (!models.includes(r.model)) models.push(r.model)
+    floor.set(r.model, Math.min(floor.get(r.model) ?? Infinity, Math.max(0, efforts.indexOf(r.effort))))
+  }
+  const credits = cache?.[provider]?.credits
+  const ordered = credits && models.every(m => typeof credits[m] === 'number') ? [...models].sort((a, b) => credits[a]! - credits[b]!) : models
+  const high = efforts.indexOf('high')
+
+  return ordered.flatMap((model, i) => {
+    const from = floor.get(model)!
+    const to = i === ordered.length - 1 || high < 0 ? efforts.length - 1 : Math.max(high, from)
+
+    return efforts.slice(from, to + 1).map(effort => ({ model, effort }))
+  })
+}
+
+/** The rung `by` places from this one on a ladder (1 stronger, -1 weaker); nothing at an end or when it is not on the ladder. */
+export const helperStep = (ladder: readonly HelperRung[], r: HelperRung, by: 1 | -1) => {
+  const at = ladder.findIndex(x => x.model === r.model && x.effort === r.effort)
+
+  return at < 0 ? undefined : ladder[at + by]
+}
+
+export const helperRungLabel = (r: HelperRung) => `${r.model}/${r.effort}`
+
+/** How a pick came about, for the plan text and the card. */
+export const pickSource = (p: HelperPick) => (p.source === 'auto' ? `auto: learned, ${p.n} runs` : 'its kind\'s choice')
+
+const isHelperEntry = (x: HistoryEntry) => x.where === 'helper'
+
+/** The provider, model and level a helper run ran on: as recorded, else what its template stands for now. */
+export const helperRungOf = (x: HistoryEntry, cfg: HelperConfig | undefined): HelperChoice | undefined => {
+  if (x.hrung) return x.hrung
+  const t = x.helper ? templateRung(cfg, x.helper) : undefined
+
+  return t ? { provider: t.provider, model: t.model, effort: t.effort } : undefined
+}
+
+const sameChoice = (a: HelperChoice | undefined, b: HelperChoice) => !!a && a.provider === b.provider && a.model === b.model && a.effort === b.effort
+
+/** One piece of advice for a helper: a provider's tier (runs with no kind) or a kind, one rung up or down, with its evidence. */
+export type HelperAdvice = { provider: string; tier?: string; kind?: string; from: HelperRung; to: HelperRung; why: string; isRaise: boolean }
+
+/**
+ * What the history argues for the helpers: per provider and tier on the model and level the tier has now, for runs with no kind;
+ * per kind on the model and level it ran on (its own choice, or the busiest tier's). Weak at half of at least 3 runs: the next
+ * stronger rung of that provider's ladder; overkill: the next weaker.
+ */
+export const helperSuggestions = (h: readonly HistoryEntry[], set: Settings, cfg: HelperConfig | undefined, cache?: ModelsCache): HelperAdvice[] => {
+  if (!cfg) return []
+  const runs = h.filter(isHelperEntry)
+  const out: HelperAdvice[] = []
+  const judged = (xs: readonly HistoryEntry[], provider: string, from: HelperRung, label: string) => {
+    const ladder = helperLadder(cfg, provider, cache)
+
+    return judgeRuns(xs, label, helperStep(ladder, from, 1), helperStep(ladder, from, -1))
+  }
+  for (const provider of helperProviders(cfg, set)) {
+    for (const tier of helperTierNames(cfg, provider)) {
+      const now = helperTierRung(cfg, provider, tier)!
+      const xs = runs.filter(x => !x.kind && x.helper === `${provider}-${tier}` && sameChoice(helperRungOf(x, cfg), { provider, ...now }))
+      const j = judged(xs, provider, now, `${provider}-${tier} on ${helperRungLabel(now)}`)
+      if (j) out.push({ provider, tier, from: now, ...j })
+    }
+  }
+  for (const kind of kindsOf(runs, Infinity)) {
+    const mine = runs.filter(x => x.kind === kind)
+    const own = set.helpers.kinds[kind]
+    const groups = own
+      ? [{ provider: own.provider, tier: undefined as string | undefined, from: { model: own.model, effort: own.effort }, xs: mine.filter(x => sameChoice(helperRungOf(x, cfg), own)) }]
+      : helperProviders(cfg, set)
+          .flatMap(provider =>
+            helperTierNames(cfg, provider).map(tier => {
+              const now = helperTierRung(cfg, provider, tier)!
+
+              return { provider, tier: tier as string | undefined, from: now, xs: mine.filter(x => x.helper === `${provider}-${tier}` && sameChoice(helperRungOf(x, cfg), { provider, ...now })) }
+            }),
+          )
+          .sort((a, b) => b.xs.length - a.xs.length)
+    for (const g of groups) {
+      const j = judged(g.xs, g.provider, g.from, `${kind} on ${g.provider} ${g.tier ?? helperRungLabel(g.from)}`)
+      if (j) {
+        out.push({ provider: g.provider, ...(g.tier ? { tier: g.tier } : {}), kind, from: g.from, ...j })
+        break
+      }
+    }
+  }
+
+  return out
+}
+
+/** Auto mode for helpers: per kind, the rungs that did it well (ok in at least `autoOkPercent` of at least `autoMinRuns` runs there), cheapest first within a provider. */
+export type HelperLearned = Record<string, (HelperChoice & { n: number })[]>
+
+export const learnedHelpers = (h: readonly HistoryEntry[], set: Settings, cfg: HelperConfig | undefined, cache?: ModelsCache): HelperLearned => {
+  const out: HelperLearned = {}
+  if (!cfg) return out
+  const runs = h.filter(isHelperEntry)
+  for (const kind of kindsOf(runs, Infinity)) {
+    const by = new Map<string, { choice: HelperChoice; xs: HistoryEntry[] }>()
+    for (const x of runs.filter(r => r.kind === kind)) {
+      const choice = helperRungOf(x, cfg)
+      if (!choice) continue
+      const key = `${choice.provider}|${choice.model}|${choice.effort}`
+      by.set(key, { choice, xs: [...(by.get(key)?.xs ?? []), x] })
+    }
+    const good = [...by.values()]
+      .filter(g => g.xs.length >= set.autoMinRuns && (g.xs.filter(isOk).length * 100) / g.xs.length >= set.autoOkPercent)
+      .flatMap(g => {
+        const at = helperLadder(cfg, g.choice.provider, cache).findIndex(r => r.model === g.choice.model && r.effort === g.choice.effort)
+
+        return at < 0 ? [] : [{ ...g.choice, n: g.xs.length, at }]
+      })
+      .sort((a, b) => a.at - b.at)
+      .map(({ at: _at, ...c }) => c)
+    if (good.length) out[kind] = good
+  }
+
+  return out
+}
+
+/**
+ * The model and level the router picks for a helper step that has not started: what auto mode learned for its kind, else its kind's
+ * stored choice. Only a provider the step's tier lists (the owner's configured helpers) can be picked; the tier order still follows.
+ */
+export const helperPickFor = (s: Step, set: Settings, learned: HelperLearned | undefined, cfg: HelperConfig | undefined): Omit<HelperPick, 'template' | 'error'> | undefined => {
+  if (s.group || s.where !== 'helper' || s.status !== 'planned' || s.helper || !s.kind || !cfg) return undefined
+  const allowed = providersOf(helperList(set, s.tier)).filter(p => cfg.providers[p])
+  const auto = (learned?.[s.kind] ?? []).filter(c => allowed.includes(c.provider)).sort((a, b) => allowed.indexOf(a.provider) - allowed.indexOf(b.provider))[0]
+  if (auto) return { provider: auto.provider, model: auto.model, effort: auto.effort, source: 'auto', n: auto.n }
+  const own = set.helpers.kinds[s.kind]
+
+  return own && allowed.includes(own.provider) ? { ...own, source: 'kind' } : undefined
+}
+
+/** Whether a stored pick says the same as a fresh one (the template and any error are about making it, not choosing it). */
+export const samePick = (a: HelperPick | undefined, b: Omit<HelperPick, 'template' | 'error'> | undefined) =>
+  !a ? !b : !!b && a.provider === b.provider && a.model === b.model && a.effort === b.effort && a.source === b.source && a.n === b.n
+
+/** Orders two version strings ("0.6.0", "0.10.1") by their numbers; positive when `a` is newer. */
+export const compareVersions = (a: string, b: string) => {
+  const [x, y] = [a, b].map(v => v.split(/[.-]/).map(n => Number.parseInt(n, 10) || 0))
+  for (let i = 0; i < Math.max(x!.length, y!.length); i += 1) {
+    const d = (x![i] ?? 0) - (y![i] ?? 0)
+    if (d !== 0) return d
+  }
+
+  return 0
+}

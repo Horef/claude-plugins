@@ -2,7 +2,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLine, helperTotalsOf, ladderOf, learnedRungs, mergeSettings, modelOf, newStep, nextRung, parsePrice, rollupOf, settleGroups, suggestions, trimDraft } from '../hooks/logic'
+import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -281,6 +281,7 @@ const boot = async (
   init: [string, unknown][],
   agents: { id: string; description: string }[] = [],
   files = new Map<string, string>(),
+  setup?: () => void,
 ) => {
   asker = undefined
   const store = new Map<string, unknown>([['autoApprove', true], ...init])
@@ -331,6 +332,8 @@ const boot = async (
     return { result: { agentId: 'a1' } }
   })
 
+  // More mocks the test needs before the chat starts (helpers.py runs at the start).
+  setup?.()
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
   // Without agentId the usage is the main chat's own.
@@ -1861,4 +1864,434 @@ test('Settings > Learning: "Auto picks a rung with at least N runs and P% ok" is
   expect((store.get('settings') as { autoMinRuns: number; autoOkPercent: number })).toMatchObject({ autoMinRuns: 5, autoOkPercent: 90 })
   expect(await pane.findAll(text(/^•$/))).toHaveLength(2)
   await pane.unmount()
+})
+
+// --- Helper models (0.20.0): pickers from helpers.py, the check, advice, and the router's own picks -----------------
+
+const CACHE = `${HOME}/.claude/plugins/cache/mk/herdr-delegate`
+const SKILL = `${CACHE}/0.6.0/skills/herdr-delegate`
+const SCRIPT = `${SKILL}/scripts/helpers.py`
+const MODELS_FILE = `${HOME}/.config/herdr-delegate/models.json`
+const dirEntry = (name: string) => ({ name, kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false })
+
+const helperDefaults = () => ({
+  providers: {
+    kiro: {
+      label: 'Kiro',
+      cli: 'kiro-cli',
+      efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      tiers: { light: { model: 'claude-haiku-5.5', effort: 'low' }, standard: { model: 'claude-sonnet-5.5', effort: 'high' }, deep: { model: 'claude-opus-5.5', effort: 'high' } },
+    },
+    copilot: {
+      label: 'Copilot',
+      cli: 'copilot',
+      efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      tiers: {
+        light: { model: 'gpt-6-luna', effort: 'high' },
+        standard: { model: 'claude-sonnet-5.5', effort: 'high' },
+        deep: { model: 'claude-opus-5.5', effort: 'high' },
+        'fusion-max': { command: 'copilot --model auto --auto-tier hydrafusion-max', description: 'a router' },
+      },
+    },
+    agy: {
+      label: 'Antigravity',
+      cli: 'agy',
+      model_id: '{model}-{effort}',
+      efforts: ['low', 'medium', 'high'],
+      tiers: { light: { model: 'gemini-3.8-flash', effort: 'high' }, standard: { model: 'claude-sonnet-5-5', effort: 'high' }, deep: { model: 'claude-opus-5-5', effort: 'high' } },
+    },
+  },
+  custom: [] as { provider: string; model: string; effort: string }[],
+})
+
+const OFFERED = {
+  kiro: { date: '2026-11-07', checked: '2026-11-07', models: ['auto', 'claude-opus-5.5', 'claude-sonnet-5.5', 'claude-haiku-5.5', 'glm-5'] },
+  agy: { date: '2026-11-07', checked: '2026-11-07', models: ['claude-sonnet-5-5-high', 'claude-sonnet-5-5-low', 'gemini-3.8-flash-high', 'claude-opus-5-5-high'] },
+}
+
+/**
+ * helpers.py as the router sees it: the installed skill's folders, its files, and the python runs, answered from a config the
+ * `set` and `custom` commands change. `ran` holds every argv; `fail` makes a subcommand exit 1 with that stderr.
+ */
+const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o: { present?: boolean; oldScript?: string } = {}) => {
+  const present = o.present ?? true
+  const cfg = helperDefaults()
+  const ran: string[][] = []
+  const fail: Record<string, string> = {}
+  files.set(`${SKILL}/helpers.default.json`, JSON.stringify(helperDefaults()))
+  files.set(MODELS_FILE, JSON.stringify(OFFERED))
+  const result = (exitCode: number, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+  const setup = () => {
+    on('fs.list', (_, e) => {
+      const path = (e as { path: string }).path
+      if (present && path === `${HOME}/.claude/plugins/cache`) return { value: [dirEntry('mk')] }
+      if (present && path === CACHE) return { value: [dirEntry('0.5.1'), dirEntry('0.6.0')] }
+
+      return { deny: 'ENOENT' }
+    })
+    on('fs.exists', (_, e) => ({ value: present && (e as { path: string }).path.endsWith('/skills/herdr-delegate/scripts/helpers.py') }))
+    on('process.run', (_, e) => {
+      const argv = (e as { argv: string[] }).argv
+      ran.push(argv)
+      const [cmd, ...args] = argv.slice(2)
+      const kv = Object.fromEntries(args.filter(a => a.includes('=')).map(a => [a.split('=')[0]!, a.split('=')[1]!]))
+      if (cmd && fail[cmd]) return result(1, '', fail[cmd])
+      if (cmd === 'config') return o.oldScript === argv[1] ? result(2, 'usage: helpers.py ...') : result(0, JSON.stringify(cfg, null, 2))
+      if (cmd === 'set') {
+        Object.assign((cfg.providers as Record<string, { tiers: Record<string, object> }>)[args[0]!]!.tiers[args[1]!]!, kv)
+
+        return result(0, `${args[0]}-${args[1]}: ${kv.model} ${kv.effort} (saved)\n`)
+      }
+      if (cmd === 'custom') {
+        if (kv.model === 'glm-5') return result(1, '', `error: 'kiro-glm-5-${kv.effort}' cannot be made here\n`)
+        const name = `${args[0]}-${kv.model!.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${kv.effort}`
+        cfg.custom.push({ provider: args[0]!, model: kv.model!, effort: kv.effort! })
+
+        return result(0, `${name}\n`)
+      }
+      if (cmd === 'models') {
+        files.set(MODELS_FILE, JSON.stringify({ ...OFFERED, kiro: { ...OFFERED.kiro, date: '2026-11-08', checked: '2026-11-08' } }))
+
+        return result(0, 'kiro     5 models (2026-11-08)\nNOT OFFERED  kiro-light: claude-haiku-5.5 (provider kiro); change it with: helpers.py set\nNEWER        kiro-standard: claude-sonnet-5.5 -> claude-sonnet-5.6\n')
+      }
+
+      return result(2, 'usage')
+    })
+  }
+
+  return { setup, ran, fail, cfg, argsOf: (cmd: string) => ran.filter(a => a[2] === cmd) }
+}
+
+const hrun = (n: number, over: Partial<HistoryEntry> = {}): HistoryEntry => ({
+  key: `h${n}`,
+  tier: 'standard',
+  where: 'helper',
+  helper: 'kiro-standard',
+  cost: 0,
+  setupHeavy: false,
+  rerun: false,
+  at: `2026-11-0${Math.min(n, 9)}T10:00:00.000Z`,
+  ...over,
+})
+
+const HELPERS_ON = ['settings', { helpers: { enabled: true } }] as [string, unknown]
+
+test('Settings > Helpers: model and thinking pickers for each provider and tier, from helpers.py and its model list; a change runs set and reads the config again', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  await boot($, on, [HELPERS_ON], [], files, world.setup)
+  // The newest installed skill's helpers.py (0.6.0, not 0.5.1) was asked for its config at the start.
+  expect(world.ran[0]).toEqual(['python3', SCRIPT, 'config'])
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  const picker = async (key: string) => (await pane.find({ type: 'Select', key } as never)) as { props: { value: string; options: { value: string; label: string }[] } }
+  expect((await picker('helper-model:kiro:light')).props.options.map(o => o.value)).toEqual(['auto', 'claude-opus-5.5', 'claude-sonnet-5.5', 'claude-haiku-5.5', 'glm-5'])
+  expect((await picker('helper-model:kiro:light')).props.value).toBe('claude-haiku-5.5')
+  expect((await picker('helper-effort:kiro:light')).props.options.map(o => o.value)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+  expect((await picker('helper-effort:kiro:light')).props.value).toBe('low')
+  // Copilot lists its own levels; its Fusion tier is a router with a fixed command: no picker.
+  expect((await picker('helper-effort:copilot:deep')).props.options.map(o => o.value)).toEqual(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+  expect(await pane.find({ type: 'Select', key: 'helper-model:copilot:fusion-max' } as never)).toBeFalsy()
+  // agy's ids carry the level; the picker lists the models without it. A provider with no cached list shows the configured ones.
+  expect((await picker('helper-model:agy:standard')).props.options.map(o => o.value)).toEqual(['claude-sonnet-5-5', 'gemini-3.8-flash', 'claude-opus-5-5'])
+  expect((await picker('helper-model:copilot:light')).props.options.map(o => o.value)).toEqual(['gpt-6-luna', 'claude-sonnet-5.5', 'claude-opus-5.5'])
+  expect(await pane.find(text(/^models checked 2026-11-07$/))).toBeTruthy()
+
+  // A change runs set with both values, then reads the config again; the value differs from the shipped default, so it is marked.
+  const marks = (await pane.findAll(text(/^•$/))).length
+  await pane.select({ key: 'helper-effort:kiro:light', value: 'medium' } as never)
+  expect(world.ran.at(-2)).toEqual(['python3', SCRIPT, 'set', 'kiro', 'light', 'model=claude-haiku-5.5', 'effort=medium'])
+  expect(world.ran.at(-1)).toEqual(['python3', SCRIPT, 'config'])
+  expect((await picker('helper-effort:kiro:light')).props.value).toBe('medium')
+  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 1)
+  await pane.select({ key: 'helper-model:kiro:standard', value: 'claude-opus-5.5' } as never)
+  expect(world.ran.at(-2)).toEqual(['python3', SCRIPT, 'set', 'kiro', 'standard', 'model=claude-opus-5.5', 'effort=high'])
+  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 2)
+  // Back to the default: the mark goes.
+  await pane.select({ key: 'helper-effort:kiro:light', value: 'low' } as never)
+  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 1)
+
+  // helpers.py refuses (it validates the model and level): its message shows, and the config stays as it was.
+  world.fail.set = "error: effort 'xhigh' is not one of ['low'] for kiro"
+  const before = world.ran.length
+  await pane.select({ key: 'helper-effort:kiro:deep', value: 'xhigh' } as never)
+  expect(await pane.find(text(/^effort 'xhigh' is not one of/))).toBeTruthy()
+  expect(world.ran.length).toBe(before + 1)
+  expect((await picker('helper-effort:kiro:deep')).props.value).toBe('high')
+  await pane.unmount()
+})
+
+test('Check models runs helpers.py models; the models no longer offered and the newer ones show in the pane, with the day of the check', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  await boot($, on, [HELPERS_ON], [], files, world.setup)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^NOT OFFERED/))).toBeFalsy()
+  await pane.press({ key: 'helpers-check' })
+  expect(world.argsOf('models')).toEqual([['python3', SCRIPT, 'models']])
+  expect(await pane.find(text(/^NOT OFFERED kiro-light: claude-haiku-5\.5 \(provider kiro\)/))).toBeTruthy()
+  expect(await pane.find(text(/^NEWER kiro-standard: claude-sonnet-5\.5 -> claude-sonnet-5\.6$/))).toBeTruthy()
+  // The cache was written by helpers.py; the router read it again.
+  expect(await pane.find(text(/^models checked 2026-11-08$/))).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'helpers-check' } as never)).toBeTruthy()
+  await pane.unmount()
+})
+
+test('without helpers.py the pane says so and gives the command to run; a path set in Settings is used; an old helpers.py is named; steps keep the tier order', async ($, on) => {
+  const files = new Map<string, string>()
+  const old = '/opt/old/skills/herdr-delegate/scripts/helpers.py'
+  const world = helperWorld(on, files, { present: false, oldScript: old })
+  const choice = { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'medium' }
+  const { store, rows } = await boot($, on, [['settings', { helpers: { enabled: true, kinds: { summarize: choice } } }]], [], files, world.setup)
+  expect(world.ran).toEqual([])
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^helpers\.py was not found .*by hand: python3 <path to herdr-delegate>\/skills\/herdr-delegate\/scripts\/helpers\.py set <provider> <tier> model=<model> effort=<effort>$/))).toBeTruthy()
+  expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'helpers-check' } as never)).toBeFalsy()
+
+  // The router never guesses a model it cannot make a template for: the lead gets the tier order.
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const planned = await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Summarize', tier: 'standard', where: 'helper', kind: 'summarize' }] } as never)
+  expect(String(planned.result)).toContain('[h1] Summarize: standard, helper (kiro-standard → copilot-standard → agy-standard), kind summarize, planned')
+  expect(lastRow(rows)).toContain('# Model routing')
+  expect(world.ran).toEqual([])
+
+  // A path of its own: the config is read from there, and the shipped defaults beside it.
+  const own = '/opt/hp/skills/herdr-delegate/scripts/helpers.py'
+  files.set('/opt/hp/skills/herdr-delegate/helpers.default.json', JSON.stringify(helperDefaults()))
+  await pane.input({ key: 'helpers-script', text: own })
+  expect((store.get('settings') as { helpers: { script: string } }).helpers.script).toBe(own)
+  expect(world.argsOf('config').at(-1)).toEqual(['python3', own, 'config'])
+  expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeTruthy()
+  expect(JSON.parse(files.get(MIRROR) ?? '{}').settings.helpers.script).toBe(own)
+  // A path that is not a helpers.py is not taken.
+  await pane.input({ key: 'helpers-script', text: '/opt/hp/run.sh' })
+  expect((store.get('settings') as { helpers: { script: string } }).helpers.script).toBe(own)
+  // The choice stored for the kind is used now that a template can be made.
+  expect(String((await $.tool.call({ tool: PLAN, done: [] } as never)).result)).toContain('[h1] Summarize: standard, helper (launch kiro-claude-haiku-5-5-medium:')
+  // A helpers.py older than the config command: the pane names the fix.
+  await pane.input({ key: 'helpers-script', text: old })
+  expect(await pane.find(text(/^This helpers\.py has no config command: update herdr-delegate to 0\.6\.0 or later\.$/))).toBeTruthy()
+  expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeFalsy()
+  await pane.unmount()
+})
+
+test('advice for a helper tier that was weak: the next stronger rung of that provider, applied with set; runs from before keep the model they ran on', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  const past = [hrun(1, { verdict: 'weak' }), hrun(2, { verdict: 'weak' }), hrun(3, { verdict: 'ok' })]
+  const { store } = await boot($, on, [HELPERS_ON, ['history', past]], [], files, world.setup)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  // Kiro's ladder: Haiku low..high, Sonnet high, Opus high, xhigh, max: standard sits on Sonnet high, so Opus high is next.
+  expect(await pane.find(text(/^kiro-standard on claude-sonnet-5\.5\/high: 2 of 3 weak: raise kiro's standard helper from claude-sonnet-5\.5\/high to kiro claude-opus-5\.5\/high\.$/))).toBeTruthy()
+  await pane.press({ key: 'apply-helper:kiro:standard' })
+  expect(world.argsOf('set')).toEqual([['python3', SCRIPT, 'set', 'kiro', 'standard', 'model=claude-opus-5.5', 'effort=high']])
+  // The old runs are stamped with the model they ran on, so they do not count against the new one.
+  expect((store.get('history') as HistoryEntry[]).map(x => x.hrung)).toEqual(Array(3).fill({ provider: 'kiro', model: 'claude-sonnet-5.5', effort: 'high' }))
+  expect(await pane.find({ type: 'Button', key: 'apply-helper:kiro:standard' } as never)).toBeFalsy()
+  await pane.unmount()
+})
+
+test('advice for a kind on a helper is stored as that kind\'s helper choice: mirrored, marked, and reset', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  const past = [1, 2, 3].map(n => hrun(n, { helper: 'kiro-light', tier: 'light', kind: 'research', verdict: n < 3 ? 'weak' : 'ok' }))
+  const { store } = await boot($, on, [HELPERS_ON, ['history', past]], [], files, world.setup)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^research on kiro light: 2 of 3 weak: raise research's helper from claude-haiku-5\.5\/low to kiro claude-haiku-5\.5\/medium\.$/))).toBeTruthy()
+  await pane.press({ key: 'apply-helper-kind:research' })
+  const choice = { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'medium' }
+  expect((store.get('settings') as { helpers: { kinds: unknown } }).helpers.kinds).toEqual({ research: choice })
+  expect(JSON.parse(files.get(MIRROR) ?? '{}').settings.helpers.kinds).toEqual({ research: choice })
+  // Nothing in helpers.py changed: a kind's choice is the router's.
+  expect(world.argsOf('set')).toEqual([])
+  expect(await pane.find({ type: 'Button', key: 'apply-helper-kind:research' } as never)).toBeFalsy()
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^→ kiro claude-haiku-5\.5\/medium$/))).toBeTruthy()
+  await pane.press({ key: 'helper-kind-reset:research' })
+  expect((store.get('settings') as { helpers: { kinds: unknown } }).helpers.kinds).toEqual({})
+  await pane.unmount()
+})
+
+test('auto mode picks a helper model per step: the router makes the template, names it in the plan text, the rules and the card, and the lead is told when auto goes off', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  const learned = [1, 2, 3, 4, 5].map(n => hrun(n, { helper: 'kiro-claude-haiku-5-5-medium', kind: 'summarize', verdict: 'ok', hrung: { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'medium' } }))
+  const { store, rows } = await boot($, on, [['settings', { autoRoute: true, helpers: { enabled: true } }], ['history', learned]], [], files, world.setup)
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('give the picker that template first, then the tier')
+
+  const steps = [
+    { id: 'h1', title: 'Summarize papers', tier: 'standard', where: 'helper', kind: 'summarize' },
+    { id: 'h2', title: 'Look things up', tier: 'standard', where: 'helper', kind: 'search' },
+  ]
+  const planned = await $.tool.call({ tool: PLAN, steps } as never)
+  const order = 'kiro-standard → copilot-standard → agy-standard'
+  expect(String(planned.result)).toContain(`[h1] Summarize papers: standard, helper (launch kiro-claude-haiku-5-5-medium: claude-haiku-5.5 medium, auto: learned, 5 runs; else ${order}), kind summarize, planned`)
+  // A kind with no history keeps the tier order.
+  expect(String(planned.result)).toContain(`[h2] Look things up: standard, helper (${order}), kind search, planned`)
+  expect(world.argsOf('custom')).toEqual([['python3', SCRIPT, 'custom', 'kiro', 'model=claude-haiku-5.5', 'effort=medium']])
+  // Asked again, the same template is not made twice.
+  await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(world.argsOf('custom')).toHaveLength(1)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^launch kiro-claude-haiku-5-5-medium · claude-haiku-5\.5 medium · auto: learned, 5 runs$/))).toBeTruthy()
+
+  // Auto mode off: the step is back on the tier order, and the lead hears of it with the next plan result.
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'auto-route' })
+  expect((store.get('settings') as { autoRoute: boolean }).autoRoute).toBe(false)
+  const off = String((await $.tool.call({ tool: PLAN, done: [] } as never)).result)
+  expect(off).not.toContain('(launch ')
+  expect(off).toContain('[h1] Summarize papers: standard, helper (kiro-standard → copilot-standard → agy-standard), kind summarize, planned')
+  expect(off).toContain('Helper launch for step [h1] "Summarize papers" changed: no template is named any more; use the tier order.')
+  expect(await pane.find(text(/^launch kiro-claude-haiku/))).toBeFalsy()
+  // And on again: the template made earlier is reused, and the next turn carries the note.
+  await pane.press({ key: 'auto-route' })
+  expect(world.argsOf('custom')).toHaveLength(1)
+  await $.turn.start({ text: 'next', turnId: 't1' })
+  expect(lastRow(rows)).toContain('Helper launch for step [h1] \\"Summarize papers\\" changed: launch kiro-claude-haiku-5-5-medium (auto: learned, 5 runs)')
+  await pane.unmount()
+})
+
+test('a kind\'s stored helper choice names a tier template when one fits, a one-off otherwise, ignores a provider the tier does not list, and falls back when the template cannot be made; the run records the model', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  const kinds = {
+    a: { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'low' },
+    c: { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'high' },
+    d: { provider: 'kiro', model: 'glm-5', effort: 'low' },
+  }
+  const tiers = { light: 'kiro-light,copilot-light,agy-light', standard: 'copilot-standard,agy-standard', deep: 'kiro-deep' }
+  const { store } = await boot($, on, [['settings', { helpers: { enabled: true, tiers, kinds } }]], [], files, world.setup)
+  const planned = await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'l1', title: 'First', tier: 'light', where: 'helper', kind: 'a' },
+      { id: 's1', title: 'Second', tier: 'standard', where: 'helper', kind: 'a' },
+      { id: 'l2', title: 'Third', tier: 'light', where: 'helper', kind: 'c' },
+      { id: 'l3', title: 'Fourth', tier: 'light', where: 'helper', kind: 'd' },
+    ],
+  } as never)
+  const text1 = String(planned.result)
+  const light = 'kiro-light → copilot-light → agy-light'
+  // Kiro's light tier already is Haiku low: its own template, nothing made.
+  expect(text1).toContain(`[l1] First: light, helper (launch kiro-light: claude-haiku-5.5 low, its kind's choice; else ${light}), kind a, planned`)
+  // The standard tier lists no Kiro helper, so the choice is not used.
+  expect(text1).toContain('[s1] Second: standard, helper (copilot-standard → agy-standard), kind a, planned')
+  expect(text1).toContain(`[l2] Third: light, helper (launch kiro-claude-haiku-5-5-high: claude-haiku-5.5 high, its kind's choice; else ${light}), kind c, planned`)
+  // helpers.py refuses the one-off: the tier order stays, and the card says why.
+  expect(text1).toContain(`[l3] Fourth: light, helper (${light}), kind d, planned`)
+  expect(world.argsOf('custom').map(a => a[4])).toEqual(['model=claude-haiku-5.5', 'model=glm-5'])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^no template for glm-5 low \('kiro-glm-5-low' cannot be made here\): the tier order applies$/))).toBeTruthy()
+
+  // The lead launches them; each finished run records the provider, model and level it ran on.
+  await $.tool.call({ tool: PLAN, start: [{ id: 'l1', helper: 'kiro-light', model: 'Claude Haiku 5.5' }, { id: 'l2', helper: 'kiro-claude-haiku-5-5-high' }, { id: 'l3', helper: 'kiro-light' }] } as never)
+  await $.tool.call({ tool: PLAN, done: [{ id: 'l1', verdict: 'ok' }, { id: 'l2', verdict: 'weak', why: 'thin' }, { id: 'l3', verdict: 'ok' }] } as never)
+  const past = store.get('history') as HistoryEntry[]
+  expect(past.map(x => [x.helper, x.hrung])).toEqual([
+    ['kiro-light', { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'low' }],
+    ['kiro-claude-haiku-5-5-high', { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'high' }],
+    ['kiro-light', { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'low' }],
+  ])
+  await pane.unmount()
+})
+
+test('helper ladder, advice, learned rungs and template names, worked out from the config', () => {
+  const cfg = helperDefaults() as never
+  const ladder = (p: string, cache?: never) => helperLadder(cfg, p, cache).map(r => `${r.model}/${r.effort}`)
+  // Tier order; each model from the lowest level a tier gives it up to high, the top model on to the provider's highest.
+  expect(ladder('kiro')).toEqual(['claude-haiku-5.5/low', 'claude-haiku-5.5/medium', 'claude-haiku-5.5/high', 'claude-sonnet-5.5/high', 'claude-opus-5.5/high', 'claude-opus-5.5/xhigh', 'claude-opus-5.5/max'])
+  expect(ladder('agy')).toEqual(['gemini-3.8-flash/high', 'claude-sonnet-5-5/high', 'claude-opus-5-5/high'])
+  expect(ladder('copilot')[0]).toBe('gpt-6-luna/high')
+  // With a credit multiplier for every one of the models, it orders them: here Sonnet is cheaper than Haiku.
+  const credits = { kiro: { credits: { 'claude-haiku-5.5': 2, 'claude-sonnet-5.5': 1.3, 'claude-opus-5.5': 3 } } } as never
+  expect(ladder('kiro', credits).slice(0, 2)).toEqual(['claude-sonnet-5.5/high', 'claude-haiku-5.5/low'])
+  // Credits for only some of them: the tier order stays.
+  expect(ladder('kiro', { kiro: { credits: { 'claude-haiku-5.5': 2 } } } as never)[0]).toBe('claude-haiku-5.5/low')
+  expect(helperStep(helperLadder(cfg, 'kiro'), { model: 'claude-sonnet-5.5', effort: 'high' }, 1)).toEqual({ model: 'claude-opus-5.5', effort: 'high' })
+  expect(helperStep(helperLadder(cfg, 'kiro'), { model: 'claude-sonnet-5.5', effort: 'high' }, -1)).toEqual({ model: 'claude-haiku-5.5', effort: 'high' })
+  expect(helperStep(helperLadder(cfg, 'kiro'), { model: 'claude-opus-5.5', effort: 'max' }, 1)).toBeUndefined()
+  expect(helperStep(helperLadder(cfg, 'kiro'), { model: 'glm-5', effort: 'low' }, 1)).toBeUndefined()
+
+  const set = mergeSettings({})
+  const advice = (h: HistoryEntry[], s = set) => helperSuggestions(h, s, cfg).map(a => `${a.provider}/${a.tier ?? ''}/${a.kind ?? ''}: ${a.isRaise ? 'up' : 'down'} to ${a.to.model}/${a.to.effort}`)
+  const weak = (n: number, over: Partial<HistoryEntry> = {}) => hrun(n, { verdict: 'weak', ...over })
+  // Under three runs: nothing. Two of three weak: up. A run that was redone counts as weak whatever its verdict said.
+  expect(advice([weak(1), weak(2)])).toEqual([])
+  expect(advice([weak(1), weak(2), hrun(3, { verdict: 'ok' })])).toEqual(['kiro/standard/: up to claude-opus-5.5/high'])
+  expect(advice([hrun(1, { verdict: 'ok', rerun: true }), hrun(2, { verdict: 'ok', rerun: true }), hrun(3, { verdict: 'ok' })])).toEqual(['kiro/standard/: up to claude-opus-5.5/high'])
+  // Overkill at half, none of the last three weak: down. At the bottom of the ladder there is nothing lower.
+  const over = (n: number, over: Partial<HistoryEntry> = {}) => hrun(n, { verdict: 'overkill', ...over })
+  expect(advice([over(1), over(2), hrun(3, { verdict: 'ok' })])).toEqual(['kiro/standard/: down to claude-haiku-5.5/high'])
+  expect(advice([over(1), over(2), weak(3)])).toEqual([])
+  expect(advice([over(1, { helper: 'kiro-light' }), over(2, { helper: 'kiro-light' }), over(3, { helper: 'kiro-light' })])).toEqual([])
+  // A run on another model than the tier has now does not count; a kind is judged apart from the tier's runs without one.
+  expect(advice([weak(1, { hrung: { provider: 'kiro', model: 'claude-opus-5.5', effort: 'high' } }), weak(2), weak(3)])).toEqual([])
+  expect(advice([1, 2, 3].map(n => weak(n, { kind: 'review' })))).toEqual(['kiro/standard/review: up to claude-opus-5.5/high'])
+  // A kind with a choice of its own is judged on the rung the choice names.
+  const own = mergeSettings({ helpers: { kinds: { review: { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'low' } } } } as never)
+  expect(advice([1, 2, 3].map(n => weak(n, { kind: 'review', helper: 'kiro-claude-haiku-5-5-low', hrung: { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'low' } })), own)).toEqual(['kiro//review: up to claude-haiku-5.5/medium'])
+  // Entries from before the router recorded a model read it from the template's tier; no config, no advice.
+  expect(helperSuggestions([weak(1), weak(2), weak(3)], set, undefined)).toEqual([])
+
+  // Learned: the cheapest rung per provider with enough runs and enough ok (5 and 90 by default).
+  const ok = (n: number, r: { model: string; effort: string }, over: Partial<HistoryEntry> = {}) => hrun(n, { kind: 'summarize', verdict: 'ok', helper: 'x', hrung: { provider: 'kiro', ...r }, ...over })
+  const five = (r: { model: string; effort: string }) => [1, 2, 3, 4, 5].map(n => ok(n, r))
+  const learnedOf = (h: HistoryEntry[]) => learnedHelpers(h, set, cfg).summarize?.map(c => `${c.provider} ${c.model}/${c.effort} ${c.n}`)
+  expect(learnedOf([...five({ model: 'claude-sonnet-5.5', effort: 'high' }), ...five({ model: 'claude-haiku-5.5', effort: 'medium' })])).toEqual(['kiro claude-haiku-5.5/medium 5', 'kiro claude-sonnet-5.5/high 5'])
+  expect(learnedOf([...five({ model: 'claude-haiku-5.5', effort: 'medium' }).slice(0, 4)])).toBeUndefined()
+  expect(learnedOf([...five({ model: 'claude-haiku-5.5', effort: 'medium' }).slice(0, 4), ok(6, { model: 'claude-haiku-5.5', effort: 'medium' }, { verdict: 'weak' })])).toBeUndefined()
+  // A rung that is not on the provider's ladder is not offered.
+  expect(learnedOf(five({ model: 'glm-5', effort: 'low' }))).toBeUndefined()
+
+  // Picks: auto's rung for the kind first, then the kind's choice; only a provider the tier lists, in the tier's order; never a step that started.
+  const learnedPick = { summarize: [{ provider: 'kiro', model: 'claude-haiku-5.5', effort: 'medium', n: 5 }, { provider: 'copilot', model: 'gpt-6-luna', effort: 'high', n: 6 }] }
+  const hstep = { ...newStep('h1', 'x', 'standard', 'helper'), kind: 'summarize' }
+  expect(helperPickFor(hstep, set, learnedPick, cfg)).toEqual({ provider: 'kiro', model: 'claude-haiku-5.5', effort: 'medium', source: 'auto', n: 5 })
+  expect(helperPickFor(hstep, mergeSettings({ helpers: { tiers: { standard: 'copilot-standard,kiro-standard' } } } as never), learnedPick, cfg)).toMatchObject({ provider: 'copilot', source: 'auto', n: 6 })
+  expect(helperPickFor(hstep, mergeSettings({ helpers: { tiers: { standard: 'agy-standard' } } } as never), learnedPick, cfg)).toBeUndefined()
+  const withChoice = mergeSettings({ helpers: { kinds: { summarize: { provider: 'agy', model: 'claude-opus-5-5', effort: 'high' } } } } as never)
+  expect(helperPickFor(hstep, withChoice, undefined, cfg)).toEqual({ provider: 'agy', model: 'claude-opus-5-5', effort: 'high', source: 'kind' })
+  expect(helperPickFor(hstep, withChoice, learnedPick, cfg)).toMatchObject({ source: 'auto' })
+  expect(helperPickFor({ ...hstep, status: 'running' }, withChoice, undefined, cfg)).toBeUndefined()
+  expect(helperPickFor({ ...hstep, helper: 'kiro-standard' }, withChoice, undefined, cfg)).toBeUndefined()
+  expect(helperPickFor({ ...hstep, kind: undefined }, withChoice, learnedPick, cfg)).toBeUndefined()
+  expect(helperPickFor({ ...hstep, where: 'agent' }, withChoice, learnedPick, cfg)).toBeUndefined()
+
+  // Names: a tier template, a custom one, and the template that already has a model and level.
+  expect(templateRung(cfg, 'kiro-standard')).toEqual({ provider: 'kiro', tier: 'standard', model: 'claude-sonnet-5.5', effort: 'high' })
+  expect(templateRung(cfg, 'copilot-fusion-max')).toBeUndefined()
+  expect(customTemplate('kiro', 'claude-haiku-5.5', 'low')).toBe('kiro-claude-haiku-5-5-low')
+  expect(templateRung({ ...(cfg as object), custom: [{ provider: 'kiro', model: 'claude-haiku-5.5', effort: 'high' }] } as never, 'kiro-claude-haiku-5-5-high')).toEqual({ provider: 'kiro', model: 'claude-haiku-5.5', effort: 'high' })
+  expect(templateOfRung(cfg, 'copilot', { model: 'claude-sonnet-5.5', effort: 'high' }, 'deep')).toBe('copilot-standard')
+  expect(templateOfRung(cfg, 'kiro', { model: 'claude-haiku-5.5', effort: 'high' })).toBeUndefined()
+
+  // Models and the check: ids without the level where the provider's carry it; the lines worth showing; the day.
+  expect(baseModelId(cfg, 'agy', 'claude-sonnet-5-5-high')).toBe('claude-sonnet-5-5')
+  expect(baseModelId(cfg, 'kiro', 'claude-haiku-5.5')).toBe('claude-haiku-5.5')
+  expect(offeredModels(cfg, OFFERED as never, 'kiro', ['custom-x']).at(-1)).toBe('custom-x')
+  expect(modelWarnings('kiro  5 models\nNOT OFFERED  kiro-light: x\nNEWER        kiro-deep: a -> b\ncopilot  ERROR: boom\nevery configured model is offered')).toEqual(['NOT OFFERED kiro-light: x', 'NEWER kiro-deep: a -> b', 'copilot ERROR: boom'])
+  expect(modelsChecked({ kiro: { checked: '2026-11-07' }, agy: { date: '2026-11-08' } })).toBe('2026-11-08')
+  expect(modelsChecked(undefined)).toBeUndefined()
+  expect(compareVersions('0.6.0', '0.5.1')).toBeGreaterThan(0)
+  expect(compareVersions('0.10.0', '0.9.9')).toBeGreaterThan(0)
+  expect(compareVersions('1.0', '1.0.0')).toBe(0)
+})
+
+test('per-kind helper choices from storage keep only a provider, model and level of plain words', () => {
+  const good = { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'low' }
+  const set = mergeSettings({ helpers: { kinds: { ok: good, bad1: { provider: 'kiro; rm -rf /', model: 'x', effort: 'low' }, bad2: 'kiro', bad3: { provider: 'kiro' } }, script: '  /x/helpers.py ' } } as never)
+  expect(set.helpers.kinds).toEqual({ ok: good })
+  expect(set.helpers.script).toBe('/x/helpers.py')
+  expect(mergeSettings({}).helpers).toMatchObject({ kinds: {}, script: '' })
+  // Only a file called helpers.py is run with python: anything else stored (a mirror file anyone could edit) is dropped.
+  expect(mergeSettings({ helpers: { script: '/x/evil.sh' } } as never).helpers.script).toBe('')
+  expect(mergeSettings({ helpers: { script: 'C:\\skills\\helpers.py' } } as never).helpers.script).toBe('C:\\skills\\helpers.py')
 })

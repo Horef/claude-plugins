@@ -23,6 +23,8 @@ export const DEFAULT_SETTINGS: Settings = {
       deep: 'kiro-deep,copilot-deep,agy-deep',
     },
     fusion: 'off',
+    script: '',
+    kinds: {},
   },
   hereEffort: { enabled: false, maxContext: 40_000 },
   kinds: {},
