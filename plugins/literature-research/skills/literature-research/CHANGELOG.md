@@ -1,0 +1,8 @@
+# Changelog: literature-research
+
+Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
+
+## 0.1.0 (2026-11-06)
+- Created at the owner's request (2026-11-04 to 06): literature research and claim verification as a building block (frame, search with a log, chase citations, screen, evidence ledger, fresh checkers, synthesis). Owner choices: sources PubMed, Semantic Scholar, arXiv, OpenAlex, the web, DEVONthink when reachable; paywalled papers from DEVONthink, else listed for the owner; output in docs/literature/<topic>/.
+- `references/search-rules.md` distilled from Cochrane ch. 4, PRISMA-S, PRISMA 2020, Garritty 2021, Hirt 2023, Greenhalgh & Peacock 2005, Jergas & Baethge 2015, Greenberg 2009, Tripathy 2014, Pautasso 2013 (Copilot helper, Sonnet 5.5; reviewed). `scripts/lit.py` (Copilot helper; reviewed).
+- Piloted on a real question (NMDA at dLGN -> L2/3 synapses, simple_complex_v1): 54 logged queries, 829 candidates, 15 ledger rows, a fresh checker from another model family (GPT-6 Luna) confirmed 6, corrected 1, rejected 1, found 1 indirect. Fixed from the pilot before release: DEVONthink and folder matches need DOI or a 0.9 title match plus a page-1 identity check (four wrong PDFs in the pilot); downloads must be real PDFs (Cloudflare pages were saved as PDFs); a Europe PMC full-text route; keys from DEVONthink names, never "nd"; bulk screening; PubMed boolean-query hint; S2 key message; SKILL.md says checkers confirm the file's identity first. `evals/run.py`: 43 offline tests pass; judged cases written, not yet run blind (provisional).

@@ -1,0 +1,78 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/EUVnwnm7geuJ4kcW3rX33cwqdBA</id>
+  <title>arXiv Query: search_query=all:simple AND all:complex AND all:cells&amp;id_list=&amp;start=0&amp;max_results=3</title>
+  <updated>2026-11-05T20:58:37Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=all:simple+AND+(all:complex+AND+all:cells)&amp;start=0&amp;max_results=3&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>3</opensearch:itemsPerPage>
+  <opensearch:totalResults>906</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2010.00743v4</id>
+    <title>Cell Complex Neural Networks</title>
+    <updated>2021-03-02T03:50:54Z</updated>
+    <link href="https://arxiv.org/abs/2010.00743v4" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2010.00743v4" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Cell complexes are topological spaces constructed from simple blocks called cells. They generalize graphs, simplicial complexes, and polyhedral complexes that form important domains for practical applications. They also provide a combinatorial formalism that allows the inclusion of complicated relationships of restrictive structures such as graphs and meshes. In this paper, we propose \textbf{Cell Complexes Neural Networks (CXNs)}, a general, combinatorial and unifying construction for performing neural network-type computations on cell complexes. We introduce an inter-cellular message passing scheme on cell complexes that takes the topology of the underlying space into account and generalizes message passing scheme to graphs. Finally, we introduce a unified cell complex encoder-decoder framework that enables learning representation of cells for a given complex inside the Euclidean spaces. In particular, we show how our cell complex autoencoder construction can give, in the special case \textbf{cell2vec}, a generalization for node2vec.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CV" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.AT" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-10-02T01:38:12Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Mustafa Hajij</name>
+    </author>
+    <author>
+      <name>Kyle Istvan</name>
+    </author>
+    <author>
+      <name>Ghada Zamzmi</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2406.01999v2</id>
+    <title>Random Abstract Cell Complexes</title>
+    <updated>2025-11-20T13:46:37Z</updated>
+    <link href="https://arxiv.org/abs/2406.01999v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2406.01999v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We define a model for random (abstract) cell complexes (CCs), similiar to the well-known Erdős-Rényi model for graphs and its extensions for simplicial complexes. To build a random cell complex, we first draw from an Erdős-Rényi graph, and consecutively augment the graph with cells for each dimension with a specified probability. As the number of possible cells increases combinatorially -- e.g., 2-cells can be represented as cycles, or permutations -- we derive an approximate sampling algorithm for this model limited to two-dimensional abstract cell complexes. As a basis for this algorithm, we first introduce a spanning-tree-based method that samples simple cycles and allows the efficient approximation of various properties, most notably the probability of occurence of a given cycle. This approximation is of independent interest as it enables the approximation of a wide variety of cycle-related graph statistics using importance sampling. We use this to approximate the number of cycles of a given length on a graph, allowing us to calculate the sampling probability to arrive at a desired expected number of sampled 2-cells. The probability approximation also trivially leads to a sampling algorithm for $2$-cells with a desired sampling probability. We provide some initial analysis into the properties of random CCs drawn from this model. We further showcase practical applications for our random CCs as null models, and in the context of (random) liftings of graphs to cell complexes. The cycle sampling, cycle count estimation, and combined cell sampling algorithms are available in the package `py-raccoon` on the Python Packaging Index.</summary>
+    <category term="cs.DS" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DM" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.SI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.AT" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-06-04T06:32:34Z</published>
+    <arxiv:comment>14 pages, 10 figures (plus appendix). For evaluation code, see https://github.com/josefhoppe/random-abstract-cell-complexes</arxiv:comment>
+    <arxiv:primary_category term="cs.DS"/>
+    <author>
+      <name>Josef Hoppe</name>
+    </author>
+    <author>
+      <name>Michael T. Schaub</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2012.09027v1</id>
+    <title>A Differential Model of the Complex Cell</title>
+    <updated>2020-12-09T10:23:23Z</updated>
+    <link href="https://arxiv.org/abs/2012.09027v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2012.09027v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The receptive fields of simple cells in the visual cortex can be understood as linear filters. These filters can be modelled by Gabor functions, or by Gaussian derivatives. Gabor functions can also be combined in an `energy model' of the complex cell response. This paper proposes an alternative model of the complex cell, based on Gaussian derivatives. It is most important to account for the insensitivity of the complex response to small shifts of the image. The new model uses a linear combination of the first few derivative filters, at a single position, to approximate the first derivative filter, at a series of adjacent positions. The maximum response, over all positions, gives a signal that is insensitive to small shifts of the image. This model, unlike previous approaches, is based on the scale space theory of visual processing. In particular, the complex cell is built from filters that respond to the \twod\ differential structure of the image. The computational aspects of the new model are studied in one and two dimensions, using the steerability of the Gaussian derivatives. The response of the model to basic images, such as edges and gratings, is derived formally. The response to natural images is also evaluated, using statistical measures of shift insensitivity. The relevance of the new model to the cortical image representation is discussed.</summary>
+    <category term="q-bio.NC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CV" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-12-09T10:23:23Z</published>
+    <arxiv:primary_category term="q-bio.NC"/>
+    <arxiv:journal_ref>Neural Computation, 23(9), 2011</arxiv:journal_ref>
+    <author>
+      <name>Miles Hansard</name>
+    </author>
+    <author>
+      <name>Radu Horaud</name>
+    </author>
+    <arxiv:doi>10.1162/NECO_a_00163</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1162/NECO_a_00163" title="doi"/>
+  </entry>
+</feed>

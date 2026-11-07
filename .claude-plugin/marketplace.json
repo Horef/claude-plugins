@@ -76,6 +76,12 @@
       "source": "./plugins/local-run-queue",
       "description": "Run many local simulation or analysis jobs in parallel under a private-memory budget: measure each job's whole process tree (macOS footprint, Linux PSS; never RSS), admit jobs by estimates taken from measured peaks, stop and requeue the newest job above a kill line, chain dependent jobs, survive restarts and the launching agent's exit, and change budget, priorities or estimates while it runs. Use when a batch of local runs (sweeps, calibrations, simulations) must fit a machine's memory, when parallel runs need a memory estimate, or when a previous queue over- or under-used memory.",
       "category": "general"
+    },
+    {
+      "name": "literature-research",
+      "source": "./plugins/literature-research",
+      "description": "Literature research and claim verification for any research question: frame the question and the decision it serves, search several sources in parallel (PubMed, Semantic Scholar, arXiv, OpenAlex, the web, DEVONthink when on the owner's Mac) with a reproducible search log and citation chasing, record every finding in an evidence ledger (value, units, species, preparation, source, page, verbatim quote, evidence type) before any prose, have fresh checkers re-read each cited passage, then synthesise the answer with conflicts and costed gaps. Use for parameter lookups, mechanism or state-of-the-field reviews, novelty or prior-art checks, verifying a claim or citation, and finding methods; not for writing the final paper (use research-writing).",
+      "category": "general"
     }
   ]
 }

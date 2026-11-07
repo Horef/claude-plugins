@@ -1,0 +1,1 @@
+{"header":{"type":"esearch","version":"0.3"},"esearchresult":{"count":"2","retmax":"2","retstart":"0","idlist":["15338009","11934453"],"translationset":[{"from":"simple","to":"\"simple\"[All Fields] OR \"simples\"[All Fields]"}],"querytranslation":"(\"simple\"[All Fields] OR \"simples\"[All Fields]) AND \"complex cells\"[Title] AND \"Mechler\"[All Fields]"}}

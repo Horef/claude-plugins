@@ -1,0 +1,37 @@
+{
+  "_note": "Hand-written to the documented Semantic Scholar Graph API schema (paper/search); a live recording was rate limited (HTTP 429) when the fixtures were made. run.py --live exercises the real endpoint.",
+  "total": 3,
+  "offset": 0,
+  "data": [
+    {
+      "paperId": "5f0c1e0a9d3b4c6a8e1f2a3b4c5d6e7f80910111",
+      "externalIds": {"DOI": "10.1016/S0042-6989(02)00025-1", "PubMed": "11934453", "MAG": "2166487970"},
+      "title": "On the classification of simple and complex cells",
+      "abstract": "Simple and complex cells are the two classes of neurons that Hubel and Wiesel distinguished in primary visual cortex.",
+      "venue": "Vision Research",
+      "year": 2002,
+      "authors": [{"authorId": "1", "name": "F. Mechler"}, {"authorId": "2", "name": "D. Ringach"}],
+      "openAccessPdf": {"url": "https://www.sciencedirect.com/science/article/pii/S0042698902000251/pdf", "status": "BRONZE"}
+    },
+    {
+      "paperId": "a1b2c3d4e5f60718293a4b5c6d7e8f9001122334",
+      "externalIds": {},
+      "title": "The contribution of spike threshold to the dichotomy of cortical simple and complex cells.",
+      "abstract": null,
+      "venue": "Nature Neuroscience",
+      "year": 2004,
+      "authors": [{"authorId": "3", "name": "Nicholas J. Priebe"}, {"authorId": "4", "name": "Ferenc Mechler"}],
+      "openAccessPdf": null
+    },
+    {
+      "paperId": "0011223344556677889900aabbccddeeff001122",
+      "externalIds": {"DOI": "10.1162/NECO_a_00163", "ArXiv": "2012.09027"},
+      "title": "A Differential Model of the Complex Cell",
+      "abstract": "The receptive fields of simple cells in the visual cortex can be understood as linear filters.",
+      "venue": "Neural Computation",
+      "year": 2011,
+      "authors": [{"authorId": "5", "name": "Miles Hansard"}, {"authorId": "6", "name": "Radu Horaud"}],
+      "openAccessPdf": {"url": "https://arxiv.org/pdf/2012.09027", "status": "GREEN"}
+    }
+  ]
+}

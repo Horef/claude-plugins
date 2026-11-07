@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article">
+  <front>
+    <article-meta>
+      <title-group><article-title>On the classification of simple and complex cells</article-title></title-group>
+      <abstract><p>We show that the modulation ratio distribution of cat primary visual cortex is bimodal.</p></abstract>
+    </article-meta>
+  </front>
+  <body>
+    <sec>
+      <title>Introduction</title>
+      <p>Simple and complex cells were defined by Hubel and Wiesel<xref ref-type="bibr" rid="B1">1</xref> on the basis of receptive field structure.</p>
+    </sec>
+    <sec>
+      <title>Results</title>
+      <sec>
+        <title>Modulation ratio</title>
+        <p>The distribution of modulation ratios is bimodal, with a clear gap between the two groups of cells.</p>
+        <table-wrap id="T1">
+          <label>Table 1</label>
+          <caption><p>Cells per group</p></caption>
+          <table><thead><tr><th>Group</th><th>n</th></tr></thead>
+          <tbody><tr><td>simple</td><td>42</td></tr><tr><td>complex</td><td>57</td></tr></tbody></table>
+        </table-wrap>
+      </sec>
+    </sec>
+  </body>
+  <back><ref-list><ref id="B1"><mixed-citation>Hubel DH, Wiesel TN. 1962.</mixed-citation></ref></ref-list></back>
+</article>
