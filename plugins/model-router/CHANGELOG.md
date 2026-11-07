@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.19.0 (2026-11-07)
+- Helper steps show the helper's thinking level (reported by the lead or read from its template), pane edits to a running plan wait in a draft until Send changes (Discard drops them), auto mode's minimum runs and ok-share are settings, 5 runs and 90% by default (owner's request 2026-11-07)
+
 ## 0.18.0 (2026-11-07)
 - Verdicts and facts per delegated run, kinds of work listed in the rules, learned advice per kind with Apply (kind defaults), auto mode, an open model list with editable prices and a ladder built from it, and a router note asking for a strange-loop observation when a kind's advice first reaches its threshold (owner's request 2026-11-07) (O1)
 

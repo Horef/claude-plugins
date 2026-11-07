@@ -37,5 +37,13 @@ picked = [n for n in order if helpers.usable(n, {}, _dt.date(2026, 11, 6))][0]
 ok = picked == "agy-argon" and [n for n in order if helpers.usable(n, {"agy": "login"}, _dt.date(2026, 11, 6))] == ["copilot-argon"]
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} pick argon takes agy, falls to copilot when agy is out")
+# A login mark clears itself once the provider reports a login (O11); a failed check keeps it.
+helpers.save = lambda state: None
+helpers.logged_in = lambda p: p == "kiro"
+state = {"kiro": "login", "agy": "login", "copilot": "2099-01-01"}
+cleared = helpers.refresh_logins(state)
+ok = cleared == ["kiro"] and state == {"agy": "login", "copilot": "2099-01-01"}
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} login mark clears when logged in again: {state}")
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)

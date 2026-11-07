@@ -1,10 +1,10 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperTotals, HelperUsage, HistoryEntry, Model, PlanNode, Price, Rung, Settings, Step, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import type { Effort, HelperTotals, HelperUsage, HistoryEntry, Model, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
 import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.18.0'
+export const VERSION = '0.19.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -196,6 +196,9 @@ export const moveHelper = (list: readonly string[], index: number, by: -1 | 1) =
 /** One string for every tier's helper order, to tell whether the orders the agent knows are still current. */
 export const helperSignature = (set: Settings) => TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')
 
+/** A whole number within [lo, hi], else undefined (a stored value that is missing or unusable). */
+const wholeIn = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : undefined)
+
 /** Settings as stored, which may be missing parts that older versions did not have, filled from the defaults. */
 export const mergeSettings = (stored: Partial<Settings> | undefined): Settings => ({
   tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
@@ -210,6 +213,8 @@ export const mergeSettings = (stored: Partial<Settings> | undefined): Settings =
   hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
   kinds: { ...(stored?.kinds && typeof stored.kinds === 'object' ? stored.kinds : {}) },
   autoRoute: stored?.autoRoute === true,
+  autoMinRuns: wholeIn(stored?.autoMinRuns, 1, 1000) ?? DEFAULT_SETTINGS.autoMinRuns,
+  autoOkPercent: wholeIn(stored?.autoOkPercent, 1, 100) ?? DEFAULT_SETTINGS.autoOkPercent,
   models: Array.isArray(stored?.models) ? stored.models.filter(m => typeof m === 'string' && !MODELS.includes(m)) : [],
   prices: { ...(stored?.prices && typeof stored.prices === 'object' ? stored.prices : {}) },
 })
@@ -380,7 +385,61 @@ export const EMPTY_HELPER: HelperTotals = { steps: 0, ms: 0, usage: [] }
 export const isHelperRun = (s: Step) => s.where === 'helper' || !!s.helper
 
 /** The helper a step runs on, as its card shows it: "copilot-standard · Claude Sonnet 5.5". */
-export const helperName = (s: Step) => (s.helper ? `${s.helper}${s.helperModel ? ` · ${s.helperModel}` : ''}` : '')
+export const helperName = (s: Step) =>
+  s.helper ? `${s.helper}${s.helperModel ? ` · ${s.helperModel}` : ''}${s.helperEffort ? ` · ${s.helperEffort}` : ''}` : ''
+
+/** A helper template name that is safe to build a file path from. */
+export const isTemplateName = (v: string) => /^[a-z0-9][a-z0-9._-]{0,60}$/i.test(v)
+
+/** A thinking level as the lead reported it from the helper's screen: a short word or two, else nothing. */
+export const asHelperEffort = (v: unknown) => {
+  const t = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : ''
+
+  return t && t.length <= 20 ? t : undefined
+}
+
+/**
+ * The thinking level a helper template sets on its command line (front matter `command:`): Kiro's `--effort X`,
+ * Copilot's `--reasoning-effort X`; for agy, the level its model id ends with (`gemini-4-argon-high`). Nothing when it sets none.
+ */
+export const effortOfTemplate = (text: string) => {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ''
+  const command = /^command:\s*(.+)$/m.exec(front)?.[1] ?? ''
+  const flag = /(?:^|\s)--(?:reasoning-)?effort(?:=|\s+)([a-z]+)\b/i.exec(command)?.[1]?.toLowerCase()
+  if (flag) return EFFORTS.includes(flag as Effort) ? flag : undefined
+  if (!/(?:^|\s)agy\s/.test(command)) return undefined
+  const model = /--model(?:=|\s+)(\S+)/.exec(command)?.[1] ?? ''
+
+  return /-(low|medium|high|xhigh|max)$/i.exec(model)?.[1]?.toLowerCase()
+}
+
+// --- Pane edits to a running plan, held back until sent --------------------------
+
+/** A step as the pane shows it: the plan's values with its unsent edits laid over. */
+export const applyDraft = (s: Step, d: StepDraft | undefined): Step =>
+  !d
+    ? s
+    : {
+        ...s,
+        ...(d.where !== undefined ? { where: d.where } : {}),
+        ...(d.tier !== undefined ? { tier: d.tier } : {}),
+        ...('model' in d ? { model: d.model ?? undefined } : {}),
+        ...('effort' in d ? { effort: d.effort ?? undefined } : {}),
+      }
+
+/** An edit with the fields that equal the plan's own values removed (an edit put back is no edit); undefined when nothing is left. */
+export const trimDraft = (s: Step, d: StepDraft): StepDraft | undefined => {
+  const out: StepDraft = {}
+  if (d.where !== undefined && d.where !== s.where) out.where = d.where
+  if (d.tier !== undefined && d.tier !== s.tier) out.tier = d.tier
+  if ('model' in d && (d.model ?? undefined) !== s.model) out.model = d.model ?? null
+  if ('effort' in d && (d.effort ?? undefined) !== s.effort) out.effort = d.effort ?? null
+
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/** How many values the draft changes. */
+export const draftCount = (d: Record<string, StepDraft>) => Object.values(d).reduce((n, x) => n + Object.keys(x).length, 0)
 
 /** A usage report from the plan tool, if it is one: provider, a number and a unit. */
 export const asHelperUsage = (v: unknown): HelperUsage | undefined => {
@@ -597,7 +656,7 @@ export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggesti
   return [...byTier, ...byKind]
 }
 
-/** Auto mode: per kind, the cheapest rung that did it well (ok in at least 80% of at least 3 runs there). */
+/** Auto mode: per kind, the cheapest rung that did it well (ok in at least `autoOkPercent` of at least `autoMinRuns` runs there). */
 export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned => {
   const out: Learned = {}
   const runs = h.filter(isAgentRun)
@@ -605,7 +664,7 @@ export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned
     const by = new Map<string, HistoryEntry[]>()
     for (const x of runs.filter(r => r.kind === kind)) by.set(entryRung(x), [...(by.get(entryRung(x)) ?? []), x])
     const good = [...by.values()]
-      .filter(xs => xs.length >= LEARN.minRuns && xs.filter(isOk).length / xs.length >= LEARN.autoOkShare)
+      .filter(xs => xs.length >= set.autoMinRuns && (xs.filter(isOk).length * 100) / xs.length >= set.autoOkPercent)
       .map(xs => ({ rung: { model: xs[0]!.model!, effort: xs[0]!.effort! }, n: xs.length }))
       .filter(g => rank(g.rung, set) !== undefined)
       .sort((a, b) => rank(a.rung, set)! - rank(b.rung, set)!)

@@ -2,7 +2,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { EMPTY_HELPER, EMPTY_USAGE, asHelperUsage, depthOf, fmtCost, fmtMin, genomeNote, helperFacts, helperLine, helperTotalsOf, ladderOf, learnedRungs, mergeSettings, modelOf, nextRung, parsePrice, rollupOf, settleGroups, suggestions } from '../hooks/logic'
+import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLine, helperTotalsOf, ladderOf, learnedRungs, mergeSettings, modelOf, newStep, nextRung, parsePrice, rollupOf, settleGroups, suggestions, trimDraft } from '../hooks/logic'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -272,6 +272,9 @@ test('in the desktop app the rules are written into the chat, and return with th
 type Registered = { inputSchema?: { properties?: { steps?: { items?: { properties?: { where?: { enum?: string[] } } } } } } }
 
 /** The engine mocks the tests below share; `init` is what the store holds when the chat starts. */
+// Answers the approval question of a plan when a test sets it (reset by boot).
+let asker: ((e: { questions: { question: string }[] }) => Promise<unknown>) | undefined
+
 const boot = async (
   $: Parameters<TestBody>[0],
   on: Parameters<TestBody>[1],
@@ -279,6 +282,7 @@ const boot = async (
   agents: { id: string; description: string }[] = [],
   files = new Map<string, string>(),
 ) => {
+  asker = undefined
   const store = new Map<string, unknown>([['autoApprove', true], ...init])
   // The settings mirror lives in a file under the home directory: here, a map of paths to text.
   mock.env(on, { HOME: HOME })
@@ -321,6 +325,8 @@ const boot = async (
   on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }))
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
   on('tool.call', (_, e) => {
+    // A test may answer the plan's approval question (the dialog is an AskUserQuestion call).
+    if ((e as { tool: string }).tool === 'AskUserQuestion' && asker) return asker(e as never) as never
     calls.push(e as Call)
     return { result: { agentId: 'a1' } }
   })
@@ -818,11 +824,15 @@ test('a step changed in the pane reaches the agent once at the next turn, with t
   await $.turn.start({ text: 'second', turnId: 't1' })
   expect(rows.appended().length).toBe(count)
 
-  // Passing through deep to rest on light: one note, the final value only.
+  // Passing through deep to rest on light: one note, the final value only. Since 0.19 the edits wait in the draft
+  // (nothing is noted) until Send changes.
   await pane.press({ key: 'tier:s1' })
-  expect(await pane.find(noted)).toBeTruthy()
+  expect(await pane.find(noted)).toBeFalsy()
   await pane.press({ key: 'tier:s1' })
   for (let i = 0; i < 3; i++) await pane.press({ key: 'model:s1' })
+  expect(await pane.find(noted)).toBeFalsy()
+  await pane.press({ key: 'draft-send' })
+  expect(await pane.find(noted)).toBeTruthy()
   await $.turn.start({ text: 'third', turnId: 't2' })
   const row = lastRow(rows)
   expect(row.match(/\[s1\]/g)?.length).toBe(1)
@@ -839,6 +849,7 @@ test('a step changed in the pane reaches the agent once at the next turn, with t
 
   // Where it runs is announced too.
   await pane.press({ key: 'where:s1' })
+  await pane.press({ key: 'draft-send' })
   await $.turn.start({ text: 'fifth', turnId: 't4' })
   expect(lastRow(rows)).toContain('runs subagent → here')
   await pane.unmount()
@@ -1039,10 +1050,13 @@ test('a change to a part reaches the agent as one note naming the part', async (
   await $.tool.call({ tool: PLAN, steps: partsPlan } as never)
   const pane = await $.ui.mount(TERMINAL)
   await pane.press({ key: 'tier:s1.a.b' })
-  expect(await pane.find(text(/^change noted, applies from the next turn$/))).toBeTruthy()
   // The first press picks the tier's own model by name, which changes nothing; the second does.
   await pane.press({ key: 'model:s1.a.1' })
   await pane.press({ key: 'model:s1.a.1' })
+  // Edits to a running plan wait for Send changes (0.19).
+  expect(await pane.find(text(/^change noted, applies from the next turn$/))).toBeFalsy()
+  await pane.press({ key: 'draft-send' })
+  expect(await pane.find(text(/^change noted, applies from the next turn$/))).toBeTruthy()
   await $.turn.start({ text: 'second', turnId: 't1' })
   const row = lastRow(rows)
   expect(row).toContain('[s1.a.b]')
@@ -1394,13 +1408,14 @@ test('applying a kind\'s advice sets its default: persisted, mirrored, marked, u
 
 test('auto mode is off by default; on, a kind runs on the cheapest rung it did well on, and the owner\'s own pick still wins', async ($, on) => {
   const ok = (n: number, over: Partial<HistoryEntry>) => run(n, { kind: 'summarize', tier: 'standard', verdict: 'ok', ...over })
+  // Auto mode wants 5 runs and 90% ok by default (0.19; it was 3 runs and 80%).
   const past = [
-    ...[1, 2, 3].map(n => ok(n, { model: 'sonnet', effort: 'medium' })),
-    ...[4, 5, 6].map(n => ok(n, { model: 'haiku', effort: 'high' })),
-    // Cheaper, but only 2 of 3 ok: not learned.
-    ok(7, { model: 'haiku', effort: 'low' }), ok(8, { model: 'haiku', effort: 'low' }), ok(9, { model: 'haiku', effort: 'low', verdict: 'weak' }),
+    ...[1, 2, 3, 4, 5].map(n => ok(n, { model: 'sonnet', effort: 'medium' })),
+    ...[6, 7, 8, 9, 10].map(n => ok(n, { model: 'haiku', effort: 'high' })),
+    // Cheaper, but only 4 of 5 ok (80%): not learned.
+    ...[11, 12, 13, 14].map(n => ok(n, { model: 'haiku', effort: 'low' })), ok(15, { model: 'haiku', effort: 'low', verdict: 'weak' }),
   ]
-  expect(learnedRungs(past, mergeSettings({}))).toEqual({ summarize: { rung: { model: 'haiku', effort: 'high' }, n: 3 } })
+  expect(learnedRungs(past, mergeSettings({}))).toEqual({ summarize: { rung: { model: 'haiku', effort: 'high' }, n: 5 } })
   const { store, calls } = await boot($, on, [['history', past]], [{ id: 'x1', description: '[s1] sum' }])
   const plan = [
     { id: 's1', title: 'Summarize', tier: 'standard', where: 'agent', kind: 'summarize' },
@@ -1418,16 +1433,18 @@ test('auto mode is off by default; on, a kind runs on the cheapest rung it did w
   await pane.press({ key: 'settings' })
   await pane.press({ key: 'auto-route' })
   expect((store.get('settings') as { autoRoute: boolean }).autoRoute).toBe(true)
-  expect(await pane.find(text(/^auto: haiku · high \(learned, 3 runs\)$/))).toBeTruthy()
+  expect(await pane.find(text(/^auto: haiku · high \(learned, 5 runs\)$/))).toBeTruthy()
   const after = await $.tool.call({ tool: PLAN, done: [] } as never)
-  expect(String(after.result)).toContain('[s1] Summarize: standard, haiku/high (auto: learned, 3 runs), kind summarize, running')
+  expect(String(after.result)).toContain('[s1] Summarize: standard, haiku/high (auto: learned, 5 runs), kind summarize, running')
   expect(String(after.result)).toContain('[s2] Other: standard, sonnet/medium, planned')
   await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
   expect(calls.at(-1)).toMatchObject({ model: 'haiku', effort: 'high' })
 
   // The owner picks a model on the step: it wins; the thinking level still comes from auto mode.
+  // (A pick in a running plan counts once sent.)
   await pane.press({ key: 'model:s1' })
   await pane.press({ key: 'model:s1' })
+  await pane.press({ key: 'draft-send' })
   await pane.unmount()
   await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
   expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'high' })
@@ -1545,4 +1562,303 @@ test('a main chat on a model with no price counts no saving, and a verdict given
   await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'ok', why: 'fine' }] } as never)
   await end($, 'x1', 't1')
   expect((store.get('history') as HistoryEntry[]).at(-1)).toMatchObject({ kind: 'code-review', verdict: 'ok', why: 'fine' })
+})
+
+// --- Send changes, helper thinking level, auto mode thresholds (0.19.0) ---------------------
+
+const SEND = { type: 'Button', key: 'draft-send' } as never
+const DISCARD = { type: 'Button', key: 'draft-discard' } as never
+const surveyPlan = [{ id: 's1', title: 'Survey', tier: 'standard', where: 'agent' }]
+
+test('edits to a running plan wait in a draft: routing and notes ignore them until Send, which applies them and sends one note', async ($, on) => {
+  const { rows, calls } = await boot($, on, [], [{ id: 'x1', description: '[s1] survey' }])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: surveyPlan } as never)
+  const pane = await $.ui.mount(TERMINAL)
+  expect(await pane.find(SEND)).toBeFalsy()
+
+  // A model, a thinking level and a tier change: the bar counts three values and the cards mark them.
+  await pane.press({ key: 'model:s1' })
+  await pane.press({ key: 'effort:s1' })
+  await pane.press({ key: 'tier:s1' })
+  expect((await pane.find(SEND))?.text).toBe('Send changes (3)')
+  expect(await pane.find(DISCARD)).toBeTruthy()
+  expect(await pane.findAll(text(/^✎$/))).toHaveLength(3)
+  // The picker shows the edit; the card does not claim the agent was told.
+  expect((await pane.find({ type: 'Button', key: 'tier:s1' } as never))?.text).toContain('deep')
+  expect(await pane.find(text(/^change noted/))).toBeFalsy()
+
+  // The plan and the routing are as they were, and the agent hears nothing.
+  const count = rows.appended().length
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
+  const same = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(same.result)).toContain('[s1] Survey: standard, sonnet/medium, planned')
+  await $.tool.call({ tool: 'Agent', description: '[s1] survey', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'medium' })
+
+  // Send: the plan has the final values at once, and the next turn brings one note.
+  await pane.press({ key: 'draft-send' })
+  expect(await pane.find(SEND)).toBeFalsy()
+  expect(await pane.findAll(text(/^✎$/))).toHaveLength(0)
+  expect(await pane.find(text(/^change noted, applies from the next turn$/))).toBeTruthy()
+  await $.tool.call({ tool: 'Agent', description: '[s1] survey', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'haiku', effort: 'low' })
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  const row = lastRow(rows)
+  expect(row.match(/\[s1\]/g)?.length).toBe(1)
+  expect(row).toContain('tier standard → deep')
+  expect(row).toContain('model sonnet → haiku')
+  expect(row).toContain('thinking medium → low')
+  const sent = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(sent.result)).toContain('[s1] Survey: deep, haiku/low, running')
+  await pane.unmount()
+})
+
+test('Discard drops the draft and leaves the plan as it was; an edit put back leaves no draft', async ($, on) => {
+  const { rows, calls } = await boot($, on, [], [{ id: 'x1', description: '[s1] survey' }])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: surveyPlan } as never)
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'tier:s1' })
+  await pane.press({ key: 'where:s1' })
+  expect((await pane.find(SEND))?.text).toBe('Send changes (2)')
+  await pane.press({ key: 'draft-discard' })
+  expect(await pane.find(SEND)).toBeFalsy()
+  expect(await pane.findAll(text(/^✎$/))).toHaveLength(0)
+  expect((await pane.find({ type: 'Button', key: 'tier:s1' } as never))?.text).toContain('standard')
+  const count = rows.appended().length
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(rows.appended().length).toBe(count)
+  await $.tool.call({ tool: 'Agent', description: '[s1] survey', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'medium' })
+
+  // Cycling a picker back to the plan's own value is no edit.
+  for (let i = 0; i < 3; i++) await pane.press({ key: 'tier:s1' })
+  expect(await pane.find(SEND)).toBeFalsy()
+  await pane.unmount()
+})
+
+test('before approval a pane edit goes straight into the plan, which approval then sends', async ($, on) => {
+  const { calls } = await boot($, on, [['autoApprove', false]], [{ id: 'x1', description: '[s1] survey' }])
+  let answer: (v: string) => void = () => undefined
+  asker = e => new Promise(r => { answer = v => r({ result: { answers: { [e.questions[0]!.question]: v } } }) })
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const planning = $.tool.call({ tool: PLAN, steps: surveyPlan } as never)
+  await new Promise(r => setTimeout(r, 10))
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'tier:s1' })
+  expect(await pane.find(SEND)).toBeFalsy()
+  answer('Run it')
+  const res = await planning
+  expect(String(res.result)).toContain('[s1] Survey: deep, opus/high, planned')
+  await $.tool.call({ tool: 'Agent', description: '[s1] survey', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'opus', effort: 'high' })
+  // Approved: from here edits wait.
+  await pane.press({ key: 'tier:s1' })
+  expect((await pane.find(SEND))?.text).toBe('Send changes (1)')
+  await pane.unmount()
+})
+
+test('a plan posted anew drops the edits that were never sent; a rerun drops unsent model and thinking picks of its step', async ($, on) => {
+  const { calls } = await boot($, on, [], [{ id: 'x1', description: '[s1] survey' }])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: surveyPlan } as never)
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'tier:s1' })
+  expect(await pane.find(SEND)).toBeTruthy()
+  await $.tool.call({ tool: PLAN, steps: surveyPlan } as never)
+  expect(await pane.find(SEND)).toBeFalsy()
+  await $.tool.call({ tool: 'Agent', description: '[s1] survey', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet' })
+  await pane.unmount()
+})
+
+test('pure draft helpers: applying, trimming and counting', () => {
+  const s = newStep('s1', 'Survey', 'standard', 'agent')
+  expect(applyDraft(s, undefined)).toBe(s)
+  expect(applyDraft(s, { tier: 'deep', model: 'opus', effort: null })).toMatchObject({ tier: 'deep', model: 'opus' })
+  expect(applyDraft({ ...s, model: 'opus' }, { model: null }).model).toBeUndefined()
+  // Values equal to the plan's own are dropped; null equals "the tier's".
+  expect(trimDraft(s, { tier: s.tier, model: null })).toBeUndefined()
+  expect(trimDraft({ ...s, model: 'opus' }, { tier: s.tier, model: 'opus', effort: 'max' })).toEqual({ effort: 'max' })
+  expect(draftCount({ a: { tier: 'deep' }, b: { model: null, effort: 'low' } })).toBe(3)
+})
+
+const TEMPLATES = `${HOME}/.config/herdr-core/templates`
+const template = (command: string) => `---\nname: x\ndescription: a helper\ncommand: ${command}\n---\nYou are a helper agent.\n`
+
+test('a helper template\'s thinking level is read from its command line; the lead\'s report wins; none shown when neither gives one', () => {
+  // Kiro: --effort; Copilot: --reasoning-effort; agy: the level its model id ends with.
+  expect(effortOfTemplate(template('kiro-cli chat --v3 --trust-workspace --model claude-sonnet-5.5 --effort high'))).toBe('high')
+  expect(effortOfTemplate(template('copilot --no-ask-user --model gpt-6-luna --reasoning-effort xhigh'))).toBe('xhigh')
+  expect(effortOfTemplate(template('agy --model claude-opus-5-5-high --mode auto'))).toBe('high')
+  expect(effortOfTemplate(template('agy --model gemini-3.8-flash --mode auto'))).toBeUndefined()
+  // Copilot Fusion sets none; a level outside the known ones is not guessed at; a model id ending in a level only counts for agy.
+  expect(effortOfTemplate(template('copilot --no-ask-user --model auto --auto-tier hydrafusion'))).toBeUndefined()
+  expect(effortOfTemplate(template('kiro-cli chat --effort turbo'))).toBeUndefined()
+  expect(effortOfTemplate(template('copilot --model something-high'))).toBeUndefined()
+  expect(effortOfTemplate('no front matter\ncommand: kiro-cli --effort high')).toBeUndefined()
+  expect(asHelperEffort('  high ')).toBe('high')
+  expect(asHelperEffort('')).toBeUndefined()
+  expect(asHelperEffort(3)).toBeUndefined()
+  expect(asHelperEffort('x'.repeat(40))).toBeUndefined()
+})
+
+test('a helper step\'s card shows its thinking level beside the model, from the lead\'s report or else the template', async ($, on) => {
+  const files = new Map([
+    [`${TEMPLATES}/copilot-standard.md`, template('copilot --no-ask-user --model claude-sonnet-5.5 --reasoning-effort high')],
+    [`${TEMPLATES}/kiro-light.md`, template('kiro-cli chat --v3 --model claude-sonnet-5.5 --effort low')],
+    [`${TEMPLATES}/copilot-fusion-high.md`, template('copilot --no-ask-user --model auto --auto-tier hydrafusion')],
+    // What a path-like name would reach if it were taken as a template.
+    [`${TEMPLATES}/sub/kiro-light.md`, template('kiro-cli chat --effort max')],
+  ])
+  const { rows } = await boot($, on, HELPERS, [], files)
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('<its thinking level, if the screen shows one>')
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' },
+      { id: 'h2', title: 'Sweep', tier: 'light', where: 'helper' },
+      { id: 'h3', title: 'Think', tier: 'deep', where: 'helper' },
+      { id: 'h4', title: 'Odd', tier: 'light', where: 'helper' },
+      { id: 'h5', title: 'Plain', tier: 'light', where: 'helper' },
+    ],
+  } as never)
+  const started = await $.tool.call({
+    tool: PLAN,
+    start: [
+      { id: 'h1', helper: 'copilot-standard', model: 'Claude Sonnet 5.5' },
+      // The lead reads the level off the helper's screen: that wins over the template's low.
+      { id: 'h2', helper: 'kiro-light', model: 'Sonnet 5.5', effort: 'medium' },
+      { id: 'h3', helper: 'copilot-fusion-high', model: 'Auto' },
+      // A name that is not a template name is never turned into a path.
+      { id: 'h4', helper: 'sub/kiro-light', model: 'Haiku' },
+      'h5',
+    ],
+  } as never)
+  const plan = String(started.result)
+  expect(plan).toContain('[h1] Survey: standard, helper (copilot-standard · Claude Sonnet 5.5 · high), running')
+  expect(plan).toContain('[h2] Sweep: light, helper (kiro-light · Sonnet 5.5 · medium), running')
+  expect(plan).toContain('[h3] Think: deep, helper (copilot-fusion-high · Auto), running')
+  expect(plan).toContain('[h4] Odd: light, helper (sub/kiro-light · Haiku), running')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^copilot-standard · Claude Sonnet 5\.5 · high$/))).toBeTruthy()
+  expect(await pane.find(text(/^kiro-light · Sonnet 5\.5 · medium$/))).toBeTruthy()
+  expect(await pane.find(text(/^copilot-fusion-high · Auto$/))).toBeTruthy()
+  await pane.unmount()
+
+  // A later start naming only a model keeps the level it had.
+  const again = await $.tool.call({ tool: PLAN, start: [{ id: 'h1', model: 'Claude Sonnet 5.5 (high)' }] } as never)
+  expect(String(again.result)).toContain('(copilot-standard · Claude Sonnet 5.5 (high) · high)')
+})
+
+test('with no templates to read and no report, a helper step shows its model and no thinking level', async ($, on) => {
+  await boot($, on, HELPERS)
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' }] } as never)
+  const started = await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'copilot-standard', model: 'Claude Sonnet 5.5' }] } as never)
+  expect(String(started.result)).toContain('[h1] Survey: standard, helper (copilot-standard · Claude Sonnet 5.5), running')
+})
+
+test('in the minimal view a part\'s card shows its model and thinking level: pickers for a subagent part, the helper line for a helper part', async ($, on) => {
+  const files = new Map([[`${TEMPLATES}/kiro-standard.md`, template('kiro-cli chat --v3 --model claude-sonnet-5.5 --effort high')]])
+  await boot($, on, HELPERS, [], files)
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      {
+        id: 's1',
+        title: 'Survey',
+        tier: 'deep',
+        where: 'agent',
+        parts: [
+          { id: 'a', title: 'Read', tier: 'light', where: 'agent' },
+          { id: 'b', title: 'Sweep', tier: 'standard', where: 'helper' },
+        ],
+      },
+    ],
+  } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 's1.b', helper: 'kiro-standard', model: 'Claude Sonnet 5.5' }] } as never)
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'minimal' })
+  expect((await pane.find({ type: 'Button', key: 'model:s1.a' } as never))?.text).toContain('haiku')
+  expect((await pane.find({ type: 'Button', key: 'effort:s1.a' } as never))?.text).toContain('low')
+  expect(await pane.find(text(/^kiro-standard · Claude Sonnet 5\.5 · high$/))).toBeTruthy()
+  await pane.unmount()
+})
+
+// Auto mode's thresholds (0.19.0): 5 runs and 90% ok by default; before, 3 runs and 80%.
+const okRuns = (n: number, bad: number, over: Partial<HistoryEntry> = {}) =>
+  Array.from({ length: n }, (_, i) => run(i + 1, { kind: 'summarize', tier: 'standard', model: 'haiku', effort: 'high', verdict: i < bad ? 'weak' : 'ok', ...over }))
+const learnedOn = (n: number, bad: number, set: Partial<Parameters<typeof mergeSettings>[0]> = {}) =>
+  learnedRungs(okRuns(n, bad), mergeSettings(set))['summarize']?.n
+
+test('auto mode wants 5 runs and 90% ok by default, and the owner\'s own numbers when set', () => {
+  expect(DEFAULT_SETTINGS.autoMinRuns).toBe(5)
+  expect(DEFAULT_SETTINGS.autoOkPercent).toBe(90)
+  // Default: 4 runs are too few; 5 all ok will do; 4 of 5 ok (80%) is too permissive now; 9 of 10 is exactly 90%.
+  expect(learnedOn(4, 0)).toBeUndefined()
+  expect(learnedOn(5, 0)).toBe(5)
+  expect(learnedOn(5, 1)).toBeUndefined()
+  expect(learnedOn(10, 1)).toBe(10)
+  expect(learnedOn(10, 2)).toBeUndefined()
+  // The old numbers, set by the owner: 3 runs, 80%.
+  const old = { autoMinRuns: 3, autoOkPercent: 80 }
+  expect(learnedOn(3, 0, old)).toBe(3)
+  expect(learnedOn(3, 1, old)).toBeUndefined()
+  expect(learnedOn(5, 1, old)).toBe(5)
+  // Stricter than the default.
+  expect(learnedOn(5, 0, { autoMinRuns: 8 })).toBeUndefined()
+  expect(learnedOn(8, 0, { autoMinRuns: 8 })).toBe(8)
+  expect(learnedOn(10, 1, { autoOkPercent: 100 })).toBeUndefined()
+  // Stored values that cannot be used fall back to the defaults.
+  const merged = mergeSettings({ autoMinRuns: 0, autoOkPercent: 150 })
+  expect([merged.autoMinRuns, merged.autoOkPercent]).toEqual([5, 90])
+  expect(mergeSettings({ autoMinRuns: 2.5, autoOkPercent: 'x' as never })).toMatchObject({ autoMinRuns: 5, autoOkPercent: 90 })
+  expect(mergeSettings({ autoMinRuns: 4, autoOkPercent: 75 })).toMatchObject({ autoMinRuns: 4, autoOkPercent: 75 })
+  // The advice keeps its own thresholds (3 runs, half weak).
+  expect(suggestions(okRuns(3, 2).map(x => ({ ...x, tier: 'standard' as const, model: 'sonnet' as const, effort: 'medium' as const })), mergeSettings({}))).toHaveLength(1)
+})
+
+test('Settings > Learning: "Auto picks a rung with at least N runs and P% ok" is persisted, mirrored, marked when it differs, and used for routing', async ($, on) => {
+  const past = okRuns(3, 0)
+  const files = new Map<string, string>()
+  const { store } = await boot($, on, [['history', past], ['settings', { autoRoute: true }]], [], files)
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Summarize', tier: 'standard', where: 'agent', kind: 'summarize' }] } as never)
+  // Three ok runs are too few for the default 5: routing stays on the tier.
+  const before = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(before.result)).toContain('[s1] Summarize: standard, sonnet/medium, kind summarize, planned')
+
+  const pane = await $.ui.mount(TERMINAL)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^Auto picks a rung with at least$/))).toBeTruthy()
+  expect((await pane.find({ type: 'Button', key: 'auto-min-runs' } as never))?.text).toContain('5 runs')
+  expect((await pane.find({ type: 'Button', key: 'auto-ok-percent' } as never))?.text).toContain('90% ok')
+  // Marked so far: auto-approve (boot turns it on) and the auto switch (on in the stored settings).
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(2)
+  expect(await pane.find(text(/ok in at least 90% of 5 or more runs/))).toBeTruthy()
+
+  // The picker offers 3, 5, 8, 10, 20 runs and cycles forward: 5 -> 8 -> 10 -> 20 -> 3.
+  for (let i = 0; i < 4; i++) await pane.press({ key: 'auto-min-runs' })
+  expect((store.get('settings') as { autoMinRuns: number }).autoMinRuns).toBe(3)
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(3)
+  // 90% -> 95% -> 100% -> 70% -> 80%.
+  for (let i = 0; i < 4; i++) await pane.press({ key: 'auto-ok-percent' })
+  expect((store.get('settings') as { autoOkPercent: number }).autoOkPercent).toBe(80)
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(4)
+  const written = JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { autoMinRuns: number; autoOkPercent: number } }
+  expect(written.settings).toMatchObject({ autoMinRuns: 3, autoOkPercent: 80 })
+  expect(await pane.find(text(/ok in at least 80% of 3 or more runs/))).toBeTruthy()
+
+  // With the owner's 3 runs and 80%, the same history now teaches the kind.
+  const after = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(after.result)).toContain('[s1] Summarize: standard, haiku/high (auto: learned, 3 runs), kind summarize, planned')
+  // Back to the defaults: the dots go.
+  await pane.press({ key: 'auto-min-runs' })
+  await pane.press({ key: 'auto-ok-percent' })
+  expect((store.get('settings') as { autoMinRuns: number; autoOkPercent: number })).toMatchObject({ autoMinRuns: 5, autoOkPercent: 90 })
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(2)
+  await pane.unmount()
 })

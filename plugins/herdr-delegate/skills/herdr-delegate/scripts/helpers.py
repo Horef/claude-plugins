@@ -11,7 +11,8 @@
 
 A template is usable when its file is in ~/.config/herdr-core/templates, its CLI is on
 PATH, and its provider (the name before the first '-') has no quota or login mark in force.
-Quota marks expire on their date by themselves; login marks last until `back`. `pick`
+Quota marks expire on their date by themselves; login marks last until `back`, or until
+`pick`/`status` find the provider logged in again (Kiro: `kiro-cli whoami`). `pick`
 prints the template name, or nothing and exit code 1 when none is usable (then run the step with the harness's own subagent).
 `prompt` reads each screen with `hc read` (Copilot reports no status to hc, so a wait cannot
 see it blocked) and exits 0 when at least one is waiting on an approval, 1 when none is.
@@ -65,6 +66,32 @@ def is_out(state, provider, today):
     if until == "login":
         return True
     return bool(until) and today < dt.date.fromisoformat(until)
+
+
+# Providers whose login can be checked: a login mark clears itself once this succeeds.
+LOGIN_CHECK = {"kiro": ["kiro-cli", "whoami"]}
+
+
+def logged_in(provider):
+    cmd = LOGIN_CHECK.get(provider)
+    if not cmd or not shutil.which(cmd[0]):
+        return False
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0 and "not logged in" not in (r.stdout + r.stderr).lower()
+
+
+def refresh_logins(state):
+    """Clear login marks of providers that are logged in again (a mark used to last until `back`)."""
+    cleared = [p for p, v in list(state.items()) if v == "login" and logged_in(p)]
+    for p in cleared:
+        state.pop(p)
+        print(f"{p}: logged in again, login mark cleared", file=sys.stderr)
+    if cleared:
+        save(state)
+    return cleared
 
 
 def command_of(name):
@@ -127,6 +154,8 @@ def main(argv, today=None):
         return 2
     cmd, args = argv[0], argv[1:]
     state = load()
+    if cmd in ("pick", "status"):
+        refresh_logins(state)
     if cmd == "pick" and args:
         order = ORDER.get(args[0]) or [s.strip() for s in args[0].split(",") if s.strip()]
         for name in order:
