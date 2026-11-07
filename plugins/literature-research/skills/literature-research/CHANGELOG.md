@@ -2,6 +2,12 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.1.1 (2026-11-07)
+- Semantic Scholar without a key (owner, 7 Nov): the shared keyless pool flips between 200 and 429 (measured: relevance search 429 on 8 of 8 calls, `/search/bulk` and paper lookups answering). Patient jittered retries (capped 30 s), relevance search gives up after two quick tries and falls back to `/search/bulk` sorted by citations, logged as such (a keyless search went from 223 s to 12 s).
+- Full text (pilot to_fetch.md: 15 papers the owner fetched by hand, several free): new routes for bioRxiv/medRxiv (latest version via api.biorxiv.org), eLife (fixed PDF address; doi.org served HTML) and a Europe PMC DOI-to-PMCID lookup feeding the open-access XML route. Re-run on the 15: 4 now arrive without the owner (was 0); the rest are publisher sites that refuse scripts (J Neurosci, APS, OUP, Nature, Elsevier).
+- DEVONthink through MCP (owner: every agent has it): SKILL.md uses `search_records` with the bare DOI and `get_imported_record_path`; new `lit.py fetch --file PATH` runs the page-1 identity check on a path found that way (all 15 owner-fetched records passed). Profile names where the owner saves fetched papers.
+- evals: 48 offline tests (5 new).
+
 ## 0.1.0 (2026-11-06)
 - Created at the owner's request (2026-11-04 to 06): literature research and claim verification as a building block (frame, search with a log, chase citations, screen, evidence ledger, fresh checkers, synthesis). Owner choices: sources PubMed, Semantic Scholar, arXiv, OpenAlex, the web, DEVONthink when reachable; paywalled papers from DEVONthink, else listed for the owner; output in docs/literature/<topic>/.
 - `references/search-rules.md` distilled from Cochrane ch. 4, PRISMA-S, PRISMA 2020, Garritty 2021, Hirt 2023, Greenhalgh & Peacock 2005, Jergas & Baethge 2015, Greenberg 2009, Tripathy 2014, Pautasso 2013 (Copilot helper, Sonnet 5.5; reviewed). `scripts/lit.py` (Copilot helper; reviewed).

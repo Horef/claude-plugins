@@ -5,6 +5,7 @@ Read by the literature-research skill at setup. Each line overrides a default.
 - Default sources: PubMed, Semantic Scholar, arXiv, OpenAlex, the web; DEVONthink when reachable.
 - Where my papers live: <DEVONthink database names | a folder>
 - Paywalled papers: <DEVONthink, then list them in to_fetch.md for me | abstracts only>
+- Where I save papers I fetch for you: <a DEVONthink group (link) | a folder>
 - API keys (environment variables, never in files): NCBI_API_KEY, S2_API_KEY (both optional)
 
 ## Output

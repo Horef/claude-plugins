@@ -269,6 +269,19 @@ def search_network_failure_exits_4_and_logs_nothing():
 
 
 @test
+def s2_keyless_429_falls_back_to_bulk_search():
+    d = new_folder()
+    os.environ.pop("S2_API_KEY", None)
+    net = FakeNet(fail=("paper/search?",))  # relevance search busy; /search/bulk answers
+    with patched(net):
+        code, _, err = run("search", d, "s2", "simple complex cells")
+    check(code == 0, (code, err))
+    check(any("/search/bulk?" in u and "citationCount" in u for u in net.urls), net.urls)
+    check(lit.load_candidates(d), "bulk results merged into candidates")
+    check("search/bulk" in (d / "search_log.md").read_text(), "the log says relevance ranking was not used")
+
+
+@test
 def http_get_backs_off_on_429():
     calls = []
     real_open, real_sleep = lit.urllib.request.urlopen, lit.time.sleep
@@ -557,6 +570,60 @@ def fetch_openalex_location():
 
 
 @test
+def fetch_preprint_uses_latest_biorxiv_version():
+    d = folder_with([cand("Murase2024", doi="10.1101/2024.12.04.626829")])
+    papers = tmpdir() / "p"
+
+    class Net(FakeNet):
+        def __call__(self, url, headers=None, timeout=30, retries=3):
+            if "api.biorxiv.org/details/biorxiv/" in url:
+                self.urls.append(url)
+                return json.dumps({"collection": [{"version": "1"}, {"version": "2"}]}).encode()
+            return super().__call__(url, headers, timeout, retries)
+
+    with patched(Net(fail=("openalex", "europepmc"))) as net:
+        code, out, err = run("fetch", d, "Murase2024", "--papers", papers)
+    check(code == 0 and (papers / "Murase2024.pdf").exists(), (code, out, err))
+    check(any(u.endswith("10.1101/2024.12.04.626829v2.full.pdf") for u in net.urls), net.urls)
+
+
+@test
+def fetch_elife_uses_fixed_pdf_address():
+    d = folder_with([cand("Sedigh2019", doi="10.7554/elife.41925")])
+    with patched(FakeNet(fail=("openalex", "europepmc"))) as net:
+        code, out, err = run("fetch", d, "Sedigh2019", "--papers", tmpdir() / "p")
+    check(code == 0 and "https://elifesciences.org/articles/41925.pdf" in net.urls, (code, err, net.urls))
+
+
+@test
+def fetch_finds_pmcid_from_doi_in_europe_pmc():
+    d = folder_with([cand("Fong2020", doi="10.1093/cercor/bhz260")])
+
+    class Net(FakeNet):
+        def __call__(self, url, headers=None, timeout=30, retries=3):
+            if "europepmc/webservices/rest/search" in url:
+                self.urls.append(url)
+                return json.dumps({"resultList": {"result": [{"id": "31832634", "pmcid": "PMC7174998"}]}}).encode()
+            return super().__call__(url, headers, timeout, retries)
+
+    with patched(Net(fail=("openalex",))) as net:
+        code, out, err = run("fetch", d, "Fong2020", "--papers", tmpdir() / "p")
+    check(code == 0 and "europe pmc (PMC7174998" in out, (code, out, err))
+
+
+@test
+def fetch_given_file_is_identity_checked():
+    need_pdftotext_or_skip()
+    d = folder_with([cand("Mechler2002", doi="10.1016/s0042-6989(02)00025-1")])
+    good, bad = dt_pdf(MECHLER_P1), dt_pdf(OTHER_PAPER)
+    with patched(FakeNet(fail=("",))) as net:  # no network: the file is checked, nothing is searched
+        c1, out1, _ = run("fetch", d, "Mechler2002", "--file", good)
+        c2, _, err2 = run("fetch", d, "Mechler2002", "--file", bad)
+    check(c1 == 0 and "given file" in out1 and not net.urls, (c1, out1, net.urls))
+    check(c2 == 1 and "wrong paper" in err2, (c2, err2))
+
+
+@test
 def fetch_not_found_exits_3_and_lists_once():
     d = folder_with([cand("Nobody1999", title="A paper nobody can get")])
     papers = tmpdir() / "p"
@@ -814,7 +881,7 @@ def s2_429_without_key_says_what_to_do():
         code, _, err = run("search", d, "s2", "simple complex cells")
     finally:
         lit.urllib.request.urlopen, lit.time.sleep = real_open, real_sleep
-    check(code == 4 and err.count("set S2_API_KEY (free) or rely on OpenAlex") == 1, (code, err))
+    check(code == 4 and err.count("set S2_API_KEY (free), or rely on OpenAlex") == 1, (code, err))
     row = table_rows(d / "search_log.md")[0]
     check(row[2] == "s2" and row[5] == "0" and "S2_API_KEY" in row[7] and lit.load_candidates(d) == [], row)
 
