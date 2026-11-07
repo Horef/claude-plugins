@@ -80,14 +80,39 @@ export type Step = {
   historyKey?: string
   /** Here-step effort: what the router did with this step's effort, for its card. */
   effortNote?: string
+  /** The id of the step this is a part of; absent on a top-level step. Ids are hierarchical: s3, s3.a, s3.a.1. */
+  parent?: string
+  /** The step has parts: a group. Its tier only rates it; its status, cost and usage are those of its parts. */
+  group?: boolean
+  /** N identical agents with this id run at once (a leaf only). */
+  count?: number
+  /** Runs of a counted step that have finished; the step is done at `count`. */
+  runs?: number
+  /** Helper step: the template the main agent launched, and the model the helper reported on screen. */
+  helper?: string
+  helperModel?: string
+  /** Helper step: when it was started and when it was marked done (ISO). */
+  startedAt?: string
+  endedAt?: string
+  /** Helper step: the usage line the helper's screen showed at the end. Recorded once. */
+  helperUsage?: HelperUsage
 }
+
+/** A plan step as the plan tool takes it: a step with optional parts, recursively. */
+export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; count?: number; parts?: PlanNode[] }
+
+/** What a helper used on its own subscription, in that provider's unit; never converted to money. */
+export type HelperUsage = { provider: string; amount: number; unit: string }
+
+/** Steps moved off Claude: how many, how long they ran, and the usage per provider and unit. */
+export type HelperTotals = { steps: number; ms: number; usage: HelperUsage[] }
 
 /** What the main agent was last told of a step (the approved plan, or the last note delivered), as values it runs on. */
 export type StepKnown = { where: Where; tier: Tier; model: Model; effort: Effort }
 
 /** Money counted over some span: the main chat, the subagents, and what the
  *  subagents' tokens would have cost on the main chat's model. */
-export type Totals = { mainCost: number; agentCost: number; mainEquivalent: number; steps: number }
+export type Totals = { mainCost: number; agentCost: number; mainEquivalent: number; steps: number; helper: HelperTotals }
 
 /** Remembered across chats: a few numbers, never per-run detail. */
 export type Lifetime = Totals & { since: string; plans: number; byTier: Record<Tier, number> }

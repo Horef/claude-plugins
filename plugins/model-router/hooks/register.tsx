@@ -2,28 +2,42 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, Effort, EffortSwitch, HistoryEntry, Lifetime, Settings, Step, StepKnown, Tier, Totals, Usage, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HelperTotals, HelperUsage, HistoryEntry, Lifetime, PlanNode, Settings, Step, StepKnown, Tier, Totals, Usage, Where } from '../types'
 import {
+  EMPTY_HELPER,
   EMPTY_USAGE,
   PANE,
   PLAN_TOOL,
   SKILL_TAG,
   STATUS_GLYPH,
   STEP_TAG,
+  addHelperTotals,
   addUsage,
+  asHelperUsage,
   costOf,
+  depthOf,
+  descendantsOf,
+  expandIds,
+  flattenPlan,
   fmtTok,
   fmtUsd,
+  helperFacts,
+  helperGain,
   helperItems,
+  helperLine,
   helperList,
+  helperName,
   helperOrder,
   helperSignature,
+  helperTotalsOf,
   helpersOff,
   hereNeeds,
+  isHelperRun,
   isSetupHeavy,
   isTier,
   knownChanges,
   knownOf,
+  leavesOf,
   mergeSettings,
   modelHint,
   modelOf,
@@ -31,6 +45,8 @@ import {
   newStep,
   nextRung,
   planText,
+  rollupOf,
+  settleGroups,
   stepChangeNote,
   VERSION,
   rungLabel,
@@ -57,7 +73,7 @@ const told = atom({ plugin: 'model-router', key: 'told' } as const, {})
 const toldHelpers = atom({ plugin: 'model-router', key: 'toldHelpers' } as const, '')
 const policySent = atom({ plugin: 'model-router', key: 'policy' } as const, {})
 const delivery = atom({ plugin: 'model-router', key: 'delivery' } as const, { inChat: false, planDue: false })
-const EMPTY_TOTALS: Totals = { mainCost: 0, agentCost: 0, mainEquivalent: 0, steps: 0 }
+const EMPTY_TOTALS: Totals = { mainCost: 0, agentCost: 0, mainEquivalent: 0, steps: 0, helper: EMPTY_HELPER }
 const newLifetime = (): Lifetime => ({ ...EMPTY_TOTALS, since: new Date().toISOString(), plans: 0, byTier: { light: 0, standard: 0, deep: 0 } })
 const chatTotals = atom({ plugin: 'model-router', key: 'chatTotals' } as const, EMPTY_TOTALS)
 const planBase = atom({ plugin: 'model-router', key: 'planBase' } as const, { mainCost: 0 })
@@ -233,7 +249,7 @@ async function stepChanges($: EngineInterface) {
 
   return (await read($, steps)).flatMap(s => {
     const known = was[s.id]
-    const note = s.status !== 'done' && known ? stepChangeNote(s, known, knownOf(s, set)) : undefined
+    const note = !s.group && s.status !== 'done' && known ? stepChangeNote(s, known, knownOf(s, set)) : undefined
 
     return note ? [{ id: s.id, note }] : []
   })
@@ -261,12 +277,14 @@ async function summary($: EngineInterface) {
   }
 
   const status = await read($, planStatus)
-  const done = list.filter(s => s.status === 'done').length
-  const running = list.find(s => s.status === 'running')
+  // Groups are the sum of their parts: counted and drawn once, through the parts.
+  const work = leavesOf(list)
+  const done = work.filter(s => s.status === 'done').length
+  const running = work.find(s => s.status === 'running')
   const cost = list.reduce((n, s) => n + s.cost, 0)
   const saved = list.reduce((n, s) => n + Math.max(0, s.mainCost - s.cost), 0)
-  const dots = list.map(s => STATUS_GLYPH[s.status]).join('')
-  const head = status === 'pending' ? 'plan awaiting approval' : `${done}/${list.length} done`
+  const dots = work.map(s => STATUS_GLYPH[s.status]).join('')
+  const head = status === 'pending' ? 'plan awaiting approval' : `${done}/${work.length} done`
   const now = running ? ` · ${running.id} on ${rungLabel(runsOn(running, set))}` : ''
   const money = cost > 0 ? ` · plan agents ≈${fmtUsd(cost)}${saved > 0 ? `, saved ≈${fmtUsd(saved)}` : ''}` : ''
 
@@ -277,8 +295,13 @@ async function refreshStatus($: EngineInterface) {
   $.ui.status(await summary($))
 }
 
+/** Changes the plan's steps; a group's status follows its parts. */
+async function setSteps($: EngineInterface, fn: (list: Step[]) => Step[]) {
+  await update($, steps, list => settleGroups(fn(list)))
+}
+
 async function editStep($: EngineInterface, id: string, fn: (s: Step) => Step) {
-  await update($, steps, list => list.map(s => (s.id === id ? fn(s) : s)))
+  await setSteps($, list => list.map(s => (s.id === id ? fn(s) : s)))
   await refreshStatus($)
 }
 
@@ -292,17 +315,64 @@ async function clearPlan($: EngineInterface) {
 async function rerun($: EngineInterface, id: string) {
   const set = await read($, settings)
   const step = (await read($, steps)).find(s => s.id === id)
-  const up = step && nextRung(runsOn(step, set))
+  const up = step && !step.group && nextRung(runsOn(step, set))
   if (!step || !up) return
   if (step.historyKey) {
     await editHistory($, h => h.map(x => (x.key === step.historyKey ? { ...x, rerun: true } : x)))
   }
-  await editStep($, id, s => ({ ...s, model: up.model, effort: up.effort, status: 'planned', reruns: s.reruns + 1 }))
+  await editStep($, id, s => ({ ...s, model: up.model, effort: up.effort, status: 'planned', runs: 0, reruns: s.reruns + 1 }))
   // The prompt below tells the agent of the new rung itself.
   await tellSteps($, [id])
   await $.prompt.submit({
     text: `[model-router] Please rerun step [${id}] "${step.title}": its result was not good enough, so it moves up to ${rungLabel(up)}. Delegate it again with the same brief, its description starting "[${id}]".`,
   })
+}
+
+/** Marks steps done; a group stands for its unfinished parts. Records a helper step's end time and its reported usage (once). */
+async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[]) {
+  const before = await read($, steps)
+  const targets = expandIds(before, named.map(n => n.id))
+  const usage = new Map(named.flatMap(n => (typeof n.ref === 'object' && asHelperUsage(n.ref.usage) ? [[n.id, asHelperUsage(n.ref.usage)!] as const] : [])))
+  const now = new Date().toISOString()
+  await setSteps($, list =>
+    list.map(s => {
+      if (!targets.has(s.id)) return s
+      const first = s.status !== 'done'
+      const reported = usage.get(s.id)
+      const next: Step = { ...s, status: 'done' }
+      if (first && isHelperRun(s)) next.endedAt = now
+      if (reported && !s.helperUsage) next.helperUsage = reported
+
+      return next
+    }),
+  )
+  const gain = helperGain(before, await read($, steps))
+  if (gain.steps === 0 && gain.usage.length === 0) return
+  await update($, chatTotals, t => ({ ...t, helper: addHelperTotals(t.helper, gain) }))
+  await editLifetime($, l => ({ ...l, helper: addHelperTotals(l.helper, gain) }))
+}
+
+/** Marks steps running (a group: its unfinished parts) and records the helper a step was launched on. */
+async function markStarted($: EngineInterface, named: { id: string; ref: StartRef }[]) {
+  const targets = expandIds(await read($, steps), named.map(n => n.id))
+  const launched = new Map(
+    named.flatMap(n => (typeof n.ref === 'object' && (n.ref.helper || n.ref.model) ? [[n.id, n.ref] as const] : [])),
+  )
+  const now = new Date().toISOString()
+  // One here step runs at a time: starting one sets an unfinished other back to planned.
+  await setSteps($, list =>
+    list.map(s => {
+      if (s.group) return s
+      if (!targets.has(s.id) || s.status === 'done') return s.where === 'here' && s.status === 'running' ? { ...s, status: 'planned' } : s
+      const on = launched.get(s.id)
+      const next: Step = { ...s, status: 'running' }
+      if (on?.helper) next.helper = on.helper.trim()
+      if (on?.model) next.helperModel = on.model.trim()
+      if (on || s.where === 'helper') next.startedAt = s.startedAt ?? now
+
+      return next
+    }),
+  )
 }
 
 async function applySuggestion($: EngineInterface, s: Suggestion) {
@@ -320,41 +390,106 @@ async function applySuggestion($: EngineInterface, s: Suggestion) {
 async function registerPlanTool($: EngineInterface) {
   const set = await read($, settings)
   const wheres = set.helpers.enabled ? ['agent', 'here', 'helper'] : ['agent', 'here']
-  // Offered only while here-step effort is on, so with it off the schema is as before.
-  const start = set.hereEffort.enabled
-    ? { start: { type: 'array', items: { type: 'string' }, description: 'Here step ids you are starting now: the router runs this chat at their tier\'s effort' } }
-    : {}
+  const helpersOn = set.helpers.enabled
+  const hereOn = set.hereEffort.enabled
+  const id = { type: 'string', description: 'Step id' }
+  // Offered only while here-step effort or helpers are on, so with both off the schema is as before.
+  const start =
+    hereOn || helpersOn
+      ? {
+          start: {
+            type: 'array',
+            items: helpersOn
+              ? {
+                  anyOf: [
+                    { type: 'string' },
+                    {
+                      type: 'object',
+                      properties: {
+                        id,
+                        helper: { type: 'string', description: 'The helper template you launched, e.g. copilot-standard' },
+                        model: { type: 'string', description: 'The model the helper reports on its screen' },
+                      },
+                      required: ['id'],
+                    },
+                  ],
+                }
+              : { type: 'string' },
+            description: `Step ids you are starting now${hereOn ? ': the router runs this chat at a here step\'s tier\'s effort' : ''}${helpersOn ? '. A helper step may be {id, helper, model}: the template you launched and the model it reports' : ''}`,
+          },
+        }
+      : {}
+  const done = {
+    type: 'array',
+    items: helpersOn
+      ? {
+          anyOf: [
+            { type: 'string' },
+            {
+              type: 'object',
+              properties: {
+                id,
+                usage: {
+                  type: 'object',
+                  description: 'A helper step\'s usage line from its screen, e.g. {provider: "copilot", amount: 30.04, unit: "AIC"}',
+                  properties: { provider: { type: 'string' }, amount: { type: 'number' }, unit: { type: 'string' } },
+                  required: ['provider', 'amount', 'unit'],
+                },
+              },
+              required: ['id'],
+            },
+          ],
+        }
+      : { type: 'string' },
+    description: 'Step ids now done; a group id marks its unfinished parts done too',
+  }
   await $.tool.register({
     name: 'plan',
     description:
-      'Model router: set the plan for the current task (steps replaces the plan and waits for the user to approve it; overrides the user set are kept for step ids that stay) and/or mark steps done.',
+      'Model router: set the plan for the current task (steps replaces the plan and waits for the user to approve it; overrides the user set are kept for step ids that stay) and/or mark steps done. A step may have parts (sub-steps, nested as deep as needed).',
     inputSchema: {
       type: 'object',
       properties: {
-        steps: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string', description: 'Short id, e.g. s1' },
-              title: { type: 'string', description: 'A few words' },
-              tier: {
-                type: 'string',
-                enum: TIER_ORDER,
-                description: 'How hard the step is. Picks the model of a subagent or helper; for a "here" step it is only a rating',
-              },
-              where: { type: 'string', enum: wheres },
-            },
-            required: ['id', 'title', 'tier', 'where'],
-          },
-        },
-        done: { type: 'array', items: { type: 'string' }, description: 'Step ids now done' },
+        steps: { type: 'array', items: stepSchema(wheres, PARTS_DEPTH) },
+        done,
         ...start,
         status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
       },
     },
     isDeferred: false,
   })
+}
+
+// How many levels of `parts` the tool's schema spells out (a schema cannot refer to itself
+// everywhere); a plan nested deeper is still taken.
+const PARTS_DEPTH = 3
+
+/** The schema of one plan step; `levels` more levels of parts may sit inside it. */
+function stepSchema(wheres: string[], levels: number): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: levels === PARTS_DEPTH ? 'Short id, e.g. s1. A part\'s id extends its parent\'s: s1.a, s1.a.1' : 'Id extending the parent\'s, e.g. s1.a' },
+      title: { type: 'string', description: 'A few words' },
+      tier: {
+        type: 'string',
+        enum: TIER_ORDER,
+        description: 'How hard the step is. Picks the model of a subagent or helper; for a "here" step or a step with parts it is only a rating',
+      },
+      where: { type: 'string', enum: wheres },
+      count: { type: 'integer', minimum: 2, description: 'N identical agents with this id, run in parallel (a step without parts)' },
+      ...(levels > 0
+        ? {
+            parts: {
+              type: 'array',
+              items: stepSchema(wheres, levels - 1),
+              description: 'Sub-steps, same fields. The step becomes a group: done when all its parts are',
+            },
+          }
+        : {}),
+    },
+    required: ['id', 'title', 'tier', 'where'],
+  }
 }
 
 // A router note about the helper orders starts with this, so a newer one replaces it.
@@ -440,6 +575,8 @@ const hereEffortRule = (set: Settings) =>
 
 // Which plan step a subagent runs, by the tag its Agent call's description starts with.
 const stepByAgent = new Map<string, string>()
+// Agents of a counted step whose run has been counted.
+const finishedAgents = new Set<string>()
 
 async function stepOfAgent($: EngineInterface, agentId: string) {
   let id = stepByAgent.get(agentId)
@@ -489,19 +626,19 @@ const policy = (set: Settings) => {
         h.use === 'all'
           ? 'Use it for every self-contained step that would otherwise be "agent".'
           : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
-      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. Review the helper's result yourself, then mark the step done with ${PLAN_TOOL} (done: [ids]).`
+      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>"}], so the pane shows both. Review the helper's result yourself, then mark the step done with ${PLAN_TOOL}: done: [{id, usage: {provider, amount, unit}}], taking usage from the line the helper's screen shows at the end (Copilot: "Session: N AIC used" gives provider "copilot", amount N, unit "AIC"; Kiro: its credits line gives provider "kiro", the number, unit "credits"). Leave usage out when the screen shows none.`
     : ''
 
   return `# Model routing (model-router mod)
 
 The user installed this mod so that each step of a task runs on the cheapest model tier that does it well, and authorizes delegating steps to subagents for this purpose.
 
-1. When a request has several distinct steps (more than a handful of tool calls in all), first call ${PLAN_TOOL} with the steps. Tag each with a tier and with where it runs. Skip this for single-step or conversational requests. The call waits for the user to approve the plan (unless they turned on auto-approve) and returns the approved plan, which the user may have edited: follow what it returns. If it returns a revision request, revise and call it again.
+1. When a request has several distinct steps (more than a handful of tool calls in all), first call ${PLAN_TOOL} with the steps. Tag each with a tier and with where it runs. Skip this for single-step or conversational requests. The call waits for the user to approve the plan (unless they turned on auto-approve) and returns the approved plan, which the user may have edited: follow what it returns. If it returns a revision request, revise and call it again. A step that splits into pieces may carry "parts" (the same fields, nested as deep as the work needs; a part's id extends its parent's: s3, s3.a, s3.a.1). A step with parts is a group: its tier only rates it, and each part runs where and on the tier it names. A part done by several identical agents at once (N readers, say) has "count": N.
 2. Tiers:
 ${tiers}
 3. where = "here" for steps that need this conversation's accumulated context or back-and-forth with the user, and for small steps (under ~5 tool calls: a subagent costs ~15-40k tokens just to start). where = "agent" for self-contained steps, above all ones that read a lot. A "here" step runs on this chat's own model and thinking level, which no tier can change: still give it the tier its work needs, since that is the default if the user sends it to a subagent, and the router flags a here step rated above this chat's model. Do not mark a step "light" to mean "do it quickly here".
-4. Delegate an "agent" step with the Agent tool, its description starting with "[<step id>]". Do not set model or effort: the router sets them from the plan. Never use subagent_type "fork" for a routed step, since a fork ignores the model. Write a self-contained brief: goal, files, what to return. Light-tier briefs ask for a findings list, not fixes; spot-check surprising findings. If a light result is weak, say so: the user can rerun the step one rung higher from the pane.
-5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them.${helperRule}${skillRule}${
+4. Delegate an "agent" step with the Agent tool, its description starting with "[<step id>]". Do not set model or effort: the router sets them from the plan. Never use subagent_type "fork" for a routed step, since a fork ignores the model. Delegate a part under its own id ("[s3.a]"); with "count": N make N Agent calls with that id, started together, and the part is done when all N finish. Write a self-contained brief: goal, files, what to return. Light-tier briefs ask for a findings list, not fixes; spot-check surprising findings. If a light result is weak, say so: the user can rerun the step one rung higher from the pane.
+5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them. A group is done when all its parts are; naming it in done marks its unfinished parts done.${helperRule}${skillRule}${
     set.hereEffort.enabled ? `\n\nHere-step effort (an experiment the user turned on): ${hereEffortRule(set)}` : ''
   }`
 }
@@ -515,12 +652,22 @@ const usageOf = (u: ModelUsage): Usage => ({
   output: u.output_tokens,
 })
 
+type StartRef = string | { id?: string; helper?: string; model?: string }
+type DoneRef = string | { id?: string; usage?: unknown }
 type PlanInput = {
   status?: boolean
-  steps?: { id: string; title: string; tier: Tier; where?: Where }[]
-  done?: string[]
-  start?: string[]
+  steps?: PlanNode[]
+  done?: DoneRef[]
+  start?: StartRef[]
 }
+
+const idOfRef = (r: StartRef | DoneRef) => (typeof r === 'string' ? r : r?.id)
+const refs = <T extends StartRef | DoneRef>(list: T[] | undefined) =>
+  (Array.isArray(list) ? list : []).flatMap(r => {
+    const id = idOfRef(r)
+
+    return typeof id === 'string' && id ? [{ id, ref: r }] : []
+  })
 
 // Run = go with the plan as it stands in the pane (tier, where, model, thinking edits
 // included). Change = the steps themselves need work (add, drop, split, reword).
@@ -563,7 +710,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const isSettingsOpen = await read($, showSettings)
   const known = await read($, told)
 
-  const done = list.filter(s => s.status === 'done').length
+  // Groups are the sum of their parts: counted once, through the parts.
+  const work = leavesOf(list)
+  const done = work.filter(s => s.status === 'done').length
   const agentCost = list.reduce((n, s) => n + s.cost, 0)
   const saved = list.reduce((n, s) => n + Math.max(0, s.mainCost - s.cost), 0)
   const view = await read($, costView)
@@ -690,6 +839,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     const planMain = Math.max(0, m.cost - base.mainCost)
     const chatSaved = savedOf(chat)
     const lifeSaved = savedOf(life)
+    // What was moved to helpers, in each provider's own unit, for the span picked.
+    const moved = helperLine(view === 'plan' ? helperTotalsOf(list) : view === 'chat' ? chat.helper : life.helper)
     const body =
       view === 'plan' ? (
         <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
@@ -740,6 +891,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               {savedNow > 0 ? `≈${fmtUsd(savedNow)} (${pct(savedNow, mainSpent + equivalent)})` : '—'}
             </Text>
           </Text>
+          {moved && <Text size="footnote" wrap="wrap">{moved}</Text>}
         </Box>
       )
     }
@@ -753,6 +905,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       <Box flexDirection="column" rowGap="xs" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
         {viewSwitch}
         {body}
+        {moved && <Text size="footnote" wrap="wrap">{moved}</Text>}
         <Text dimColor size="caption" wrap="wrap">{foot}</Text>
       </Box>
     )
@@ -800,6 +953,57 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
   // Minimal view: two lines a step, no border and no explanation. The title, then the
   // pickers with the cost and any rerun beside them.
+  // N identical agents at once: "×4", and how many have finished while it runs.
+  const countTag = (s: Step) =>
+    s.count && s.count > 1 ? (
+      <Text key={`count:${s.id}`} dimColor size="footnote">{`×${s.count}${s.status !== 'done' && (s.runs ?? 0) > 0 ? ` · ${s.runs} finished` : ''}`}</Text>
+    ) : null
+  // A helper step: the helper and the model it reported, then its usage and time.
+  const helperInfo = (s: Step) => (isHelperRun(s) && s.helper ? <Text key={`helper:${s.id}`} size="footnote" weight="medium">{helperName(s)}</Text> : null)
+  const helperFactsText = (s: Step) => {
+    const facts = isHelperRun(s) ? helperFacts(s) : ''
+
+    return facts ? <Text key={`facts:${s.id}`} dimColor size="footnote" tabular>{facts}</Text> : null
+  }
+
+  // A group: its title, how many parts are done and what they cost together. Its tier only rates it.
+  const groupCard = (s: Step) => {
+    const r = rollupOf(list, s)
+    const head = (
+      <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+        <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
+        <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+        <Text weight="semibold" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
+        <Text color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>
+        <Text dimColor size="footnote">{`${r.done}/${r.total} done`}</Text>
+        {r.cost > 0 && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(r.cost)}`}</Text>}
+      </Box>
+    )
+    const moved = helperLine(r.helper)
+    if (mini) {
+      return (
+        <Box key={`card:${s.id}`} flexDirection="column">
+          {head}
+          {moved && <Text dimColor size="footnote" wrap="wrap">{moved}</Text>}
+        </Box>
+      )
+    }
+    const tokens = r.usage.input + r.usage.cacheWrite + r.usage.output
+
+    return (
+      <Box key={`card:${s.id}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={s.status === 'running' ? 'warning' : 'subtle'} paddingX="sm" paddingY={tty ? undefined : 'xs'}>
+        {head}
+        {r.cost > 0 && (
+          <Text dimColor size="footnote" tabular>
+            ≈{fmtUsd(r.cost)} · {fmtTok(tokens)} tok + {fmtTok(r.usage.cacheRead)} cached
+            {r.mainCost > r.cost ? ` · saved ≈${fmtUsd(r.mainCost - r.cost)}` : ''}
+          </Text>
+        )}
+        {moved && <Text dimColor size="footnote" wrap="wrap">{moved}</Text>}
+      </Box>
+    )
+  }
+
   const miniCard = (s: Step) => {
     const up = s.where === 'agent' && s.status === 'done' ? nextRung(runsOn(s, set)) : undefined
 
@@ -809,10 +1013,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
           <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
           <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
+          {countTag(s)}
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
           {stepPickers(s)}
           {s.cost > 0 && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
+          {helperInfo(s)}
+          {helperFactsText(s)}
           {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
           {hereNeeds(s, set, m.model) && <Text color="warning" size="footnote">{`⚠ rated for ${hereNeeds(s, set, m.model)}`}</Text>}
           {up && (
@@ -827,6 +1034,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   }
 
   const card = (s: Step) => {
+    if (s.group) return groupCard(s)
     if (mini) return miniCard(s)
     const now = runsOn(s, set)
     const up = s.where === 'agent' && s.status === 'done' ? nextRung(now) : undefined
@@ -845,6 +1053,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
           <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
           <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
+          {countTag(s)}
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
           {stepPickers(s)}
@@ -867,11 +1076,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             {s.effortNote}
           </Text>
         )}
-        {s.where === 'helper' && (
+        {s.where === 'helper' && !s.helper && (
           <Text dimColor size="footnote" wrap="wrap">
             {`Runs on another subscription's agent (${helperOrder(set, s.tier)}); a subagent if none is usable.`}
           </Text>
         )}
+        {helperInfo(s)}
+        {helperFactsText(s)}
         {s.cost > 0 && (
           <Text dimColor size="footnote" tabular>
             ≈{fmtUsd(s.cost)} · {fmtTok(tokens)} tok + {fmtTok(s.usage.cacheRead)} cached
@@ -893,6 +1104,19 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     )
   }
 
+  // Parts sit under their group, indented two cells a level; deeper than three levels keeps the last indent.
+  const row = (s: Step) => {
+    const indent = Math.min(depthOf(list, s), 3) * 2
+
+    return indent > 0 ? (
+      <Box key={`row:${s.id}`} flexDirection="column" paddingLeft={indent}>
+        {card(s)}
+      </Box>
+    ) : (
+      card(s)
+    )
+  }
+
   const stats = rungStats(past)
   const mapped = Object.entries(set.skills)
   const unmapped = seen.filter(n => !(n in set.skills))
@@ -910,7 +1134,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         <Box flexDirection="column">
           <Text size="heading" weight="semibold">Model router</Text>
           <Text dimColor size="footnote">
-            {list.length === 0 ? 'No plan yet' : `${done} of ${list.length} steps done`}
+            {list.length === 0 ? 'No plan yet' : `${done} of ${work.length} steps done`}
             {status === 'pending' ? ' · awaiting your approval' : ''}
           </Text>
         </Box>
@@ -1184,12 +1408,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         </Box>
       )}
 
-      {section('Plan', list.length > 0 ? `${list.length} steps` : undefined)}
+      {section('Plan', list.length > 0 ? `${work.length} steps` : undefined)}
       {list.length === 0 && !mini && (
         <Text dimColor size="footnote">The main agent posts a plan here for multi-step tasks. Turn on Always plan in Settings to plan every message.</Text>
       )}
       <Box flexDirection="column" rowGap={mini ? 0 : tty ? 'sm' : 'md'}>
-        {list.map(card)}
+        {list.map(row)}
       </Box>
       {list.length > 0 && (
         <Box flexDirection="row">
@@ -1238,6 +1462,12 @@ export const register: Register = on => {
         steps: plan.filter(x => x.where === 'agent' && x.status === 'done').length,
       }))
     }
+    // Likewise the helper steps already finished in the plan.
+    const moved = helperTotalsOf(plan)
+    const chat = await read($, chatTotals)
+    if (chat.helper.steps === 0 && chat.helper.usage.length === 0 && (moved.steps > 0 || moved.usage.length > 0)) {
+      await update($, chatTotals, t => ({ ...t, helper: moved }))
+    }
     await $.command.register({ name: 'router', description: 'Show the model-router pane' })
     await registerPlanTool($)
     await refreshStatus($)
@@ -1276,38 +1506,35 @@ export const register: Register = on => {
       }
       return { result: `model-router status: ${JSON.stringify(report)}` }
     }
-    if (input.done) {
-      await update($, steps, list => list.map(s => (input.done!.includes(s.id) ? { ...s, status: 'done' } : s)))
-    }
-    if (input.start?.length) {
-      // One here step runs at a time: starting one sets an unfinished other back to planned.
-      await update($, steps, list =>
-        list.map(s =>
-          input.start!.includes(s.id) && s.status !== 'done'
-            ? { ...s, status: 'running' }
-            : s.where === 'here' && s.status === 'running' ? { ...s, status: 'planned' } : s,
-        ),
-      )
-    }
+    const done = refs(input.done)
+    if (done.length) await markDone($, done)
+    const started = refs(input.start)
+    if (started.length) await markStarted($, started)
     await refreshStatus($)
     if (!input.steps) return withNotes(planText(await read($, steps), set, (await read($, main)).model))
 
     const old = await read($, steps)
+    const flat = flattenPlan(input.steps)
     // A plan that shares no step with the last one, or follows a finished one (ids may
     // repeat), starts its own cost count and its own steps.
-    const isNewPlan = (old.length > 0 && old.every(o => o.status === 'done')) || !old.some(o => input.steps!.some(s => s.id === o.id))
+    const isNewPlan = (old.length > 0 && old.every(o => o.status === 'done')) || !old.some(o => flat.steps.some(s => s.id === o.id))
     if (isNewPlan) {
       const mainCost = (await read($, main)).cost
       await update($, planBase, () => ({ mainCost, at: new Date().toISOString() }))
     }
-    await update($, steps, () =>
-      input.steps!.map(s => {
+    await setSteps($, () =>
+      flat.steps.map(s => {
         const was = isNewPlan ? undefined : old.find(o => o.id === s.id)
         // With Helpers off, a helper step is a normal subagent step.
-        const where: Where = s.where === 'helper' && !set.helpers.enabled ? 'agent' : (s.where ?? 'agent')
-        return was ? { ...was, title: s.title, tier: s.tier, where } : newStep(s.id, s.title, s.tier, where)
+        const where: Where = s.where === 'helper' && !set.helpers.enabled ? 'agent' : s.where
+        const shape = { parent: s.parent, group: s.group || undefined, count: s.count }
+
+        return { ...(was ? { ...was, title: s.title, tier: s.tier, where } : newStep(s.id, s.title, s.tier, where)), ...shape }
       }),
     )
+    if (flat.dropped.length) {
+      await update($, notes, n => [...n, `These step ids came up twice in the plan and the repeats were ignored: ${flat.dropped.join(', ')}. Every id must be unique.`])
+    }
     void $.ui.open({ id: PANE, title: 'Model router' })
 
     if (await read($, autoApprove)) {
@@ -1377,14 +1604,18 @@ export const register: Register = on => {
       if (!tier) return next(e)
       const exists = (await read($, steps)).some(s => s.id === tag)
       if (!exists) {
-        await update($, steps, list => [...list, newStep(tag, `Skill ${tag.slice(SKILL_TAG.length)}`, tier, 'agent')])
+        await setSteps($, list => [...list, newStep(tag, `Skill ${tag.slice(SKILL_TAG.length)}`, tier, 'agent')])
       }
     }
     let step = (await read($, steps)).find(s => s.id === tag)
     if (!step) return next(e)
-    // A helper step run through the Agent tool is the fallback: it is a subagent step now.
+    if (step.group) {
+      const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
+      return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
+    }
+    // A helper step run through the Agent tool is the fallback: it is a subagent step now, and no helper ran it.
     if (step.where === 'helper') {
-      await editStep($, step.id, s => ({ ...s, where: 'agent' }))
+      await editStep($, step.id, s => ({ ...s, where: 'agent', helper: undefined, helperModel: undefined, startedAt: undefined }))
       await tellSteps($, [step.id])
       step = { ...step, where: 'agent' }
     }
@@ -1439,6 +1670,7 @@ export const register: Register = on => {
   })
 
   // A subagent's run ending finishes its step: status, history, the start-up check.
+  // A counted step (N identical agents) is done when its Nth run ends.
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
     if (!e.agentId) return ran
@@ -1446,8 +1678,18 @@ export const register: Register = on => {
     if (!step) return ran
 
     const set = await read($, settings)
+    const total = step.count ?? 1
+    // An agent ending twice is one run; only a counted step has to tell its agents apart.
+    const again = total > 1 && finishedAgents.has(e.agentId)
+    if (total > 1) finishedAgents.add(e.agentId)
+    const runs = (step.runs ?? 0) + (again ? 0 : 1)
+    if (runs < total) {
+      await editStep($, step.id, s => ({ ...s, runs, status: s.status === 'done' ? 'done' : 'running', resolvedModel: s.resolvedModel ?? e.usage?.model }))
+      return ran
+    }
     const ranOn = { model: modelOf(e.usage?.model) ?? runsOn(step, set).model, effort: runsOn(step, set).effort }
-    const heavy = isSetupHeavy(step.usage)
+    // Setting-up is judged per run: N runs add up N times the reading.
+    const heavy = isSetupHeavy({ input: step.usage.input / total, cacheWrite: step.usage.cacheWrite / total, cacheRead: step.usage.cacheRead / total, output: step.usage.output / total })
     const at = new Date().toISOString()
     const key = `${at}:${step.id}`
     const isFirstFinish = step.status !== 'done'
@@ -1457,12 +1699,13 @@ export const register: Register = on => {
     }
     await editStep($, step.id, s => ({
       ...s,
+      runs,
       status: 'done',
       resolvedModel: s.resolvedModel ?? e.usage?.model,
       setupHeavy: heavy,
       historyKey: key,
     }))
-    await editHistory($, h => [...h, { key, tier: step.tier, ...ranOn, cost: step.cost, setupHeavy: heavy, rerun: false, at }])
+    await editHistory($, h => [...h, { key, tier: step.tier, ...ranOn, cost: step.cost / total, setupHeavy: heavy, rerun: false, at }])
     if (heavy) {
       await update($, notes, n => [
         ...n,
