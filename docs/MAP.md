@@ -8,10 +8,10 @@ symbols of the repo).
 
 ## Most imported modules (change with care)
 
-- `sciencefig.style` — imported by 34
-- `sciencefig.svg` — imported by 19
+- `sciencefig.style` — imported by 35
+- `sciencefig.svg` — imported by 20
+- `sciencefig.plot` — imported by 8
 - `sciencefig.neuro` — imported by 8
-- `sciencefig.plot` — imported by 7
 - `sciencefig.check` — imported by 6
 - `sciencefig.morph` — imported by 5
 - `sciencefig.dynamics` — imported by 5
