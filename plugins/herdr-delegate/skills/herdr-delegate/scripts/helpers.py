@@ -357,9 +357,17 @@ def run_text(cmd, timeout=30):
     return r.stdout
 
 
+KIRO_ROW = re.compile(r"^\s*\*?\s*([A-Za-z0-9][\w.\-]*)\s+([\d.]+)x credits", re.M)
+
+
 def parse_kiro(text):
     """`kiro-cli chat --list-models`: rows like `* auto   1.00x credits   description`."""
-    return re.findall(r"^\s*\*?\s*([A-Za-z0-9][\w.\-]*)\s+[\d.]+x credits", text, re.M)
+    return [m.group(1) for m in KIRO_ROW.finditer(text)]
+
+
+def parse_kiro_credits(text):
+    """The credit multiplier per model id, from the same rows (model-router orders helper models by it)."""
+    return {m.group(1): float(m.group(2)) for m in KIRO_ROW.finditer(text)}
 
 
 def parse_agy(text):
@@ -435,8 +443,13 @@ def fetch_acp(cli, timeout=30):
         proc.wait()
 
 
+def fetch_kiro(cli):
+    text = run_text([cli, "chat", "--list-models"])
+    return parse_kiro(text), parse_kiro_credits(text)
+
+
 FETCHERS = {
-    "kiro-list": lambda cli: parse_kiro(run_text([cli, "chat", "--list-models"])),
+    "kiro-list": fetch_kiro,
     "agy-list": lambda cli: parse_agy(run_text([cli, "models"])),
     "copilot-acp": fetch_acp,
 }
@@ -489,10 +502,13 @@ def refresh_models(cfg, providers=None, today=None):
             cache[pname] = dict(old, checked=today, error="no way to list models; relying on the configured ones")
             continue
         try:
-            ids = fetch(prov["cli"])
+            got = fetch(prov["cli"])
+            ids, credits = got if isinstance(got, tuple) else (got, None)
             if not ids:
                 raise RuntimeError("no models found in the output")
             cache[pname] = {"date": today, "checked": today, "models": ids}
+            if credits:
+                cache[pname]["credits"] = credits
         except Exception as err:  # noqa: BLE001 - any failure must leave the other providers alone
             cache[pname] = dict(old, checked=today, error=str(err)[:200])
     write_json(models_file(), cache)

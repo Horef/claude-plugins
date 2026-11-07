@@ -168,6 +168,8 @@ check(code == 1 and "unknown provider" in err, "set refuses an unknown provider"
 check(helpers.parse_kiro(KIRO_LIST) == ["auto", "claude-opus-5.5", "claude-sonnet-5.5", "claude-haiku-5.5", "claude-opus-6", "claude-opus-4.8", "glm-5"], "parse_kiro", str(helpers.parse_kiro(KIRO_LIST)))
 check(helpers.parse_agy(AGY_LIST)[:2] == ["gemini-3.8-flash-high", "gemini-3.8-flash-low"] and len(helpers.parse_agy(AGY_LIST)) == 8, "parse_agy skips the progress line")
 check(helpers.parse_acp(ACP_LINES) == ["auto", "claude-sonnet-5.5", "claude-opus-5.5", "gpt-6-luna"], "parse_acp keeps enabled models once", str(helpers.parse_acp(ACP_LINES)))
+cr = helpers.parse_kiro_credits(KIRO_LIST)
+check(set(cr) == set(helpers.parse_kiro(KIRO_LIST)) and all(isinstance(v, float) for v in cr.values()), "parse_kiro_credits", str(cr))
 check(helpers.parse_kiro("garbage") == [] and helpers.parse_agy("") == [] and helpers.parse_acp(["{", "[]"]) == [], "parsers return [] on garbage")
 os.environ["FAKE_COPILOT_FAIL"] = "1"
 code, out, _ = run("models")
