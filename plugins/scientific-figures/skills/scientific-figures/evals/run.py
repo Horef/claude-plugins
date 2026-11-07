@@ -1,5 +1,6 @@
 """Scripted evals for scientific-figures: build, lint and render every worked example (exit 0 pass, 1 fail, 2 not run).
 
+Also runs `evals/lint_cases.py` (known-answer cases for the linter, e.g. a box drawn over a label must be flagged).
 Runs `lib/examples/build_all.py`, which builds each example in memory, lints it, checks it is inline-safe SVG,
 and renders all figures on one sheet in a temporary folder (so the render path - Playwright, or headless Chrome
 on a Mac - is tested too). Nothing is written into the skill folder. `$SCIENCEFIG` points at another library copy.
@@ -40,8 +41,14 @@ def main() -> int:
     if p.returncode == 0 and re.search(r"^0 figure\(s\)", p.stdout, re.M):
         print(f"scientific-figures evals: NOT RUN - no figure could be built{note}")
         return 2
-    print(f"scientific-figures evals: {'pass' if p.returncode == 0 else 'FAIL'}{note}")
-    return 0 if p.returncode == 0 else 1
+    cases = subprocess.run([sys.executable, str(HERE / "lint_cases.py")], env=env, capture_output=True,
+                           text=True, timeout=300)
+    print("\n".join(l for l in cases.stdout.splitlines() if not l.startswith("ok  ")))
+    if cases.returncode != 0 and cases.stderr.strip():
+        print(cases.stderr.strip().splitlines()[-1])
+    passed = p.returncode == 0 and cases.returncode == 0
+    print(f"scientific-figures evals: {'pass' if passed else 'FAIL'}{note}")
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

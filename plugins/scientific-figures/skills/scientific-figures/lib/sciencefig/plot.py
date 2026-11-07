@@ -19,6 +19,11 @@ import logging
 import numpy as np
 import matplotlib
 import matplotlib.collections
+import matplotlib.patches
+import matplotlib.legend
+import matplotlib.axis
+import matplotlib.axes
+import matplotlib.figure
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 logging.getLogger("matplotlib.mathtext").setLevel(logging.ERROR)
@@ -28,7 +33,7 @@ import matplotlib.pyplot as plt
 from matplotlib.transforms import Bbox
 
 from . import style as S
-from .svg import _rects_overlap, _seg_intersects_rect
+from .svg import _rects_overlap, _seg_intersects_rect, _covers, COVER_ALPHA
 
 RC = {
     "font.family": S.measure_family(),
@@ -347,9 +352,77 @@ def scale_bar(ax, x, y, length, label, vertical=False, color=S.INK, lw=1.6, size
 
 
 # ------------------------------------------------------------------ lint
+def _draw_order(fig):
+    """{id(artist): rank} in the order matplotlib draws them: Figure and Axes draw their children
+    sorted by zorder (stable, so later-added wins a tie), an Axes paints its background first, a
+    Legend paints its frame before its entries, an Axis paints its ticks before its labels."""
+    order, seen = {}, set()
+
+    def walk(a):
+        if id(a) in seen:
+            return
+        seen.add(id(a))
+        order[id(a)] = len(order)
+        try:
+            kids = list(a.get_children())
+        except Exception:
+            return
+        if isinstance(a, (matplotlib.figure.Figure, matplotlib.axes.Axes)):
+            patch = a.patch
+            kids = [k for k in kids if k is not patch]
+            kids = ([patch] if patch.get_visible() else []) + sorted(kids, key=lambda k: k.get_zorder())
+        elif isinstance(a, matplotlib.legend.Legend):
+            kids.sort(key=lambda k: k is not a.legendPatch)
+        elif isinstance(a, matplotlib.axis.Axis):
+            kids.sort(key=lambda k: not isinstance(k, matplotlib.axis.Tick))
+        for k in kids:
+            walk(k)
+
+    walk(fig)
+    return order
+
+
+def _covering_polys(fig):
+    """[(artist, [display-space polygons], rank-source)] for every visible filled patch or filled
+    collection (bars, boxes, bands, fill_between) whose face is at least COVER_ALPHA opaque."""
+    out = []
+    for a in fig.findobj(matplotlib.patches.Patch):
+        if not a.get_visible() or not a.get_fill() or getattr(a, "_sf_nolint", False):
+            continue
+        fc = matplotlib.colors.to_rgba(a.get_facecolor())
+        if fc[3] < COVER_ALPHA:
+            continue
+        try:
+            polys = [p for p in a.get_path().to_polygons(a.get_transform())]
+        except Exception:
+            continue
+        out.append((a, polys))
+    for a in fig.findobj(matplotlib.collections.Collection):
+        if not isinstance(a, (matplotlib.collections.PolyCollection, matplotlib.collections.PatchCollection)):
+            continue
+        if not a.get_visible() or getattr(a, "_sf_nolint", False):
+            continue
+        fcs = a.get_facecolor()
+        if len(fcs) == 0 or max(c[3] for c in fcs) < COVER_ALPHA:
+            continue
+        try:
+            tr = a.get_transform()
+            offs = a.get_offsets()
+            shift = a.get_offset_transform().transform(offs) if len(offs) and np.any(offs) else None
+            polys = []
+            for i, p in enumerate(a.get_paths()):
+                for poly in p.to_polygons(tr):
+                    polys.append(poly + shift[i % len(shift)] if shift is not None else poly)
+        except Exception:
+            continue
+        out.append((a, polys))
+    return out
+
+
 def lint(fig, margin=1):
     """Layout problems in a matplotlib figure: texts overlapping texts,
-    texts outside the figure, texts crossed by data lines, tiny fonts.
+    texts outside the figure, texts crossed by data lines, tiny fonts,
+    texts hidden by a filled patch drawn on top of them.
     Empty list == clean. Call before export(), or use finish(fig)."""
     if not hasattr(fig.canvas, "get_renderer"):
         raise RuntimeError("figure already exported/closed: call P.lint before P.export, or use P.finish(fig)")
@@ -436,11 +509,32 @@ def lint(fig, margin=1):
             if inside.any():
                 probs.append(f"MARKERS UNDER TEXT: '{t.get_text()}' x scatter '{c.get_label()}'")
                 break
+    # filled patches (boxes, bars, bands) drawn AFTER a text hide it; patches drawn before it are fine
+    patches = _covering_polys(fig)
+    if patches and texts:
+        order = _draw_order(fig)
+        for t, b in texts:
+            ot = order.get(id(t))
+            if ot is None:
+                continue
+            for a, polys in patches:
+                oa = order.get(id(a))
+                if oa is None or oa < ot:
+                    continue
+                rect = b
+                if a.get_clip_on() and a.axes is not None:  # a clipped patch only paints inside its axes
+                    ab = a.axes.bbox
+                    rect = (max(b[0], ab.x0), max(b[1], ab.y0), min(b[2], ab.x1), min(b[3], ab.y1))
+                    if rect[0] >= rect[2] or rect[1] >= rect[3]:
+                        continue
+                if _covers(polys, rect):
+                    probs.append(f"PATCH COVERS TEXT: '{t.get_text()}' under {type(a).__name__}")
     return sorted(set(probs))
 
 
 def nolint(*artists):
-    """Mark lines that may legitimately pass under text (e.g. grid)."""
+    """Mark lines, scatter markers or filled patches that may legitimately pass over or under text
+    (e.g. a grid, or a box drawn over a label on purpose)."""
     for a in artists:
         for l in (a if isinstance(a, (list, tuple)) else [a]):
             l._sf_nolint = True

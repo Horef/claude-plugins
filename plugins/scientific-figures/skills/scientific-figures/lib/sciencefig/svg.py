@@ -166,6 +166,52 @@ def _rects_overlap(a, b):
     return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
 
+# a filled patch with less opacity than this is treated as a tint that does not hide text
+COVER_ALPHA = 0.35
+
+
+def _point_in_poly(pt, poly):
+    """Even-odd point-in-polygon test (poly: list of (x, y))."""
+    x, y = pt
+    inside = False
+    n = len(poly)
+    for k in range(n):
+        (x1, y1), (x2, y2) = poly[k], poly[(k + 1) % n]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def _poly_overlaps_rect(poly, r):
+    """Does the filled polygon `poly` (list of (x, y)) share area with rect r=(x0,y0,x1,y1)?
+    True if an edge crosses the rect, a vertex lies in it, or the rect lies inside the polygon."""
+    if len(poly) < 3:
+        return False
+    x0, y0, x1, y1 = r
+    if x0 >= x1 or y0 >= y1:
+        return False
+    if any(x0 <= px <= x1 and y0 <= py <= y1 for px, py in poly):
+        return True
+    n = len(poly)
+    if any(_seg_intersects_rect(poly[k], poly[(k + 1) % n], r) for k in range(n)):
+        return True
+    return _point_in_poly((x0, y0), poly)
+
+
+def _covers(polys, rect, inset=1.0):
+    """Is any filled polygon of `polys` over (a 1 px inset of) the text rect? The inset keeps a label that
+    merely touches the edge of its own box from counting as covered."""
+    r = (rect[0] + inset, rect[1] + inset, rect[2] - inset, rect[3] - inset)
+    return any(_poly_overlaps_rect(p, r) for p in polys)
+
+
+def _opaque(fill, opacity):
+    """Does an SVG fill (colour string or 'none') with fill-opacity hide what is under it?"""
+    if fill is None or str(fill).lower() in ("none", "transparent"):
+        return False
+    return opacity is None or opacity >= COVER_ALPHA
+
+
 def _bezier(p0, p1, p2, p3, n=24):
     pts = []
     for k in range(n + 1):
@@ -193,6 +239,7 @@ class Canvas:
         self.items = []        # svg strings
         self.texts = []        # (bbox, label, flags)
         self.geoms = []        # (polyline points, tag, lint flag)
+        self.fills = []        # (polygon points, tag, draw order) of filled, mostly opaque shapes
         self.keepouts = []     # rects where no text may go (e.g. data area of an inset)
         self._uid = 0
 
@@ -218,6 +265,11 @@ class Canvas:
     def _geom(self, pts, tag, lint=True):
         self.geoms.append((list(pts), tag, lint))
 
+    def _fill(self, pts, tag, lint, fill, opacity):
+        """Remember a filled shape (just appended to items) so lint can see it covering earlier text."""
+        if lint and _opaque(fill, opacity):
+            self.fills.append((list(pts), tag, len(self.items) - 1))
+
     # ---------------- primitives
     def line(self, x1, y1, x2, y2, color=S.INK, width=S.LW_STRUCT, dash=None,
              tag="line", lint=True, cap="round", opacity=None):
@@ -235,6 +287,8 @@ class Canvas:
             stroke_dasharray=dash, stroke_linejoin="round", stroke_linecap="round",
             stroke_opacity=opacity, fill_opacity=fill_opacity) + "/>")
         self._geom(list(pts) + ([pts[0]] if closed else []), tag, lint)
+        if closed:
+            self._fill(pts, tag, lint, fill, fill_opacity)
 
     def polygon(self, pts, fill=S.INK, color="none", width=0, tag="shape", lint=True,
                 fill_opacity=None):
@@ -250,6 +304,7 @@ class Canvas:
             stroke_dasharray=dash, fill_opacity=fill_opacity) + "/>")
         if color != "none":
             self._geom([(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)], tag, lint)
+        self._fill([(x, y), (x + w, y), (x + w, y + h), (x, y + h)], tag, lint, fill, fill_opacity)
 
     def circle(self, cx, cy, r, fill="none", color=S.INK, width=S.LW_STRUCT,
                tag="circle", lint=True, dash=None, fill_opacity=None):
@@ -259,8 +314,10 @@ class Canvas:
             stroke_width=width if color != "none" else None,
             stroke_dasharray=dash, fill_opacity=fill_opacity) + "/>")
         n = 24
-        self._geom([(cx + r * math.cos(2 * math.pi * k / n), cy + r * math.sin(2 * math.pi * k / n))
-                    for k in range(n + 1)], tag, lint)
+        ring = [(cx + r * math.cos(2 * math.pi * k / n), cy + r * math.sin(2 * math.pi * k / n))
+                for k in range(n + 1)]
+        self._geom(ring, tag, lint)
+        self._fill(ring[:-1], tag, lint, fill, fill_opacity)
 
     def ellipse(self, cx, cy, rx, ry, fill="none", color=S.INK, width=S.LW_STRUCT,
                 tag="ellipse", lint=True, dash=None, fill_opacity=None):
@@ -270,8 +327,10 @@ class Canvas:
             stroke_width=width if color != "none" else None,
             stroke_dasharray=dash, fill_opacity=fill_opacity) + "/>")
         n = 32
-        self._geom([(cx + rx * math.cos(2 * math.pi * k / n), cy + ry * math.sin(2 * math.pi * k / n))
-                    for k in range(n + 1)], tag, lint)
+        ring = [(cx + rx * math.cos(2 * math.pi * k / n), cy + ry * math.sin(2 * math.pi * k / n))
+                for k in range(n + 1)]
+        self._geom(ring, tag, lint)
+        self._fill(ring[:-1], tag, lint, fill, fill_opacity)
 
     def bezier(self, p0, p1, p2, p3, color=S.INK, width=S.LW_STRUCT, dash=None,
                tag="curve", lint=True, fill="none"):
@@ -291,6 +350,7 @@ class Canvas:
             stroke_linejoin="round", stroke_linecap="round", fill_opacity=fill_opacity) + "/>")
         if sample_pts:
             self._geom(sample_pts, tag, lint)
+            self._fill(sample_pts, tag, lint, fill, fill_opacity)
 
     # ---------------- text
     def text(self, x, y, s, size=S.SIZE, anchor="start", color=S.INK, bold=False,
@@ -333,7 +393,8 @@ class Canvas:
                               f'stroke-linejoin="round">{body}</text>')
         self.items.append(f'<text {common} fill="{color}">{body}</text>')
         bbox = (x0, y_base - asc, x0 + w, y_base + desc)
-        self.texts.append((bbox, s, {"lint": lint, "tag": tag, "size": size, "halo": halo}))
+        self.texts.append((bbox, s, {"lint": lint, "tag": tag, "size": size, "halo": halo,
+                                            "order": len(self.items) - 1}))
         return bbox
 
     def math(self, x, y, tex, size=S.SIZE, anchor="start", color=S.INK, baseline="alphabetic",
@@ -377,7 +438,8 @@ class Canvas:
                 d.append("Z")
         self.items.append(f'<path d="{"".join(d)}" fill="{color}"/>')
         bbox = (float(x0 + ext.x0), float(yb - top), float(x0 + ext.x1), float(yb - bot))
-        self.texts.append((bbox, tex, {"lint": lint, "tag": tag, "size": size, "halo": False}))
+        self.texts.append((bbox, tex, {"lint": lint, "tag": tag, "size": size, "halo": False,
+                                            "order": len(self.items) - 1}))
         return bbox
 
     def lines_of_text(self, x, y, lines, size=S.SIZE, gap=1.25, **kw):
@@ -662,7 +724,8 @@ class Canvas:
         """Return a list of layout problems. Empty list == clean.
 
         Checks: text outside the figure; text overlapping text; text crossed
-        by any linted line/curve/shape outline; text in a keep-out; font
+        by any linted line/curve/shape outline; text covered by a filled shape
+        drawn later (on top of it); text in a keep-out; font
         smaller than SIZE_MIN; forbidden '&'."""
         probs = []
         T = [(b, s, f) for b, s, f in self.texts if f["lint"]]
@@ -698,6 +761,12 @@ class Canvas:
                     if _seg_intersects_rect(p, q, r):
                         probs.append(f"LINE CROSSES TEXT: '{s}' x {tag}")
                         break
+        # a filled, mostly opaque shape drawn AFTER a label (so on top of it) hides it; a shape drawn
+        # before it (label inside a box) is fine
+        for b, s, f in T:
+            for pts, tag, order in self.fills:
+                if order > f["order"] and _covers([pts], b):
+                    probs.append(f"PATCH COVERS TEXT: '{s}' under filled {tag}")
         return sorted(set(probs))
 
     # ---------------- output
