@@ -5,7 +5,6 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
-- O2 2026-10-30 [friction] §5 lint: the skill itself says the linter "does not see filled patches (icon boxes, bands) covering text" and that streamlines are not checked; both are known blind spots handled by looking. Candidates to codify as lint checks once use confirms they still bite (claude-code-web, adopting; from the skill text)
 - O12 2026-11-07 [missing] §5 lint: streamlines are still not checked against text (the other half of O2, resolved in 7.2.0 for filled patches only); a streamline crossing a label is caught only by looking. (claude-code, split from O2)
 
 ## Resolved
