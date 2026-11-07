@@ -80,6 +80,53 @@ def new_checks() -> list[str]:
     return fails
 
 
+def rect_pdf(path: Path, x0: int, y0: int, x1: int, y1: int, w: int = 200, h: int = 100) -> None:
+    """A one-page PDF with one black filled rectangle (a stand-in for a drawing that may run past the canvas)."""
+    stream = f"0 g {x0} {y0} {x1 - x0} {y1 - y0} re f"
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents 4 0 R >>",
+            f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream"]
+    out, offs = "%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(out))
+        out += f"{i} 0 obj\n{o}\nendobj\n"
+    x = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n" + "".join(f"{o:010d} 00000 n \n" for o in offs)
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{x}\n%%EOF\n"
+    path.write_text(out, encoding="latin-1")
+
+
+def edge_checks() -> list[str]:
+    """A figure whose drawing reaches its bottom edge (rows cut off, the Mel write-up's Fig. 7) is a problem; one with
+    a margin is not."""
+    if not shutil.which("pdftoppm"):
+        print("pdftoppm not installed: edge check not tested")
+        return []
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t) / "w"
+        run("init", str(d))
+        (d / "figures").mkdir(exist_ok=True)
+        rect_pdf(d / "figures" / "cut.pdf", 20, 0, 180, 40)      # runs into the bottom edge
+        rect_pdf(d / "figures" / "fine.pdf", 20, 15, 180, 85)    # 15 pt margin all round
+        (d / "ledger.md").write_text("# L\n\n## Message\nWe found X.\n\n## Claims\n| id | claim | status | evidence | figure |\n"
+                                     "|---|---|---|---|---|\n| C1 | X rises | established | R1 | fig:a |\n\n## Out of scope\n")
+        body = ("\\section{X rises}\n\\claim{C1}\nX rises (\\figref{fig:a}, \\figref{fig:b}).\n\n"
+                "\\begin{figure}[tbp]\\centering\\includegraphics[width=0.5\\textwidth]{figures/cut.pdf}"
+                "\\caption{\\textbf{X rises.} Cut.}\\label{fig:a}\\end{figure}\n"
+                "\\begin{figure}[tbp]\\centering\\includegraphics[width=0.5\\textwidth]{figures/fine.pdf}"
+                "\\caption{\\textbf{X rises.} Fine.}\\label{fig:b}\\end{figure}\n")
+        m = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(m[:m.index("\\begin{inshort}")] + "\\begin{inshort}We found X.\\end{inshort}\n"
+                                    + body + m[m.index("\\printbibliography"):])
+        r = run("check", str(d))
+        if "fig:a: figures/cut.pdf has ink up to its edge (bottom" not in r.stdout or r.returncode != 1:
+            fails.append("cut-off figure not flagged:\n" + r.stdout)
+        if "fine.pdf" in r.stdout or "fig:b:" in r.stdout.split("notes")[0]:
+            fails.append("figure with a margin flagged:\n" + r.stdout)
+    return fails
+
+
 def main() -> int:
     fails = []
     with tempfile.TemporaryDirectory() as t:
@@ -125,6 +172,7 @@ def main() -> int:
         else:
             print("LaTeX not installed: build, pages and readers not checked")
     fails += new_checks()
+    fails += edge_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")
