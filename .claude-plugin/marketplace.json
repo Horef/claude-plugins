@@ -82,6 +82,12 @@
       "source": "./plugins/literature-research",
       "description": "Literature research and claim verification for any research question: frame the question and the decision it serves, search several sources in parallel (PubMed, Semantic Scholar, arXiv, OpenAlex, the web, DEVONthink when on the owner's Mac) with a reproducible search log and citation chasing, record every finding in an evidence ledger (value, units, species, preparation, source, page, verbatim quote, evidence type) before any prose, have fresh checkers re-read each cited passage, then synthesise the answer with conflicts and costed gaps. Use for parameter lookups, mechanism or state-of-the-field reviews, novelty or prior-art checks, verifying a claim or citation, and finding methods; not for writing the final paper (use research-writing).",
       "category": "general"
+    },
+    {
+      "name": "research-assistant",
+      "source": "./plugins/research-assistant",
+      "description": "Run a research question through the whole loop with checkpoints: frame it and the decision it serves, review the literature (literature-research), turn findings into competing hypotheses and a costed analysis plan, run the approved analyses (bounded local runs; large compute only on a yes), record results in the project, and write them up (research-writing). Stops for the person at three gates: after framing, after the literature (which hypotheses to test), and before any compute. Starts from a question in a project, a new idea (novelty check first, then a scaffolded project), reviewer questions, or a paper to build on. Use when asked to research, investigate or test an idea end to end, to plan analyses for open questions, or to take a question from literature to results; for a literature question alone use literature-research, for writing alone research-writing.",
+      "category": "general"
     }
   ]
 }
