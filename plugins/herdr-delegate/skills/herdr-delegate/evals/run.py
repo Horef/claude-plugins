@@ -45,5 +45,13 @@ cleared = helpers.refresh_logins(state)
 ok = cleared == ["kiro"] and state == {"agy": "login", "copilot": "2099-01-01"}
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} login mark clears when logged in again: {state}")
+# Config, render, set, custom and models: own process, temp config dir, fake CLIs (render_cases.py).
+import subprocess  # noqa: E402
+sub = subprocess.run([sys.executable, str(HERE / "render_cases.py")], capture_output=True, text=True)
+tail = sub.stdout.strip().splitlines()[-1] if sub.stdout.strip() else sub.stderr.strip()[-300:]
+failures += sub.returncode != 0
+print(f"{'OK  ' if sub.returncode == 0 else 'FAIL'} render_cases.py: {tail}")
+if sub.returncode != 0:
+    print("\n".join(l for l in sub.stdout.splitlines() if l.startswith("FAIL")))
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)
