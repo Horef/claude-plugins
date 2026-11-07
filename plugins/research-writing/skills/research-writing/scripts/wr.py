@@ -9,7 +9,8 @@ Standard library only; needs latexmk (with lualatex or pdflatex, and biber) for 
                                       citations, overfull boxes, missing files
   wr.py pages DIR [--first N --last M --dpi 60]   PNG per page in DIR/build/pages, plus a contact sheet when Pillow is there
   wr.py check DIR                     the mechanical checks of the skill (exit 1 when a problem is found); then notes that
-                                      never fail it: figure heights against the page, figure numbers vs the text (pdftotext)
+                                      never fail it: figure heights against the page, figure numbers vs the text (pdftotext); with pdftoppm,
+                                      figures whose ink reaches their edge (cut off) are problems
   wr.py readers DIR --round N [--roles pi,reviewer,newcomer,outsider,editor]   write one brief per fresh reader into review/round-N/
   wr.py status DIR                    claims, figures and the reader questions still open
 
@@ -198,6 +199,63 @@ def _ledger(d: Path) -> dict:
     return out
 
 
+EDGE_BAND_MM, EDGE_SHARE, EDGE_INK = 0.8, 0.01, 200  # band along each edge; share of its length inked; grey < 200
+
+
+def _pgm(path: Path) -> tuple[int, int, bytes]:
+    """(width, height, pixels) of a binary greyscale PGM (P5, 8 bit), as pdftoppm -gray writes it."""
+    data = path.read_bytes()
+    fields, i = [], 2
+    while len(fields) < 3:
+        while data[i:i + 1].isspace():
+            i += 1
+        if data[i:i + 1] == b"#":
+            i = data.index(b"\n", i)
+            continue
+        j = i
+        while not data[j:j + 1].isspace():
+            j += 1
+        fields.append(int(data[i:j]))
+        i = j
+    return fields[0], fields[1], data[i + 1:]
+
+
+def edge_ink(pdf: Path, dpi: int = 72) -> dict[str, float] | None:
+    """Share of each edge's length with ink in a thin band along it. A figure whose drawing runs past its canvas
+    (rows of a panel lost, an axis label clipped) has ink up to the edge; matplotlib leaves a margin otherwise.
+    None when pdftoppm is missing or the graphic is not a PDF."""
+    if pdf.suffix.lower() != ".pdf" or not shutil.which("pdftoppm"):
+        return None
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        subprocess.run(["pdftoppm", "-r", str(dpi), "-gray", "-singlefile", "-f", "1", "-l", "1", str(pdf),
+                        t + "/x"], check=True, capture_output=True)
+        w, h, px = _pgm(Path(t) / "x.pgm")
+    b = max(1, round(EDGE_BAND_MM / 25.4 * dpi))
+    ink = lambda x, y: px[y * w + x] < EDGE_INK
+    return {"top": sum(any(ink(x, y) for y in range(b)) for x in range(w)) / w,
+            "bottom": sum(any(ink(x, y) for y in range(h - b, h)) for x in range(w)) / w,
+            "left": sum(any(ink(x, y) for x in range(b)) for y in range(h)) / h,
+            "right": sum(any(ink(x, y) for x in range(w - b, w)) for y in range(h)) / h}
+
+
+def figure_edges(d: Path, figs: list[str]) -> list[str]:
+    """Problems for included PDFs with ink touching an edge: probably cut off."""
+    out = []
+    for f in figs:
+        lab = re.search(r"\\label\{(fig:[^}]+)\}", f)
+        for m in re.finditer(r"\\includegraphics\*?(?:\[[^\]]*\])?\{([^}]+)\}", f):
+            g = _graphic(d, m.group(1))
+            e = edge_ink(g) if g else None
+            cut = {k: v for k, v in (e or {}).items() if v > EDGE_SHARE}
+            if cut:
+                sides = ", ".join(f"{k} {v:.0%}" for k, v in cut.items())
+                out.append(f"{lab.group(1) if lab else m.group(1)}: {g.relative_to(d)} has ink up to its edge ({sides} "
+                           "of the edge): the drawing probably runs past the canvas (rows, labels or markers cut off). "
+                           "Render it and look; enlarge the figure or save with bbox_inches='tight', pad_inches=0.05")
+    return out
+
+
 def check(d: Path) -> list[str]:
     """Problems a script can find; each one names where it is and what to do."""
     probs: list[str] = []
@@ -247,6 +305,7 @@ def check(d: Path) -> list[str]:
         cap = re.search(r"\\caption(?:\[[^\]]*\])?\{\s*(\\textbf\{)?", f)
         if cap and not cap.group(1):
             probs.append(f"{name}: caption does not start with a bold title sentence (\\textbf{{the finding.}})")
+    probs += figure_edges(d, [f for _, f in figs])
     # figure pages vs page of first citation (needs a build and \figref)
     aux = d / "build" / "main.aux"
     if aux.exists():
@@ -429,6 +488,8 @@ def notes(d: Path) -> list[str]:
     figs = [m.group(0) for m in re.finditer(r"\\begin\{figure\*?\}.*?\\end\{figure\*?\}", body, re.S)]
     out = ["height " + x for x in figure_heights(d, figs)]
     out += ["numbers " + x for x in figure_number_misses(d, body, figs)]
+    if figs and not shutil.which("pdftoppm"):
+        out.append("edge check skipped: pdftoppm (poppler) is missing, so figures cut off at their edge are not detected")
     if not _ledger(d)["has_condition"] and _ledger(d)["claims"]:
         out.append("ledger.md has no condition column; add one (what each claim was tested under)")
     return out
