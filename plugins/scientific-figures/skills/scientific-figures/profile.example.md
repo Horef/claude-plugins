@@ -8,3 +8,4 @@ Copy to `~/.config/scientific-figures/profile.md` and edit. The skill reads it a
 - neurons: simple schematic glyphs; real-looking only on request
 - house style: default                                   # or name the deviations, e.g. "font: Arial"
 - notes: anything else agents should always do with your figures
+- python: <an interpreter with matplotlib, numpy, scipy and Pillow, e.g. a conda env's bin/python>
