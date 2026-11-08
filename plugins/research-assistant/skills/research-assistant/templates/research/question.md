@@ -3,6 +3,7 @@ Status: current (verified {date}). Research question (research-assistant); entry
 # {question}
 
 - entry: {entry}
+- tag: {tag}
 - question: {question}
 - type: <parameter | mechanism | model comparison | novelty | replication>
 - decision: <what this answer decides, and the result that would change it>

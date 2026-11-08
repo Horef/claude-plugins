@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-08 - research-assistant 0.2.0: question tags and short names
+
+- Owner's request (simple_complex_v1 pilot, gate 2): hypothesis ids H1-H4 read as the project's wiring names (H3, H5t). Option chosen: a per-question tag plus short names.
+- `ra.py`: `init --tag NB` (refused when NB-H/A/Q ids already occur in the repo; word mentions shown), ids NB-H1/NB-A1/NB-Q1, headings are short names (at most 8 words; claim in 'statement'), status and the gate log print names, bare ids at gates and deviations are read as the question's, `retag DIR TAG` renames headings, id fields and log lines (fingerprints strip the tag, so approvals stay valid) and lists prose mentions. Untagged folders behave as before. Templates: `{pre}` ids, 'statement' and 'Not taken forward' (O2).
+- Commands: `loop.py eval research-assistant` pass (new tagged_checks: clash refusal, tag H3 refused, untagged heading and long name reported, bare ids at G2, names in log and status, retag keeps gates and fingerprints, prose untouched); retag tried on a copy of the pilot folder (7 ids renamed, fingerprint valid, 34 prose mentions listed); `loop.py check` 0/0; `docmap.py check` 0 errors.
+- Next: retag the pilot folder in simple_complex_v1 (NB) and fix its prose by hand.
+
 ## 2026-11-08 - literature-research 0.2.0: Semantic Scholar key and pacing
 
 - Owner's S2 key: stored in the macOS Keychain (item S2_API_KEY) and exported by ~/.zshenv (owner's own edit; the agent's edit of a shell startup file was refused by the permission check). herdr-core's server lacks the variable, so `lit.py` also reads the Keychain item itself.

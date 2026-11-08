@@ -6,16 +6,16 @@ Status: current (verified {date}). Analysis plan (research-assistant, rules D); 
 
 | analysis | hypotheses | compute h | peak memory | wall clock | tokens | person time | value |
 |---|---|---|---|---|---|---|---|
-| <A1> | | | | | | | |
+| <{pre}A1> | | | | | | | |
 
 <!-- One section per analysis. Copy the block below; keep the field names. status: proposed | approved | running | done | failed | dropped.
 
-## A1: <what it does, in a few words; for entry 'review', the reader question it answers>
+## {pre}A1: <a short name, at most 8 words; for entry 'review', the reader question it answers>
 - status: proposed
-- hypotheses: <H-ids it separates>
+- hypotheses: <hypothesis ids it separates>
 - data: <inputs, splits, the held-out set no selection step may read>
 - metric: <the outcome measure and the model or test>
-- decision rule: <supports Hx if ...; rejects Hx if ...; threshold>
+- decision rule: <supports {pre}H1 if ...; rejects {pre}H1 if ...; threshold>
 - negative control: <shuffled or noise input that must show no effect, or "n/a: why">
 - positive control: <a known effect that must be recovered, or "n/a: why">
 - variants: <defensible alternatives run alongside, and whether the answer is the primary path or the spread; or "none: why">
