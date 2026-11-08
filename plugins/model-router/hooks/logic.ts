@@ -1,5 +1,5 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperTotals, HelperUsage, HistoryEntry, Model, ModelsCache, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperTotals, HelperUsage, HistoryEntry, Model, ModelsCache, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
 import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
@@ -168,7 +168,7 @@ export const helperList = (set: Settings, tier: Tier): string[] => {
   return at < 0 ? [...list, f.template] : [...list.slice(0, at), f.template, ...list.slice(at)]
 }
 
-const parseList = (v: string) =>
+export const parseList = (v: string) =>
   v
     .split(',')
     .map(x => x.trim())
@@ -475,7 +475,8 @@ export const asHelperUsage = (v: unknown): HelperUsage | undefined => {
   const provider = u.provider.trim().toLowerCase()
   const unit = u.unit.trim()
 
-  return provider && unit && Number.isFinite(amount) && amount >= 0 ? { provider, amount, unit } : undefined
+  // 0 is not a report: a helper whose screen showed no usage must not read as "used nothing".
+  return provider && unit && Number.isFinite(amount) && amount > 0 ? { provider, amount, unit } : undefined
 }
 
 export const addHelperUsage = (list: readonly HelperUsage[], u: HelperUsage): HelperUsage[] => {
@@ -485,11 +486,37 @@ export const addHelperUsage = (list: readonly HelperUsage[], u: HelperUsage): He
   return list.map((x, i) => (i === at ? { ...x, amount: x.amount + u.amount } : x))
 }
 
-export const addHelperTotals = (a: HelperTotals | undefined, b: HelperTotals): HelperTotals => ({
-  steps: (a?.steps ?? 0) + b.steps,
-  ms: (a?.ms ?? 0) + b.ms,
-  usage: b.usage.reduce(addHelperUsage, a?.usage ?? []),
-})
+/** Per provider, the helper runs counted and how many of them reported usage, added up. */
+export const addHelperRuns = (a: HelperTotals['runs'], b: HelperTotals['runs']): NonNullable<HelperTotals['runs']> => {
+  const out: Record<string, HelperRuns> = { ...(a ?? {}) }
+  for (const [provider, r] of Object.entries(b ?? {})) {
+    out[provider] = { n: (out[provider]?.n ?? 0) + r.n, reported: (out[provider]?.reported ?? 0) + r.reported }
+  }
+
+  return out
+}
+
+export const addHelperTotals = (a: HelperTotals | undefined, b: HelperTotals): HelperTotals => {
+  const runs = addHelperRuns(a?.runs, b.runs)
+
+  return {
+    steps: (a?.steps ?? 0) + b.steps,
+    ms: (a?.ms ?? 0) + b.ms,
+    usage: b.usage.reduce(addHelperUsage, a?.usage ?? []),
+    ...(Object.keys(runs).length > 0 ? { runs } : {}),
+  }
+}
+
+/** The totals without usage entries of 0 (an old report of "nothing" that was really "not reported"); the same object when there are none. */
+export const withoutZeroUsage = <T extends { usage: HelperUsage[] }>(h: T): T =>
+  h.usage.some(u => !(u.amount > 0)) ? { ...h, usage: h.usage.filter(u => u.amount > 0) } : h
+
+/** The provider a helper run belongs to: the part of its template name before the first '-', else the router's pick, else what it reported. */
+export const providerOfRun = (s: Step) => {
+  const named = s.helper?.split('-')[0]?.trim().toLowerCase()
+
+  return named || s.helperPick?.provider?.toLowerCase() || s.helperUsage?.provider || undefined
+}
 
 /** How long a step ran, from its start to when it was marked done (helper steps), in ms; 0 when unknown. */
 export const runSpan = (s: Step) => {
@@ -501,11 +528,22 @@ export const runSpan = (s: Step) => {
 /** What the finished helper steps in a list moved off Claude. A group's own usage counts, its steps do not. */
 export const helperTotalsOf = (list: readonly Step[]): HelperTotals => {
   const run = leavesOf(list).filter(s => isHelperRun(s) && s.status === 'done')
+  // A run reported usage itself, or through a group above it (ids extend the parent's).
+  const groups = list.filter(g => g.group && g.helperUsage).map(g => `${g.id}.`)
+  const runs: Record<string, HelperRuns> = {}
+  for (const s of run) {
+    const provider = providerOfRun(s)
+    if (!provider) continue
+    const r = (runs[provider] ??= { n: 0, reported: 0 })
+    r.n += 1
+    if (s.helperUsage || groups.some(g => s.id.startsWith(g))) r.reported += 1
+  }
 
   return {
     steps: run.length,
     ms: run.reduce((n, s) => n + runSpan(s), 0),
     usage: list.flatMap(s => (s.helperUsage ? [s.helperUsage] : [])).reduce(addHelperUsage, [] as HelperUsage[]),
+    ...(Object.keys(runs).length > 0 ? { runs } : {}),
   }
 }
 
@@ -519,8 +557,17 @@ export const helperGain = (before: readonly Step[], after: readonly Step[]): Hel
     }
     if (s.helperUsage && !was?.helperUsage) gain = addHelperTotals(gain, { steps: 0, ms: 0, usage: [s.helperUsage] })
   }
+  // The runs per provider that are newly counted, and those newly reported (also through a group's usage).
+  const now = helperTotalsOf(after).runs ?? {}
+  const then = helperTotalsOf(before).runs ?? {}
+  const runs: Record<string, HelperRuns> = {}
+  for (const [provider, r] of Object.entries(now)) {
+    const n = r.n - (then[provider]?.n ?? 0)
+    const reported = r.reported - (then[provider]?.reported ?? 0)
+    if (n > 0 || reported > 0) runs[provider] = { n: Math.max(0, n), reported: Math.max(0, reported) }
+  }
 
-  return gain
+  return Object.keys(runs).length > 0 ? { ...gain, runs } : gain
 }
 
 export const fmtMin = (ms: number) => {
@@ -536,19 +583,37 @@ const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1)
 /** "Copilot 30 AIC": one provider's usage in its own unit. */
 export const usageLabel = (u: HelperUsage) => `${cap(u.provider)} ${fmtAmount(u.amount)} ${u.unit}`
 
-/** The one-line account of what was moved off Claude, or undefined when nothing was. */
+/** The unit a provider reports in, for saying that it did not: what its screen shows. */
+const UNIT_OF: Record<string, string> = { kiro: 'credits', copilot: 'AIC' }
+
+/**
+ * The one-line account of what was moved off Claude, or undefined when nothing was. A provider whose runs did not all
+ * report usage says so: "Kiro 2.1 credits (3 of 6 runs reported)", or "Kiro: credits not reported" when none did.
+ */
 export const helperLine = (h: HelperTotals | undefined) => {
   if (!h || (h.steps === 0 && h.usage.length === 0)) return undefined
-  const usage = [...h.usage].sort((a, b) => a.provider.localeCompare(b.provider) || a.unit.localeCompare(b.unit))
+  const used = h.usage.filter(u => u.amount > 0)
+  const sorted = [...used].sort((a, b) => a.provider.localeCompare(b.provider) || a.unit.localeCompare(b.unit))
+  const runs = h.runs ?? {}
+  const partial = (provider: string) => {
+    const r = runs[provider]
+
+    return r && r.reported < r.n ? ` (${r.reported} of ${r.n} runs reported)` : ''
+  }
+  const parts = sorted.map(u => `${usageLabel(u)}${partial(u.provider)}`)
+  const silent = Object.entries(runs)
+    .filter(([provider, r]) => r.n > 0 && !used.some(u => u.provider === provider))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([provider]) => `${cap(provider)}: ${UNIT_OF[provider] ?? 'usage'} not reported`)
   const head = `${h.steps} helper step${h.steps === 1 ? '' : 's'}${h.ms > 0 ? `, ${fmtMin(h.ms)}` : ''}`
 
-  return `Moved off Claude: ${[head, ...usage.map(usageLabel)].join('; ')}`
+  return `Moved off Claude: ${[head, ...parts, ...silent].join('; ')}`
 }
 
 /** A helper step's usage and time for its card: "30.04 AIC · 12 min", or when it started while it runs. */
 export const helperFacts = (s: Step) => {
   const parts: string[] = []
-  if (s.helperUsage) parts.push(`${fmtAmount(s.helperUsage.amount)} ${s.helperUsage.unit}`)
+  if (s.helperUsage && s.helperUsage.amount > 0) parts.push(`${fmtAmount(s.helperUsage.amount)} ${s.helperUsage.unit}`)
   if (runSpan(s) > 0) parts.push(fmtMin(runSpan(s)))
   else if (s.startedAt && s.status !== 'done') {
     parts.push(`started ${new Date(s.startedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`)
