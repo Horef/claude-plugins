@@ -1,0 +1,5 @@
+ ● OK
+╭─╮╭─╮   Changes    +0 -0
+╰─╯╰─╯   AI Credits 30.04 (16m 2s)
+█ ▘▝ █   Tokens     ↑ 19.7k (19.7k written) • ↓ 26 (19 reasoning)
+ ▔▔▔▔    Resume     copilot --resume=301d9357-bbce-431a-9f73-a8a6c7f23714

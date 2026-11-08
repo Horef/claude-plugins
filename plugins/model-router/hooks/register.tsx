@@ -75,6 +75,7 @@ import {
   offeredModels,
   parseHelperConfig,
   parseModelsCache,
+  parseList,
   parsePrice,
   pickSource,
   planText,
@@ -93,6 +94,7 @@ import {
   templateOfRung,
   templateRung,
   verdictLine,
+  withoutZeroUsage,
 } from './logic'
 import type { HelperAdvice, Learned, Suggestion } from './logic'
 import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
@@ -190,6 +192,8 @@ async function writeMirror($: EngineInterface) {
     const path = await mirrorPath($)
     if (!path) return
     await locked('mirror', async () => {
+      // Another session may have changed them since this one last looked: the file follows the store.
+      await syncShared($)
       const body = { settings: await read($, settings), autoApprove: await read($, autoApprove), alwaysPlan: await read($, alwaysPlan) }
       await $.fs.write(path, `${JSON.stringify(body, null, 2)}\n`)
     })
@@ -215,8 +219,37 @@ async function templateEffort($: EngineInterface, template: string) {
 
 const asLifetime = (v: unknown): Lifetime | undefined => {
   const life = v as Lifetime | undefined
+  if (!life?.since) return undefined
+  const merged = { ...newLifetime(), ...life }
 
-  return life?.since ? { ...newLifetime(), ...life } : undefined
+  return { ...merged, helper: { ...EMPTY_HELPER, ...merged.helper, usage: Array.isArray(merged.helper?.usage) ? merged.helper.usage : [] } }
+}
+
+/**
+ * Brings the session's settings, auto-approve and always-plan up to what the store holds, which another
+ * session may have changed since this one loaded. Reads only; nothing is written.
+ */
+async function syncShared($: EngineInterface) {
+  await locked('settings', async () => {
+    const stored = await $.store.get(STORE.settings)
+    if (stored === undefined) return
+    const next = mergeSettings(stored as Partial<Settings>)
+    if (JSON.stringify(next) !== JSON.stringify(await read($, settings))) await update($, settings, () => next)
+  })
+  const auto = await $.store.get(STORE.auto)
+  if (typeof auto === 'boolean' && auto !== (await read($, autoApprove))) await update($, autoApprove, () => auto)
+  const always = await $.store.get(STORE.always)
+  if (typeof always === 'boolean' && always !== (await read($, alwaysPlan))) await update($, alwaysPlan, () => always)
+}
+
+/** `syncShared`, once the remembered state is loaded (and only then: before it, the store is not read). */
+async function refreshShared($: EngineInterface) {
+  if (!(await ready($))) return
+  try {
+    await syncShared($)
+  } catch (err) {
+    diag.lastError = `refresh: ${String(err).slice(0, 200)}`
+  }
 }
 
 async function loadRemembered($: EngineInterface) {
@@ -240,7 +273,16 @@ async function loadRemembered($: EngineInterface) {
   await update($, alwaysPlan, () => always === true)
   const past = (await $.store.get(STORE.history)) as HistoryEntry[] | undefined
   await update($, history, () => (Array.isArray(past) ? past : []))
-  const life = asLifetime(await $.store.get(STORE.lifetime)) ?? newLifetime()
+  // An amount of 0 that an older version stored for "no usage shown" is dropped; written back at once.
+  const life = await locked('lifetime', async () => {
+    const was = asLifetime(await $.store.get(STORE.lifetime)) ?? newLifetime()
+    const helper = withoutZeroUsage(was.helper)
+    if (helper === was.helper) return was
+    const cleaned = { ...was, helper }
+    await $.store.set(STORE.lifetime, cleaned)
+
+    return cleaned
+  })
   await update($, lifetime, () => life)
   const noted = await $.store.get(STORE.genome)
   await update($, genomeNoted, () => (Array.isArray(noted) ? noted.filter((x): x is string => typeof x === 'string') : []))
@@ -277,10 +319,14 @@ async function setAlways($: EngineInterface, on: boolean) {
 
 async function editSettings($: EngineInterface, fn: (s: Settings) => Settings) {
   const ok = await ready($)
-  await update($, settings, fn)
-  if (!ok) return
-  await $.store.set(STORE.settings, await read($, settings))
-  await writeMirror($)
+  await locked('settings', async () => {
+    // Applied to what the store holds, so a session that loaded earlier never writes its older copy over newer settings.
+    const stored = ok ? await $.store.get(STORE.settings) : undefined
+    const next = fn(stored !== undefined ? mergeSettings(stored as Partial<Settings>) : await read($, settings))
+    await update($, settings, () => next)
+    if (ok) await $.store.set(STORE.settings, next)
+  })
+  if (ok) await writeMirror($)
 }
 
 async function editHistory($: EngineInterface, fn: (h: HistoryEntry[]) => HistoryEntry[]) {
@@ -930,7 +976,7 @@ async function registerPlanTool($: EngineInterface) {
               ? {
                   usage: {
                     type: 'object',
-                    description: 'A helper step\'s usage line from its screen, e.g. {provider: "copilot", amount: 30.04, unit: "AIC"}',
+                    description: 'A helper step\'s usage, exactly as `helpers.py usage <name>` printed it, e.g. {provider: "copilot", amount: 30.04, unit: "AIC"}. Leave it out when that printed nothing; never send 0 or a guess',
                     properties: { provider: { type: 'string' }, amount: { type: 'number' }, unit: { type: 'string' } },
                     required: ['provider', 'amount', 'unit'],
                   },
@@ -996,10 +1042,10 @@ function stepSchema(wheres: string[], levels: number): Record<string, unknown> {
 // A router note about the helper orders starts with this, so a newer one replaces it.
 const HELPER_NOTE = 'Helper orders changed'
 
-async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers']>) {
+async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers']> | ((h: Settings['helpers']) => Partial<Settings['helpers']>)) {
   const was = (await read($, settings)).helpers
   const wasOn = was.enabled
-  await editSettings($, s => ({ ...s, helpers: { ...s.helpers, ...patch } }))
+  await editSettings($, s => ({ ...s, helpers: { ...s.helpers, ...(typeof patch === 'function' ? patch(s.helpers) : patch) } }))
   const after = await read($, settings)
   // Helpers just went on, or helpers.py is somewhere else now: read its config.
   if (after.helpers.enabled && (!wasOn || after.helpers.script !== was.script)) await loadHelperConfig($)
@@ -1022,9 +1068,8 @@ async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers'
 
 /** Switches a helper off, moves one, or puts one back, for a tier. */
 async function editHelperOrder($: EngineInterface, tier: Tier, fn: (list: string[]) => string) {
-  const tiers = { ...(await read($, settings)).helpers.tiers }
-  tiers[tier] = fn(helperItems(await read($, settings), tier))
-  await editHelpers($, { tiers })
+  // Worked out from the settings as stored, not from this session's copy.
+  await editHelpers($, h => ({ tiers: { ...h.tiers, [tier]: fn(parseList(h.tiers[tier])) } }))
 }
 
 async function editHereEffort($: EngineInterface, patch: Partial<Settings['hereEffort']>) {
@@ -1135,12 +1180,13 @@ const policy = (set: Settings, kinds: readonly string[] = []) => {
     : ''
 
   const h = set.helpers
+  const usageCmd = `python3 ${h.script ? h.script : `<the ${h.skill} skill's folder>/scripts/helpers.py`} usage <the helper's name>`
   const helperRule = h.enabled
     ? `\n6. where = "helper" runs a step on an agent from another subscription, through the ${h.skill} skill. ${
         h.use === 'all'
           ? 'Use it for every self-contained step that would otherwise be "agent".'
           : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
-      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. When a helper step's plan line says "launch <template>", the router chose that model and level for it (the template already exists): give the picker that template first, then the tier's order (pick <template>,<the order>), and launch what it prints. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself, then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], taking usage from the line the helper's screen shows at the end (Copilot: "Session: N AIC used" gives provider "copilot", amount N, unit "AIC"; Kiro: its credits line gives provider "kiro", the number, unit "credits"). Leave usage out when the screen shows none.`
+      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. When a helper step's plan line says "launch <template>", the router chose that model and level for it (the template already exists): give the picker that template first, then the tier's order (pick <template>,<the order>), and launch what it prints. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself. Before you close the helper, run \`${usageCmd}\`: it prints the helper's usage as JSON {"provider","amount","unit"}, or nothing. Then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], passing that JSON as usage; leave usage out when it printed nothing, and never send 0 or a guess.`
     : ''
 
   return `# Model routing (model-router mod)
@@ -1765,7 +1811,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Button key="minimal" plain onPress={() => void editSettings($, x => ({ ...x, compact: !x.compact }))}>
             {mini ? 'Minimal ✓' : 'Minimal'}
           </Button>
-          <Button key="settings" plain onPress={() => void update($, showSettings, v => !v)}>
+          <Button key="settings" plain onPress={() => void (async () => {
+            if (!isSettingsOpen) await refreshShared($)
+            await update($, showSettings, v => !v)
+          })()}>
             {isSettingsOpen ? 'Settings ▾' : 'Settings ▸'}
           </Button>
         </Box>
@@ -2677,6 +2726,8 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId) return next(e)
     diag.turns += 1
+    // Settings another session changed since this one last looked.
+    await refreshShared($)
     const extra: string[] = []
     const how = await read($, delivery)
     const set = await read($, settings)

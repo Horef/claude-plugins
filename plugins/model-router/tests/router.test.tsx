@@ -1121,7 +1121,10 @@ test('starting a helper step with the helper and the model it reports shows both
   expect(tool.inputSchema.properties.start.items.anyOf).toHaveLength(2)
   expect(tool.inputSchema.properties.done.items.anyOf).toHaveLength(2)
   await $.turn.start({ text: 'first', turnId: 't0' })
-  expect(lastRow(rows)).toContain('Session: N AIC used')
+  // The usage comes from `helpers.py usage <name>` (0.21.0), not from reading the screen.
+  expect(lastRow(rows)).toContain("helpers.py usage <the helper's name>")
+  expect(lastRow(rows)).toContain('never send 0 or a guess')
+  expect(lastRow(rows)).not.toContain('Session: N AIC used')
   expect(lastRow(rows)).toContain('the template you launched')
 
   await $.tool.call({
@@ -2294,4 +2297,164 @@ test('per-kind helper choices from storage keep only a provider, model and level
   // Only a file called helpers.py is run with python: anything else stored (a mirror file anyone could edit) is dropped.
   expect(mergeSettings({ helpers: { script: '/x/evil.sh' } } as never).helpers.script).toBe('')
   expect(mergeSettings({ helpers: { script: 'C:\\skills\\helpers.py' } } as never).helpers.script).toBe('C:\\skills\\helpers.py')
+})
+
+// --- 0.21.0: settings shared between sessions, helper usage that was not reported --------------------
+
+/** What another session left in the store: tiers and helpers set there, in a copy this session never saw. */
+const OTHER_SESSION = {
+  tiers: { deep: { model: 'haiku', effort: 'low', scopeNote: false } },
+  helpers: { enabled: true, tiers: { light: 'copilot-light' } },
+}
+
+test('a change in this session leaves what another session stored in place: store and mirror', async ($, on) => {
+  const files = new Map<string, string>()
+  const { store } = await boot($, on, [], [], files)
+  // Another session saves its settings after this one has loaded.
+  store.set('settings', OTHER_SESSION)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'minimal' })
+  await pane.unmount()
+
+  const kept = store.get('settings') as { compact: boolean; tiers: { deep: { model: string } }; helpers: { enabled: boolean; tiers: { light: string } } }
+  expect(kept.compact).toBe(true)
+  expect(kept.tiers.deep.model).toBe('haiku')
+  expect(kept.helpers.enabled).toBe(true)
+  expect(kept.helpers.tiers.light).toBe('copilot-light')
+  const mirrored = (JSON.parse(files.get(MIRROR) ?? '{}') as { settings: typeof kept }).settings
+  expect(mirrored.compact).toBe(true)
+  expect(mirrored.tiers.deep.model).toBe('haiku')
+  expect(mirrored.helpers.enabled).toBe(true)
+})
+
+test('reordering helpers works on the stored order, not this session\'s copy', async ($, on) => {
+  const { store } = await boot($, on, HELPERS)
+  store.set('settings', { helpers: { enabled: true, tiers: { light: 'copilot-light', standard: 'kiro-standard,copilot-standard,agy-standard' } } })
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helper-up:standard:copilot-standard' })
+  await pane.unmount()
+  const kept = store.get('settings') as { helpers: { tiers: { light: string; standard: string } } }
+  expect(kept.helpers.tiers.standard).toBe('copilot-standard,kiro-standard,agy-standard')
+  expect(kept.helpers.tiers.light).toBe('copilot-light')
+})
+
+test('auto-approve and always-plan set elsewhere are kept when this session changes another setting', async ($, on) => {
+  const files = new Map<string, string>()
+  const { store } = await boot($, on, [['autoApprove', false]], [], files)
+  store.set('alwaysPlan', true)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'auto' })
+  await pane.unmount()
+  expect(store.get('autoApprove')).toBe(true)
+  expect(store.get('alwaysPlan')).toBe(true)
+  const mirrored = JSON.parse(files.get(MIRROR) ?? '{}') as { autoApprove: boolean; alwaysPlan: boolean }
+  expect(mirrored.autoApprove).toBe(true)
+  expect(mirrored.alwaysPlan).toBe(true)
+})
+
+test('a turn picks up settings and switches another session changed in the store', async ($, on) => {
+  const { store, rows } = await boot($, on, [])
+  store.set('settings', { tiers: { deep: { model: 'sonnet', effort: 'low', scopeNote: false } } })
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('deep (sonnet/low)')
+  expect(lastRow(rows)).not.toContain('Before any tool call for this message')
+
+  store.set('alwaysPlan', true)
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(lastRow(rows)).toContain('Before any tool call for this message')
+})
+
+test('opening Settings reads what the store holds now', async ($, on) => {
+  const { store } = await boot($, on, [])
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  const mapped = { type: 'Button', key: 'skill-tier:other-skill' } as never
+  store.set('settings', { skills: { 'other-skill': 'standard' } })
+  expect(await pane.find(mapped)).toBeFalsy()
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(mapped)).toBeTruthy()
+  await pane.unmount()
+})
+
+test('helper usage of 0 is not a report; a lifetime that holds one drops it on load', async ($, on) => {
+  expect(asHelperUsage({ provider: 'kiro', amount: 0, unit: 'credits' })).toBeUndefined()
+  expect(asHelperUsage({ provider: 'kiro', amount: '0', unit: 'credits' })).toBeUndefined()
+  expect(asHelperUsage({ provider: 'kiro', amount: 0.03, unit: 'credits' })).toEqual({ provider: 'kiro', amount: 0.03, unit: 'credits' })
+
+  const seeded = {
+    mainCost: 5, agentCost: 1, mainEquivalent: 3, steps: 4, plans: 2, since: '2026-10-01T00:00:00.000Z', byTier: { light: 1, standard: 2, deep: 1 },
+    helper: { steps: 6, ms: 0, usage: [{ provider: 'kiro', amount: 0, unit: 'credits' }, { provider: 'copilot', amount: 2, unit: 'AIC' }] },
+  }
+  const { store } = await boot($, on, [...HELPERS, ['lifetime', seeded]])
+  const life = store.get('lifetime') as typeof seeded
+  expect(life.helper.usage).toEqual([{ provider: 'copilot', amount: 2, unit: 'AIC' }])
+  expect(life.helper.steps).toBe(6)
+  expect(life.steps).toBe(4)
+
+  // A step marked done with a 0 records no usage.
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'light', where: 'helper' }] } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'kiro-light', model: 'Haiku' }] } as never)
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h1', usage: { provider: 'kiro', amount: 0, unit: 'credits' } }] } as never)
+  expect((store.get('lifetime') as typeof seeded).helper.usage).toEqual([{ provider: 'copilot', amount: 2, unit: 'AIC' }])
+})
+
+test('the cost line says which providers\' runs did not report usage', async ($, on) => {
+  const step = (id: string, over: Partial<Step> = {}): Step => ({
+    id, title: id, tier: 'light', where: 'helper', status: 'done', usage: EMPTY_USAGE, cost: 0, mainCost: 0, reruns: 0, ...over,
+  })
+  const kiro = { provider: 'kiro', amount: 2.1, unit: 'credits' }
+  const list = [
+    step('a', { helper: 'kiro-light', helperUsage: kiro }),
+    step('b', { helper: 'kiro-light' }),
+    step('c', { helper: 'kiro-standard' }),
+    step('d', { helper: 'copilot-standard' }),
+    step('e', { helper: 'agy-light', helperUsage: { provider: 'agy', amount: 1, unit: 'runs' } }),
+  ]
+  const totals = helperTotalsOf(list)
+  expect(totals.runs).toEqual({ kiro: { n: 3, reported: 1 }, copilot: { n: 1, reported: 0 }, agy: { n: 1, reported: 1 } })
+  expect(helperLine(totals)).toBe('Moved off Claude: 5 helper steps; Agy 1 runs; Kiro 2.1 credits (1 of 3 runs reported); Copilot: AIC not reported')
+  // All reported: no remark. Totals stored before 0.21.0 have no run counts: no remark either.
+  expect(helperLine(helperTotalsOf([list[0]!, list[4]!]))).toBe('Moved off Claude: 2 helper steps; Agy 1 runs; Kiro 2.1 credits')
+  expect(helperLine({ steps: 6, ms: 0, usage: [kiro] })).toBe('Moved off Claude: 6 helper steps; Kiro 2.1 credits')
+  // A group's usage covers the runs under it.
+  const grouped = [step('g', { group: true, helperUsage: kiro }), step('g.a', { parent: 'g', helper: 'kiro-light' }), step('g.b', { parent: 'g', helper: 'kiro-light' })]
+  expect(helperTotalsOf(grouped).runs).toEqual({ kiro: { n: 2, reported: 2 } })
+
+  // Through the plan tool: six runs, one reports; the pane (plan, chat and all-time) and the stored totals say so.
+  const { store } = await boot($, on, HELPERS)
+  const ids = ['h1', 'h2', 'h3']
+  await $.tool.call({ tool: PLAN, steps: ids.map(id => ({ id, title: id, tier: 'light', where: 'helper' })) } as never)
+  await $.tool.call({ tool: PLAN, start: ids.map(id => ({ id, helper: 'kiro-light', model: 'Haiku' })) } as never)
+  await $.tool.call({ tool: PLAN, done: [{ id: 'h1', usage: { provider: 'kiro', amount: 0.03, unit: 'credits' } }, 'h2', 'h3'] } as never)
+  const life = store.get('lifetime') as { helper: { steps: number; runs: Record<string, { n: number; reported: number }> } }
+  expect(life.helper.steps).toBe(3)
+  expect(life.helper.runs).toEqual({ kiro: { n: 3, reported: 1 } })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  const line = /^Moved off Claude: 3 helper steps(, <1 min)?; Kiro 0\.03 credits \(1 of 3 runs reported\)$/
+  expect(await pane.find(text(line))).toBeTruthy()
+  await pane.press({ key: 'cost-view:all' })
+  expect(await pane.find(text(line))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('when none of a provider\'s runs reported usage the line says so', async ($, on) => {
+  const { store } = await boot($, on, HELPERS)
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'light', where: 'helper' }] } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', helper: 'kiro-light', model: 'Haiku' }] } as never)
+  await $.tool.call({ tool: PLAN, done: ['h1'] } as never)
+  expect((store.get('lifetime') as { helper: { usage: unknown[] } }).helper.usage).toEqual([])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^Moved off Claude: 1 helper step(, <1 min)?; Kiro: credits not reported$/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('the rules send the lead to helpers.py usage, with the configured script when there is one', async ($, on) => {
+  const { rows, registered } = await boot($, on, [['settings', { helpers: { enabled: true, script: '/skills/herdr-delegate/scripts/helpers.py' } }]])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain("python3 /skills/herdr-delegate/scripts/helpers.py usage <the helper's name>")
+  const tool = registered.at(-1) as unknown as { inputSchema: { properties: Record<string, any> } }
+  const usage = JSON.stringify(tool.inputSchema.properties.done)
+  expect(usage).toContain('helpers.py usage <name>')
+  expect(usage).toContain('never send 0 or a guess')
 })

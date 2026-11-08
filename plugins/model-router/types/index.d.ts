@@ -191,8 +191,14 @@ export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; c
 /** What a helper used on its own subscription, in that provider's unit; never converted to money. */
 export type HelperUsage = { provider: string; amount: number; unit: string }
 
-/** Steps moved off Claude: how many, how long they ran, and the usage per provider and unit. */
-export type HelperTotals = { steps: number; ms: number; usage: HelperUsage[] }
+/** Helper runs of one provider that were counted, and how many of them reported usage. */
+export type HelperRuns = { n: number; reported: number }
+
+/**
+ * Steps moved off Claude: how many, how long they ran, and the usage per provider and unit.
+ * `runs` (per provider) tells which providers' runs reported usage; absent on totals stored before 0.21.0.
+ */
+export type HelperTotals = { steps: number; ms: number; usage: HelperUsage[]; runs?: Record<string, HelperRuns> }
 
 /** What the main agent was last told of a step (the approved plan, or the last note delivered), as values it runs on. */
 export type StepKnown = { where: Where; tier: Tier; model: Model; effort: Effort }

@@ -8,6 +8,7 @@
   helpers.py back <provider>                    clear either mark
   helpers.py status                             providers, quota marks, template drift, models no longer offered
   helpers.py prompt <name> [<name> ...]         print any permission prompt a helper's screen is waiting on
+  helpers.py usage <name>                       the helper's session usage as JSON {provider, amount, unit}; run before hc kill
 
   helpers.py config                             the effective config (default + your overrides) as JSON
   helpers.py render [--check] [--force]         write ~/.config/herdr-core/templates from the config
@@ -174,6 +175,45 @@ def prompts(names):
         else:
             print(f"{name}: no prompt")
     return 0 if found else 1
+
+
+# What a helper used, read from its screen (measured 2026-11-08). Kiro prints a line after
+# every turn, the session figure running; Copilot keeps a running total in its status bar and
+# prints a summary on exit. agy shows none. The last match on the screen is the current one.
+USAGE = {
+    "kiro": (re.compile(r"Credits:\s*turn\s*[\d.]+\s*\S\s*session\s*([\d.]+)"), "credits"),
+    "copilot": (re.compile(r"Session:\s*([\d.]+)\s*AIC used|AI Credits\s+([\d.]+)"), "AIC"),
+}
+
+
+def usage_of(provider, screen):
+    """{provider, amount, unit} from the last usage line on a helper's screen, or None (none shown, or 0)."""
+    known = USAGE.get(provider)
+    if not known:
+        return None
+    pattern, unit = known
+    found = [next(g for g in m.groups() if g) for m in pattern.finditer(screen)]
+    amount = float(found[-1]) if found else 0.0
+    return {"provider": provider, "amount": amount, "unit": unit} if amount > 0 else None
+
+
+def usage_cmd(name):
+    """Print the helper's usage as JSON, or nothing (exit 1) when its screen shows none."""
+    got = subprocess.run(["hc", "get", name], capture_output=True, text=True)
+    try:
+        template = json.loads(got.stdout).get("template") or ""
+    except ValueError:
+        template = ""
+    provider = (template or name).split("-")[0]
+    screen = subprocess.run(["hc", "read", name], capture_output=True, text=True)
+    if screen.returncode != 0:
+        print(f"{name}: hc read failed: {(screen.stderr or screen.stdout).strip()}", file=sys.stderr)
+        return 1
+    used = usage_of(provider, screen.stdout)
+    if not used:
+        return 1
+    print(json.dumps(used))
+    return 0
 
 
 # ---------------------------------------------------------------- config and rendering
@@ -744,6 +784,8 @@ def main(argv, today=None):
         return 0
     if cmd == "prompt" and args:
         return prompts(args)
+    if cmd == "usage" and len(args) == 1:
+        return usage_cmd(args[0])
     if cmd == "status":
         names = sorted(p.stem for p in templates_dir().glob("*.md")) if templates_dir().is_dir() else []
         for provider in sorted({n.split("-")[0] for n in names} | set(state)):
