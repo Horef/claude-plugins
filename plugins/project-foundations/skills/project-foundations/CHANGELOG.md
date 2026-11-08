@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.9.0 (2026-11-08)
+- Building blocks and growing projects (owner's request, 2026-11-08; Argon review in evals/reviews/2026-11-08-argon.md): SKILL.md Step 2 is one module catalogue (core, code-map, python-graph, architecture, workstreams, lifecycle, facts, experiments, compute, releases, reviews, user-defaults, shims) and template lines carry [module] tags, so non-research and non-Python projects get only what they use. STATUS gets a Workstreams table (one line per line of work; check warns on STATUS lines over status_line_max_words). 'One id, one meaning': check warns when a file cites a bare id defined in two or more workstreams (headings, bullets, id tables; id_cite_exempt for domain words) and docmap.py ids lists families. [tool.docmap.facts] takes a glob over parameter files. Fixes: RFC 3986 URI schemes in the link check, /* */ headers, code folders no longer force READMEs on prose ancestors, folder descriptions skip Status lines and 'et al.', template Status lines pass check. Three existing eval cases changed with the behaviour they grade (O14 table rows now measured, O15 heading collisions replaced by citation cases, O16 labels carry the file stem). (O4, O5, O13, O14, O15, O16)
+
 ## 5.8.0 (2026-11-06)
 - templates on demand: one file per template, read only for chosen modules (O3)
 

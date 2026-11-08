@@ -273,6 +273,225 @@ def main() -> int:
         expect(p.returncode == 0 and len(p.stdout) // 4 <= 60 and "helper(" in p.stdout and "fmt(" not in p.stdout,
                "map keeps within the token budget, dropping the least-referenced symbols", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O13: any RFC 3986 scheme is a URI, not a relative link
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "docs/NOTES.md").write_text(
+            "Status: current (verified 2999-01-01)\n# Notes\n[paper](x-devonthink-item://ABC-123) [web](https://example.org/a) [dev](git+ssh://h/r)\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("broken link" not in p.stdout, "check accepts x-devonthink-item:, https: and git+ssh: links", p)
+        (root / "docs/NOTES.md").write_text((root / "docs/NOTES.md").read_text() + "[gone](missing.md)\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect(p.returncode == 1 and "broken link -> missing.md" in p.stdout and "x-devonthink" not in p.stdout,
+               "check still fails on a real missing relative link", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O14: STATUS keeps one short line per workstream
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "docs/STATUS.md").write_text(
+            "# Status\nUpdated 2026-10-30.\n\n## Workstreams\n| Workstream | Where | State | Next |\n|---|---|---|---|\n| A | `docs/a/` | "
+            + "wordy " * 100 + "| x |\n\n- " + "short " * 60 + "\n- " + "long " * 120 + "\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        hits = [ln for ln in p.stdout.splitlines() if "status_line_max_words" in ln]
+        expect(len(hits) == 2 and "docs/STATUS.md:7:" in hits[0] and "103 words" in hits[0] and "docs/STATUS.md:10:" in hits[1] and "120 words" in hits[1],
+               "check warns about a 103-word ## Workstreams row and a 120-word STATUS bullet (with line numbers) but not a 60-word one", p)
+        (root / "docmap.toml").write_text("status_line_max_words = 150\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("status_line_max_words" not in p.stdout, "status_line_max_words can be raised in the configuration", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O15: a bare citation of an id that is defined in several folders is ambiguous
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        ok = "Status: current (verified 2999-01-01)\n"
+        ledger = ok + "# Ledger\n\n| id | claim |\n|---|---|\n| L1 | x |\n| L2 | y |\n| L3 | z |\n"
+        docs = {
+            "docs/literature/gosi/ledger.md": ledger, "docs/literature/nmda/ledger.md": ledger,
+            "docs/notes.md": ok + "Compare [L1], [L2] and [L3] across the studies.\n",           # ambiguous: one grouped warning
+            "docs/named.md": ok + "In gosi, [L2] is the baseline.\n",                              # names a defining folder
+            "docs/literature/gosi/notes.md": ok + "L2 is the one that matters here.\n",             # inside one definer's scope
+            "docs/syntax.md": ok + "NB-L1 and L2/3 and L1.2 and `L3` and https://x.org/L1 are no citations.\n",
+            "docs/h1.md": ok + "### H5f: wiring\n", "docs/h2.md": ok + "### H5f: other wiring\n", "docs/h3.md": ok + "H5f recruits the low side.\n",
+            "docs/k/one/ledger.md": ok + "| ID | claim |\n|---|---|\n| K1 | a |\n| K2 | b |\n",
+            "docs/k/two/ledger.md": "Status: superseded by docs/k/one/ledger.md\n| ID | claim |\n|---|---|\n| K1 | c |\n| K2 | d |\n",
+            "docs/knotes.md": ok + "K1 is settled.\n",
+            "docs/writeups/x/review.md": ok + "- A1. first\n- A2. second\n", "docs/writeups/y/review.md": ok + "## A1: other\n\n## A2: more\n",
+            "docs/summary.md": ok + "A1 and A2 need an answer.\n",
+            "docs/archive/old.md": "- L1. archived\n- L2. archived\n",
+        }
+        for rel, text in docs.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        hits = [ln for ln in p.stdout.splitlines() if " bare; defined in " in ln]
+        notes = [ln for ln in hits if ln.startswith("warning: docs/notes.md ")]
+        expect(len(notes) == 1 and "cites L1-L3 bare; defined in 2 places (docs/literature/gosi/, docs/literature/nmda/)" in notes[0] and "<TAG>-L1" in notes[0],
+               "check groups ids defined in two ledger tables and cited bare into one warning per citing file and family", p)
+        expect(not any(f"warning: {f} " in ln for ln in hits for f in ("docs/named.md", "docs/literature/gosi/notes.md")),
+               "no warning when the line names a defining folder or the citer lives inside one definer's folder", p)
+        expect(not any("docs/syntax.md" in ln for ln in hits), "NB-L1, L2/3, L1.2, `L3` and a URL do not match as L1, L2 or L3", p)
+        expect(not any("H5f" in ln or "docs/h3.md" in ln for ln in hits), "a lone ### H5f: heading defines nothing", p)
+        expect(not any("K1" in ln for ln in hits), "a superseded doc defines nothing", p)
+        expect(any(ln.startswith("warning: docs/summary.md cites A1, A2 bare; defined in 2 places (docs/writeups/x/, docs/writeups/y/)") for ln in hits)
+               and len(hits) == 2, "bullet (- A1.) and heading definitions count, and the archive is not read", p)
+        p = docmap(root, "ids")
+        lines = p.stdout.splitlines()
+        expect(p.returncode == 0 and lines[0].startswith("L ") and "defined in several places: L1-L3" in p.stdout
+               and "cited bare in: docs/named.md" not in p.stdout and "cited bare in: docs/notes.md" in p.stdout
+               and p.stdout.index("\nA ") < p.stdout.index("\nD "), "ids lists families with their places and bare citers, ambiguous ones first", p)
+        (root / "docmap.toml").write_text('id_cite_exempt = ["L\\\\d", "A1"]\nid_scan_exempt = ["docs/archive/*", "docs/writeups/y/*"]\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("bare; defined in" not in p.stdout, "id_cite_exempt (ids or regexes) and id_scan_exempt silence the id warnings", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O16: [tool.docmap.facts] takes a glob; the single-file forms are unchanged
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "configs/generators").mkdir(parents=True)
+        (root / "configs/generators/v2_weights_1.json").write_text('{"b_h3_native": 0.5, "a_h3_native": 0.25, "z_other": 9}', encoding="utf-8")
+        (root / "configs/generators/v1_weights_1.json").write_text('{"a_h3_native": 0.2, "c_h3_nmda": 1.5}', encoding="utf-8")
+        (root / "configs/cell.json").write_text('{"id": "cell7"}', encoding="utf-8")
+        single = ('[tool.docmap.facts]\n"default cell" = { file = "configs/cell.json", key = "id", note = "D2" }\n'
+                  '"pure core" = { file = "demo/core.py", pattern = "^def (\\\\w+)" }\n')
+        (root / "pyproject.toml").write_text(FILES["pyproject.toml"] + "\n" + single, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        before = (root / "docs/FACTS.md").read_text()
+        expect("| default cell | cell7 | configs/cell.json `id` | D2 |" in before and "| pure core | add | demo/core.py |" in before,
+               "facts: the single-file key and pattern forms give their rows")
+        (root / "pyproject.toml").write_text(FILES["pyproject.toml"] + "\n" + single
+                                             + '"calibrated weights" = { files = "configs/generators/*_weights_*.json", keys = "^[abc]_h3_" }\n', encoding="utf-8")
+        p = docmap(root, "update")
+        after = (root / "docs/FACTS.md").read_text()
+        rows = [ln for ln in after.splitlines() if ln.startswith("| calibrated weights")]
+        expect([r.split(" | ")[0:3] for r in rows] == [
+            ["| calibrated weights: a_h3_native (v1_weights_1)", "0.2", "configs/generators/v1_weights_1.json `a_h3_native`"],
+            ["| calibrated weights: c_h3_nmda", "1.5", "configs/generators/v1_weights_1.json `c_h3_nmda`"],
+            ["| calibrated weights: a_h3_native (v2_weights_1)", "0.25", "configs/generators/v2_weights_1.json `a_h3_native`"],
+            ["| calibrated weights: b_h3_native", "0.5", "configs/generators/v2_weights_1.json `b_h3_native`"]],
+               "facts glob: one row per (file, key matching `keys`), sorted by file then key; a key in several files carries its file's stem", p)
+        expect(all(ln in after for ln in before.splitlines() if ln.startswith("| default cell") or ln.startswith("| pure core")),
+               "facts glob: the single-file rows are unchanged when a glob entry is added", p)
+        p = docmap(root, "check")
+        expect(p.returncode == 0, "check is green with a glob facts table", p)
+        (root / "configs/enc").mkdir()
+        (root / "configs/enc/a.json").write_text('{"spatial": {"sigma": 1.5}}', encoding="utf-8")
+        (root / "configs/enc/b.json").write_text('{"spatial": {"sigma": 2}}', encoding="utf-8")
+        (root / "configs/bad.json").write_text("{not json", encoding="utf-8")
+        (root / "configs/multi.txt").write_text('ENC = "first\nsecond"\n', encoding="utf-8")
+        (root / "pyproject.toml").write_text(FILES["pyproject.toml"] + "\n" + single
+                                             + '"morphology" = { files = "configs/enc/*.json", key = "spatial.sigma" }\n'
+                                             + '"bad" = { file = "configs/bad.json", key = "x" }\n'
+                                             + '"multi" = { file = "configs/multi.txt", pattern = "(?s)ENC = \\"(.*?)\\"" }\n', encoding="utf-8")
+        p = docmap(root, "update")
+        facts = (root / "docs/FACTS.md").read_text()
+        expect(p.returncode == 0 and "| morphology: a | 1.5 | configs/enc/a.json `spatial.sigma` |" in facts
+               and "| morphology: b | 2 | configs/enc/b.json `spatial.sigma` |" in facts,
+               "facts glob with `key`: one row per file, a dotted key, labelled with the file stem", p)
+        expect(p.returncode == 0 and "| bad | UNPARSEABLE FILE |" in facts and "| multi | first second |" in facts,
+               "facts: a corrupt source file shows UNPARSEABLE FILE instead of crashing, and values are one line", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # A3: STATUS line numbers are exact next to a generated block; only the Workstreams table is measured
+        root = Path(tmp)
+        (root / "docs").mkdir()
+        begin, end = "<!-- docmap:begin (generated by tools/docmap.py; do not edit) -->", "<!-- docmap:end -->"
+        (root / "docs/STATUS.md").write_text(
+            f"# Status\nUpdated 2026-10-30.\n\n{begin}\na\nb\n{end}\n\n## Works (verified)\n| Capability | How verified |\n|---|---|\n| x | "
+            + "cmd " * 100 + "|\n\n## Next actions\n- " + "step " * 100 + "\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        p = docmap(root, "check")
+        hits = [ln for ln in p.stdout.splitlines() if "status_line_max_words" in ln]
+        expect(len(hits) == 1 and "docs/STATUS.md:15:" in hits[0], "STATUS warnings carry exact line numbers after a generated block, and a long Works table cell is not measured", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # B2: code folders are the ones with code (or an existing docmap folder table); O5: block-comment headers
+        root = Path(tmp)
+        files = {
+            "docs/literature/README.md": "# docs/literature\n\nProse folder.\n",
+            "docs/literature/calc/README.md": "# calc\n\nHelper calculations.\n",
+            "docs/literature/calc/gosi.py": '"""GOSI helper."""\n',
+            "docs/models/README.md": f"# models\n\nModel notes.\n\n{begin}\n| Entry | What it is | Imported by |\n|---|---|---|\n| stale | stale | |\n{end}\n",
+            "docs/models/m/README.md": "# m\n\nA model.\n", "docs/models/m/run.py": '"""Run the model."""\n',
+            "docs/other/README.md": f"# other\n\nOther notes.\n\n{begin}\nsome other generated block\n{end}\n",
+            "docs/other/sub/README.md": "# sub\n\nSub.\n", "docs/other/sub/y.py": '"""Y."""\n',
+            "web/README.md": "# web/\n\nThe web part.\n",
+            "web/a.ts": "/**\n * Renders the widget.\n */\nexport const a = 1;\n", "web/b.js": "/* One-liner. */\nexport const b = 1;\n",
+            "web/c.ts": "export const c = 1;\n",
+            "t/README.md": "# t/\n\nStatus: current (verified 2026-11-06).\n\nThe parent-side part (Wilson et al. 2012; e.g. cell 1542). It has more.\n",
+            "t/x.py": '"""T."""\n',
+            "u/README.md": "# u/\n\nUpdated 26 October 2026.\n\nWe compare A vs. B here. And more.\n", "u/z.py": '"""U."""\n',
+        }
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        p = docmap(root, "update")
+        expect((root / "docs/literature/README.md").read_text() == files["docs/literature/README.md"]
+               and "docs/literature/" not in (root / "docs/MAP.md").read_text().replace("docs/literature/calc/", ""),
+               "update does not force a table onto a prose parent folder (docs/literature/) of a code folder", p)
+        expect("`m/`" in (root / "docs/models/README.md").read_text() and "stale" not in (root / "docs/models/README.md").read_text(),
+               "update keeps refreshing a prose folder's README that already carries docmap's folder table", p)
+        expect((root / "docs/other/README.md").read_text() == files["docs/other/README.md"],
+               "any other generated block does not make a folder a code folder", p)
+        m = (root / "docs/MAP.md").read_text()
+        expect("Renders the widget." in m and "One-liner." in m, "file_summary reads /** ... */ and /* ... */ headers", p)
+        p = docmap(root, "check")
+        expect(p.returncode == 1 and "web/c.ts: no header comment" in p.stdout and "/*" in p.stdout and "web/a.ts" not in p.stdout and "web/b.js" not in p.stdout,
+               "check accepts block-comment headers and its error names the accepted header forms", p)
+        expect("generated content is stale" not in p.stdout, "check finds no stale generated content after update, prose parents included", p)
+        expect("**`t/`** — The parent-side part (Wilson et al. 2012; e.g. cell 1542)." in m,
+               "a README description skips Status lines and does not split on 'et al.' or 'e.g.'", p)
+        expect("**`u/`** — We compare A vs. B here." in m, "a README description skips Updated lines and does not split on 'vs.'", p)
+        expect("Look code up with" in m, "MAP.md carries the where/calls/deps/map sentence when the repo has Python modules")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "web").mkdir()
+        (root / "web/README.md").write_text("# web/\n\nThe web part.\n", encoding="utf-8")
+        (root / "web/a.js").write_text("// A.\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        expect("Look code up with" not in (root / "docs/MAP.md").read_text(), "MAP.md leaves out the Python lookups when the repo has no Python modules")
+
+    with tempfile.TemporaryDirectory() as tmp:  # D1: the templates' own Status lines pass `check`
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        for name, dest in (("brief.md", "docs/BRIEF.md"), ("architecture.md", "docs/ARCHITECTURE.md")):
+            body = re.search(r"```markdown\n(.*?)```", (SKILL_DIR / "templates" / name).read_text(encoding="utf-8"), re.S).group(1)
+            (root / dest).write_text(body.replace("<YYYY-MM-DD>", "2999-01-01"), encoding="utf-8")
+        other = (SKILL_DIR / "templates/other-docs.md").read_text(encoding="utf-8")
+        forms = re.findall(r"Status: ([a-z]+)", other)
+        expect(bool(forms) and set(forms) <= {"current", "proposal", "superseded", "historical"},
+               f"other-docs.md uses only Status words that `check` accepts (found: {sorted(set(forms))})")
+        for rel, st in {"docs/plans/p1.md": "proposal (2999-01-01)", "docs/plans/p2.md": "current (verified 2999-01-01; in progress)",
+                        "docs/plans/p3.md": "historical (done 2999-01-01)", "docs/plans/p4.md": "historical (abandoned 2999-01-01: why)",
+                        "docs/reviews/2999-01-01-x.md": "current (verified 2999-01-01)"}.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(f"# Doc\nStatus: {st}\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("no Status line" not in p.stdout and "docs/BRIEF.md" not in p.stdout and "docs/ARCHITECTURE.md" not in p.stdout,
+               "docs written from the BRIEF and ARCHITECTURE templates, and plan and review Status lines, pass check", p)
+
+    docmap_version = re.search(r'^DOCMAP_VERSION = "(\d+)\.(\d+)\.(\d+)"', DOCMAP.read_text(encoding="utf-8"), re.M)
+    plugin_version = re.search(r'"version":\s*"(\d+)\.(\d+)\.(\d+)"', (SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))
+    d, v = tuple(map(int, docmap_version.groups())), tuple(map(int, plugin_version.groups()))
+    state = "equal" if d[:2] == v[:2] else "one minor behind" if d[0] == v[0] and d[1] == v[1] - 1 else "out of step"
+    expect(state != "out of step", f"DOCMAP_VERSION {'.'.join(map(str, d))} is {state} with plugin.json's {'.'.join(map(str, v))} (equal is the target; one minor behind is tolerated)")
+
     # Templates on demand: SKILL.md points at templates/, which holds one file per template.
     skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     refs = set(re.findall(r"`templates/([A-Za-z0-9._-]+\.md)`", skill))

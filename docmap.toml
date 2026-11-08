@@ -6,4 +6,5 @@ readme_exempt = ["plugins", "plugins/*", "plugins/*/skills", "plugins/*/skills/*
 docstring_exempt = []
 lifecycle = ["docs/*.md"]
 link_exempt = ["plugins/*/skills/*/evals/fixtures/*"]   # eval fixtures hold sample links on purpose
+id_scan_exempt = ["docs/archive/*", "docs/worklog/*", "docs/WORKLOG.md", "plugins/*/skills/*/evals/fixtures/*"]  # fixtures define sample ids (L1, C1) on purpose
 portable_allow = ["/home/claude"]               # the claude.ai container's working folder, a fact about that harness
