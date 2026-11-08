@@ -4,7 +4,7 @@ Status: current (verified {date}). Decisions waiting for the person (research-as
 
 <!-- One section per decision.
 
-## Q1: <the decision in one line>
+## {pre}Q1: <the decision in a few words>
 - status: open
 - options: <the options, with what each costs>
 - recommendation: <which, and why>

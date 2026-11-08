@@ -98,8 +98,59 @@ def unit_checks():
     want(ra.unsourced("0.5 [TODO]") == ["0.5"], "[TODO] accepted as a source")
 
 
+def tagged_checks() -> None:
+    """0.2.0: a question tag prefixes every id (NB-H1), headings are short names, retag renames an existing folder."""
+    with tempfile.TemporaryDirectory() as t:
+        root, d = project(t)
+        (root / "docs" / "other.md").write_text("Earlier work, see XY-H2 and the H3 wiring.\n")
+        r = run("init", d, "--entry", "project", "--question", "Is TC NMDA enough?", "--tag", "XY")
+        want(r.returncode == 1 and "already used in docs/other.md" in r.stdout and not (d / "plan.md").exists(),
+             "init with a tag the project already uses was accepted:\n" + r.stdout)
+        want(run("init", d, "--entry", "project", "--question", "x", "--tag", "H3").returncode == 1, "tag H3 accepted")
+        r = run("init", d, "--entry", "project", "--question", "Is TC NMDA enough?", "--tag", "NB")
+        want(r.returncode == 0 and ra.tag_of(d) == "NB" and "## NB-H1:" in (d / "hypotheses.md").read_text()
+             and "Not taken forward" in (d / "hypotheses.md").read_text(), "tagged init: " + r.stdout)
+        (d / "question.md").write_text(QUESTION.replace("- entry: project\n", "- entry: project\n- tag: NB\n")
+                                       .replace("<docs/literature/<topic>/ once stage 2 runs>", "docs/literature/nmda/"))
+        run("gate", d, "G1", "yes")
+        hyp = HYP.replace("## H", "## NB-H").replace("- source:", "- statement: the claim\n- source:") \
+                 .replace("analysis: A", "analysis: NB-A")
+        (d / "hypotheses.md").write_text(hyp.replace("## NB-H3", "## H3"))
+        out = run("check", d).stdout
+        want("'## H3' lacks this question's tag" in out and "the heading is 11 words" in out,
+             "untagged heading or long name not reported:\n" + out)
+        (d / "hypotheses.md").write_text(hyp.replace("(ratio about 1)", "").replace(" at the TC synapses", ""))
+        r = run("gate", d, "G2", "take H1 and H2", "--select", "H1,H2", "--drop", "H3")
+        want(r.returncode == 0 and ra.selected(d) == {"NB-H1", "NB-H2"}, "bare ids at a tagged G2: " + r.stdout)
+        want("(NB-H1 NMDA is strong enough;" in (d / "log.md").read_text(), "names missing from the gate log")
+        st = run("status", d).stdout
+        want("tag: NB" in st and "NB-H3 no NMDA dependence (null): dropped" in st, "status names:\n" + st)
+
+    # retag an untagged folder: headings, id fields and log lines renamed, fingerprints kept, prose listed
+    with tempfile.TemporaryDirectory() as t:
+        root, d = project(t)
+        run("init", d, "--entry", "project", "--question", "Is TC NMDA enough?")
+        (d / "question.md").write_text(QUESTION.replace("<docs/literature/<topic>/ once stage 2 runs>",
+                                                        "docs/literature/nmda/"))
+        (d / "hypotheses.md").write_text(HYP + "\nThe H3 wiring is a model, not a hypothesis.\n")
+        run("gate", d, "G1", "yes")
+        run("gate", d, "G2", "go", "--select", "H1,H2", "--drop", "H3")
+        (d / "plan.md").write_text((d / "plan.md").read_text() + "\n" + A1)
+        run("gate", d, "G3", "run it", "--approve", "A1")
+        r = run("retag", d, "NB")
+        want(r.returncode == 0 and "hypotheses.md:" in r.stdout and " H3" in r.stdout, "retag: " + r.stdout)
+        want(ra.selected(d) == {"NB-H1", "NB-H2"} and ra.approved(d) == {"NB-A1"}, "retag lost the gates")
+        want("The H3 wiring" in (d / "hypotheses.md").read_text(), "retag renamed prose")
+        out = run("check", d).stdout
+        want("changed since gate 3" not in out and "lacks this question's tag" not in out, "after retag:\n" + out)
+        want(run("retag", d, "NB").returncode == 1, "retag to the same tag accepted")
+        want(run("deviation", d, "A1", "rerun a crashed draw").returncode == 0 and
+             "deviation NB-A1 NB-A1=" in (d / "log.md").read_text(), "bare id at a tagged deviation")
+
+
 def main() -> int:
     unit_checks()
+    tagged_checks()
     with tempfile.TemporaryDirectory() as t:
         root, d = project(t)
         r = run("init", d, "--entry", "project", "--question", "Is TC NMDA enough?")
