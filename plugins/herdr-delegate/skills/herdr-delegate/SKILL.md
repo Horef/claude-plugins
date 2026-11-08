@@ -66,7 +66,7 @@ Run `scripts/helpers.py pick <tier>` (light, standard, deep, argon), or `pick a,
    - Never `hc send --force` past a prompt.
 6. **Answer questions.** Questions arrive as `<hc from="tN name">` messages. Answer from what you know with `hc send <name> "..."`. Bring the person only decisions that are theirs.
 7. **Review.** A report is a claim. Read the actual files or diff before telling the person it worked, and spot-check light-tier results. Example (2026-10-31): a Kiro helper sent "wc -l prints 3" before running `wc`, then corrected itself. If the result is weak, rerun one tier up.
-8. **Clean up.** Once you've accepted the work: `hc kill <name>; hc rm <name>`, only for helpers you started. Before `hc kill`, if the helper started a job that must keep running, check it is outside the helper's process tree (`ps -o pid,pgid,sid,command`: its session differs from the helper's) and confirm it is still alive afterwards; otherwise relaunch it yourself.
+8. **Clean up.** Once you've accepted the work, first read what the helper used: `helpers.py usage <name>` prints `{"provider", "amount", "unit"}` from its screen (Kiro credits, Copilot AIC), or nothing when the screen shows none (agy). Hand that JSON on as is (model-router: the `usage` of the step's done item); when it prints nothing, report no usage, never 0 or a guess. Then `hc kill <name>; hc rm <name>`, only for helpers you started. Before `hc kill`, if the helper started a job that must keep running, check it is outside the helper's process tree (`ps -o pid,pgid,sid,command`: its session differs from the helper's) and confirm it is still alive afterwards; otherwise relaunch it yourself.
 
 ## CLI quirks (measured 2026-10-31)
 

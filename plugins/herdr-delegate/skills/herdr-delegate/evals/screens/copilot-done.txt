@@ -1,0 +1,6 @@
+ ● MCP Servers reloaded: 2 servers connected
+  ❯ <hc from="t19">Reply with just the word OK, use no tools.</hc>                                    14:24
+ ● OK
+ ~/Programming/claude-plugins [⎇ main]                                                  Session: 0.25 AIC used
+┃
+ ← open sidebar · Interactive · Assisted Permissions · / commands · ? help · tab next tab           GPT-6 Luna

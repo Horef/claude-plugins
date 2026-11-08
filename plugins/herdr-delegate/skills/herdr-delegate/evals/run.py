@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scripted evals for herdr-delegate: prompt detection on real Copilot screens (captured 2026-11-01).
+"""Scripted evals for herdr-delegate: prompt detection on real Copilot screens (captured 2026-11-01), usage read from Kiro and Copilot screens (2026-11-08).
 
 Exit 0 when every check passes, 1 otherwise.
 """
@@ -62,5 +62,21 @@ with _cl.redirect_stdout(out), _cl.redirect_stderr(_io.StringIO()):
 ok = rc == 0 and out.getvalue().strip() == "copilot-argon"
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} pick skips a template whose model is not offered: {out.getvalue().strip()}")
+# Usage read from real helper screens (captured 2026-11-08): the last figure, nothing for none or 0.
+USAGE_CASES = [
+    ("kiro", "kiro-done.txt", {"provider": "kiro", "amount": 2.13, "unit": "credits"}),
+    ("copilot", "copilot-done.txt", {"provider": "copilot", "amount": 0.25, "unit": "AIC"}),
+    ("copilot", "copilot-exit.txt", {"provider": "copilot", "amount": 30.04, "unit": "AIC"}),
+    ("copilot", "copilot-shell.txt", None),
+    ("agy", "kiro-done.txt", None),
+]
+for provider, name, want in USAGE_CASES:
+    got = helpers.usage_of(provider, (HERE / "screens" / name).read_text())
+    ok = got == want
+    failures += not ok
+    print(f"{'OK  ' if ok else 'FAIL'} usage {provider} {name}: {got}")
+ok = helpers.usage_of("kiro", "▸ Credits: turn 0.00 • session 0.00 | Time: 1s") is None
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} usage of 0 is not reported")
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)
