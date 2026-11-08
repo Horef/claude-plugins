@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-08 - literature-research 0.2.0: Semantic Scholar key and pacing
+
+- Owner's S2 key: stored in the macOS Keychain (item S2_API_KEY) and exported by ~/.zshenv (owner's own edit; the agent's edit of a shell startup file was refused by the permission check). herdr-core's server lacks the variable, so `lit.py` also reads the Keychain item itself.
+- `lit.py`: all Semantic Scholar calls paced to one per 1.1 s across processes (lock + timestamp file under ~/.cache/literature-research); keyed calls retry like keyless ones and relevance search falls back to bulk on 429 (keyed relevance search answered 429 repeatedly on 2026-11-08 while a bogus key got 403 and keyed bulk 200).
+- Commands: `loop.py eval literature-research` → 49/49 (new case: two processes, 6 calls, gaps ≥ 1.0 s; 8 parallel stress runs min gap 1.101 s); live `lit.py search ... s2` without the variable → 5 results via the Keychain key; `loop.py check` 0/0; `docmap.py check` 0 errors.
+
 ## 2026-11-08 - model-router 0.21.0 and herdr-delegate 0.7.0: settings and helper usage
 
 - Diagnosis: settings were written whole from each session's copy, so an older session overwrote newer settings (store showed defaults except hereEffort); lifetime and history merge on write and survived. Kiro "0 credits" came from one lead report of amount 0 sent without reading the screen; the other Kiro runs reported none.

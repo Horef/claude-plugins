@@ -30,8 +30,12 @@ sys.modules["lit"] = lit
 spec.loader.exec_module(lit)
 
 os.environ["LIT_DEVONTHINK"] = "off"
+os.environ["LIT_KEYCHAIN"] = "off"  # never the person's real key in offline evals
 for k in ("NCBI_API_KEY", "S2_API_KEY", "OPENALEX_API_KEY"):
     os.environ.pop(k, None)
+# The S2 pacing file goes to a scratch cache, never the person's ~/.cache.
+import tempfile  # noqa: E402
+os.environ["XDG_CACHE_HOME"] = tempfile.mkdtemp(prefix="lit-eval-cache-")
 
 TESTS, RESULTS = [], []
 
@@ -898,6 +902,32 @@ def s2_429_without_key_says_what_to_do():
 
 
 # ---------------------------------------------------------------- live
+
+
+@test
+def s2_calls_paced_across_processes():
+    """A key allows 1 request/s over all endpoints: calls from parallel lit.py processes keep >= 1 s apart."""
+    import subprocess as sp
+    code = ("import importlib.util,sys,time;s=importlib.util.spec_from_file_location('lit',sys.argv[1]);"
+            "m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\n"
+            "for _ in range(3):\n    m.s2_pace(); print(f'{time.time():.3f}', flush=True)")
+    env = dict(os.environ, XDG_CACHE_HOME=tempfile.mkdtemp(prefix="lit-eval-pace-"))
+    procs = [sp.Popen([sys.executable, "-c", code, str(LIT_PATH)], stdout=sp.PIPE, text=True, env=env) for _ in range(2)]
+    stamps = sorted(float(x) for p in procs for x in p.communicate(timeout=30)[0].split())
+    gaps = [round(b - a, 3) for a, b in zip(stamps, stamps[1:])]
+    check(len(stamps) == 6 and min(gaps) >= 1.0, gaps)
+    # and every Semantic Scholar request goes through the pacer
+    seen = []
+    real = lit.s2_pace
+    lit.s2_pace = lambda: seen.append(1)
+    old = lit.get_json
+    lit.get_json = lambda url, headers=None, retries=3: {"data": []}
+    try:
+        lit.s2_get("https://api.semanticscholar.org/graph/v1/paper/search?q=x")
+    finally:
+        lit.s2_pace, lit.get_json = real, old
+    check(seen == [1], seen)
+
 
 def live():
     d = new_folder()

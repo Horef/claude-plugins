@@ -1,6 +1,6 @@
 {
   "name": "literature-research",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Literature research and claim verification for any research question: frame the question and the decision it serves, search several sources in parallel (PubMed, Semantic Scholar, arXiv, OpenAlex, the web, DEVONthink when on the owner's Mac) with a reproducible search log and citation chasing, record every finding in an evidence ledger (value, units, species, preparation, source, page, verbatim quote, evidence type) before any prose, have fresh checkers re-read each cited passage, then synthesise the answer with conflicts and costed gaps. Use for parameter lookups, mechanism or state-of-the-field reviews, novelty or prior-art checks, verifying a claim or citation, and finding methods; not for writing the final paper (use research-writing).",
   "license": "MIT"
 }
