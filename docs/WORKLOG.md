@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-08 - model-router 0.21.0 and herdr-delegate 0.7.0: settings and helper usage
+
+- Diagnosis: settings were written whole from each session's copy, so an older session overwrote newer settings (store showed defaults except hereEffort); lifetime and history merge on write and survived. Kiro "0 credits" came from one lead report of amount 0 sent without reading the screen; the other Kiro runs reported none.
+- herdr-delegate 0.7.0 (here): `helpers.py usage <name>` reads Kiro `Credits: turn X • session Y` and Copilot `Session: N AIC used` / `AI Credits N` (formats measured on one-prompt runs); evals on captured screens. O15: kiro-light showed thinking medium despite --effort low.
+- model-router 0.21.0 (Kiro standard helper, 16.14 credits read by the new command): settings merge on write, refresh at turn start and on Settings open; zero usage ignored and dropped on load; per-provider reported-run counts; rules use helpers.py usage. 74 tests pass.
+- Commands: `claude plugin test plugins/model-router` → 74 pass; `claude plugin validate` → passed (old warnings); `loop.py eval` both units → 0; `loop.py check --base origin/main` → 0/0; `docmap.py check` → 0 errors.
+- Not verified: two live sessions on one store (tests change the store behind the module instead).
+
 ## 2026-11-07 - Helper models as configuration
 
 - herdr-delegate 0.6.0 (Kiro helper): helpers.default.json + ~/.config/herdr-delegate/helpers.json drive rendered templates; helpers.py config/render/set/custom/models; Copilot models via ACP. 0.6.1: pick skips not-offered models (copilot-argon). 0.6.2: Kiro credit multipliers cached.
