@@ -273,6 +273,100 @@ def main() -> int:
         expect(p.returncode == 0 and len(p.stdout) // 4 <= 60 and "helper(" in p.stdout and "fmt(" not in p.stdout,
                "map keeps within the token budget, dropping the least-referenced symbols", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O13: any RFC 3986 scheme is a URI, not a relative link
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "docs/NOTES.md").write_text(
+            "Status: current (verified 2999-01-01)\n# Notes\n[paper](x-devonthink-item://ABC-123) [web](https://example.org/a) [dev](git+ssh://h/r)\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("broken link" not in p.stdout, "check accepts x-devonthink-item:, https: and git+ssh: links", p)
+        (root / "docs/NOTES.md").write_text((root / "docs/NOTES.md").read_text() + "[gone](missing.md)\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect(p.returncode == 1 and "broken link -> missing.md" in p.stdout and "x-devonthink" not in p.stdout,
+               "check still fails on a real missing relative link", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O14: STATUS keeps one short line per workstream
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "docs/STATUS.md").write_text(
+            "# Status\nUpdated 2026-10-30.\n\n## Workstreams\n| Workstream | Where | State | Next |\n|---|---|---|---|\n| A | `docs/a/` | "
+            + "wordy " * 100 + "| x |\n\n- " + "short " * 60 + "\n- " + "long " * 120 + "\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        hits = [ln for ln in p.stdout.splitlines() if "status_line_max_words" in ln]
+        expect(len(hits) == 1 and "docs/STATUS.md:10:" in hits[0] and "120 words" in hits[0],
+               "check warns about a 120-word STATUS bullet (with its line number) but not a 60-word one or a table row", p)
+        (root / "docmap.toml").write_text("status_line_max_words = 150\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("status_line_max_words" not in p.stdout, "status_line_max_words can be raised in the configuration", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O15: a heading id defined in two files collides; a tagged one does not
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        docs = {"docs/one.md": "## A1: first\n\n## NB-A1: tagged\n", "docs/two.md": "## A1: other\n\n```\n## Z9: in code\n```\n",
+                "docs/three.md": "## NB-A1. tagged elsewhere\n\n<!-- ## Z9: commented -->\n", "docs/archive/old.md": "## A1: archived\n"}
+        for rel, text in docs.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(f"Status: historical\n{text}" if "archive" not in rel else text, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        hits = [ln for ln in p.stdout.splitlines() if "defined as a heading" in ln]
+        expect(len(hits) == 2 and any(ln.startswith("warning: A1 is") and "docs/one.md" in ln and "docs/two.md" in ln
+                                      and "archive" not in ln and "NB-H1" in ln for ln in hits),
+               "check warns once about an id defined in two files; archive, code fences and comments are skipped", p)
+        expect(any(ln.startswith("warning: NB-A1 is") and "docs/one.md" in ln and "docs/three.md" in ln for ln in hits)
+               and not any("Z9" in ln for ln in hits), "a tagged id collides only with the same tagged id", p)
+        p = docmap(root, "ids")
+        out = p.stdout
+        expect(p.returncode == 0 and out.startswith("A ") and "NB-A" in out and "defined in several files: A1" in out
+               and out.index("A ") < out.index("D "), "ids lists the families, those with duplicates first", p)
+        (root / "docmap.toml").write_text('id_scan_exempt = ["docs/archive/*", "docs/two.md"]\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("warning: A1 is" not in p.stdout, "id_scan_exempt skips files", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O16: [tool.docmap.facts] takes a glob; the single-file forms are unchanged
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "configs/generators").mkdir(parents=True)
+        (root / "configs/generators/v2_weights_1.json").write_text('{"b_h3_native": 0.5, "a_h3_native": 0.25, "z_other": 9}', encoding="utf-8")
+        (root / "configs/generators/v1_weights_1.json").write_text('{"a_h3_native": 0.2, "c_h3_nmda": 1.5}', encoding="utf-8")
+        (root / "configs/cell.json").write_text('{"id": "cell7"}', encoding="utf-8")
+        single = ('[tool.docmap.facts]\n"default cell" = { file = "configs/cell.json", key = "id", note = "D2" }\n'
+                  '"pure core" = { file = "demo/core.py", pattern = "^def (\\\\w+)" }\n')
+        (root / "pyproject.toml").write_text(FILES["pyproject.toml"] + "\n" + single, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        before = (root / "docs/FACTS.md").read_text()
+        expect("| default cell | cell7 | configs/cell.json `id` | D2 |" in before and "| pure core | add | demo/core.py |" in before,
+               "facts: the single-file key and pattern forms give their rows")
+        (root / "pyproject.toml").write_text(FILES["pyproject.toml"] + "\n" + single
+                                             + '"calibrated weights" = { files = "configs/generators/*_weights_*.json", keys = "^[abc]_h3_" }\n', encoding="utf-8")
+        p = docmap(root, "update")
+        after = (root / "docs/FACTS.md").read_text()
+        rows = [ln for ln in after.splitlines() if ln.startswith("| calibrated weights")]
+        expect([r.split(" | ")[0:3] for r in rows] == [
+            ["| calibrated weights: a_h3_native", "0.2", "configs/generators/v1_weights_1.json `a_h3_native`"],
+            ["| calibrated weights: c_h3_nmda", "1.5", "configs/generators/v1_weights_1.json `c_h3_nmda`"],
+            ["| calibrated weights: a_h3_native", "0.25", "configs/generators/v2_weights_1.json `a_h3_native`"],
+            ["| calibrated weights: b_h3_native", "0.5", "configs/generators/v2_weights_1.json `b_h3_native`"]],
+               "facts glob: one row per (file, key matching `keys`), sorted by file then key", p)
+        expect(all(ln in after for ln in before.splitlines() if ln.startswith("| default cell") or ln.startswith("| pure core")),
+               "facts glob: the single-file rows are unchanged when a glob entry is added", p)
+        p = docmap(root, "check")
+        expect(p.returncode == 0, "check is green with a glob facts table", p)
+
     # Templates on demand: SKILL.md points at templates/, which holds one file per template.
     skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     refs = set(re.findall(r"`templates/([A-Za-z0-9._-]+\.md)`", skill))

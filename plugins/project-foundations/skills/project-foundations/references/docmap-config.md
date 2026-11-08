@@ -16,10 +16,13 @@ proposal_max_days = 30                # an open proposal older than this: decide
 map_files_max = 150                   # MAP.md lists files up to this many code files; beyond, folders only
 read_max_tokens = 8000                # warn when a file agents read whole (AGENTS, STATUS, WORKLOG, MAP) is bigger
 read_total_max_tokens = 12000         # warn when those files together are bigger (the cost of a session start)
+status_line_max_words = 80            # warn when a bullet or paragraph line in STATUS is longer: one short line per workstream, detail in its folder
+id_scan_exempt = ["docs/archive/*"]   # markdown whose heading ids (## A1:, ### NB-H1:) are not checked for collisions
 
 [tool.docmap.facts]                   # generated docs/FACTS.md: one row per key value, read from its source
 "default cell" = { file = "configs/cell.json", key = "id", note = "D27" }      # key = dotted path in JSON/TOML
 "encoder preset" = { file = "src/mypkg/defaults.py", pattern = "^ENCODER = \"(.+)\"" }  # or a regex with one group
+"calibrated weights" = { files = "configs/generators/*_weights_*.json", keys = "^[abc]_h3_" }  # a glob: one row per (file, top-level key)
 
 [[tool.docmap.forbid]]                # one block per architectural rule
 source = "mypkg"
@@ -36,5 +39,9 @@ columns = { run = "run_id", created = "created_utc", commit = "project_git.revis
 # indexes), portable / portable_exempt (files scanned for machine-specific paths), portable_allow (paths that are facts
 # about other code, e.g. an upstream's hard-coded "/home/someone"), local / local_example (file names)
 ```
+
+Facts from many files: `files` is a glob (pathlib syntax: `*` stays within a folder, `**` recurses; it reads files on disk, so keep them tracked) over JSON or TOML files, and the optional `keys` is a regex (`re.search`) on their top-level keys. Each match is one row, named `<fact name>: <key>`, with the file and key as its source; rows are sorted by file, then key. Use `file` + `key` (or `pattern`) for one value; the two forms can be mixed in one table. A glob that matches nothing shows a `NO FILES MATCH` row instead of silently disappearing.
+
+Heading ids: `check` warns once per id (`A1`, `H3`, `NB-H1`, written as `## A1:` or `### NB-H1.` headings) that two or more tracked Markdown files define, because a bare id must not mean two things; tag folder-local ids with the folder's short tag. Generated blocks, code fences and HTML comments are skipped, as are files matching `id_scan_exempt`. `python tools/docmap.py ids` lists the id families.
 
 Budgets: `read_max_tokens` applies to each file agents read whole at session start; `read_total_max_tokens` to the sum of all of them. `check` warns on either, `stats` shows both. To shrink a WORKLOG that is over budget although every entry is from the current month: `python tools/docmap.py rotate --keep N` keeps the newest N entries and moves the rest to `docs/worklog/YYYY-MM.md` (plain `rotate` moves only earlier months).

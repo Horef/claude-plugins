@@ -31,6 +31,7 @@ Goal, scope and open questions: `docs/BRIEF.md`. Scaffolding: the project-founda
 
 ## Conventions
 - **Design for what will vary next.** Before building something that will keep being used (a screen, a config schema, a file format, a function's signature, a report or figure layout), ask what it will have to hold next: new parameters, conditions, item kinds, tests. Make it handle them from the data (iterate over fields, diff an item against its siblings, name values from their keys and units) rather than from a hand-written list of today's cases; where a special case stays, anything it does not list must still show or fail loudly, never vanish.
+- **One id, one meaning.** Project-wide id families (D decisions, R results, review findings) are numbered once per project; ids local to one folder (a plan's steps, a ledger's rows, a question's hypotheses) carry that folder's short tag when cited outside it (`NB-H1`, not `H1`), so a bare id never means two things (`docmap.py check` warns when two files define the same heading id; `docmap.py ids` lists the families).
 <Only project-wide rules an agent would get wrong. Folder-specific rules live in that folder's README.>
 
 ## Keeping the project maintained
@@ -49,6 +50,7 @@ Update in the same commit as the change that requires it:
 | change user-visible behavior, CLI or config | `README.md` and `CHANGELOG.md` |
 | run an experiment | `python tools/docmap.py runs`; a numbered section in `docs/RESULTS.md` citing the run id |
 | start multi-session work | a plan in `docs/plans/` with a Status line |
+| start a new line of work (a feature, an investigation, a research question, a write-up) | give it one home (a plan in `docs/plans/<slug>.md`, or its own folder such as `docs/research/<slug>/`) and a row in STATUS's Workstreams table; results, decisions and runs still go to RESULTS, DECISIONS and RUNS |
 | write or substantially revise a doc in `docs/` | its Status line: `current (verified <today>)`, `proposal (<today>)`, `superseded by <id>` or `historical`; a decided proposal is superseded by its D entry |
 | change a default, preset or key number | its source (config/code); `docmap.py update` regenerates `docs/FACTS.md`. Docs cite FACTS.md rather than copying the value |
 | supersede a decision | the old entry's heading says `superseded by D<n>`; fix the live docs that `check` then lists |
