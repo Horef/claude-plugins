@@ -12,7 +12,8 @@ Exit codes: 0 ok; 1 problems found / bad input; 2 not run (optional tool or DEVO
 fetch routes: DEVONthink (DOI or title+year match, identity checked on page 1), papers folder, open-access PDF (must be a real PDF),
 Europe PMC full text (.xml + .txt with section markers; quote locators are then section headings).
 Optional tools: `pdftotext` (poppler) for text/quote on PDFs; `osascript` + DEVONthink on macOS.
-Environment: NCBI_API_KEY, S2_API_KEY, OPENALEX_API_KEY (all optional); LIT_DEVONTHINK=off disables DEVONthink.
+Environment: NCBI_API_KEY, S2_API_KEY (else the macOS Keychain item S2_API_KEY; LIT_KEYCHAIN=off skips it), OPENALEX_API_KEY (all optional); LIT_DEVONTHINK=off disables DEVONthink.
+Semantic Scholar calls are paced to one per 1.1 s across all lit.py processes on the machine (the keyed limit is 1/s).
 """
 import argparse
 import bisect
@@ -88,7 +89,7 @@ def http_get(url, headers=None, timeout=30, retries=3):
                 time.sleep(wait + random.uniform(0, 1))  # jitter: shared pools punish lockstep retries
                 delay = min(delay * 2, 30)
                 continue
-            hint = (f" ({S2_HINT})" if e.code == 429 and "semanticscholar" in url and not os.environ.get("S2_API_KEY")
+            hint = (f" ({S2_HINT})" if e.code == 429 and "semanticscholar" in url and not s2_key()
                     else "")
             raise NetError(f"HTTP {e.code} from {urllib.parse.urlsplit(url).netloc}{hint}")
         except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -456,19 +457,78 @@ def search_pubmed(query, maxn, since):
     return records, f"total {res.get('count', len(records))}"
 
 
-def s2_get(url, retries=7):
-    """Semantic Scholar GET. Without S2_API_KEY every caller shares one public pool, so the
-    same request flips between 200 and 429: retry patiently (about two minutes at retries=7)."""
+_S2_KEY = None
+
+
+def s2_key():
+    """S2_API_KEY from the environment, else (macOS) from the Keychain item of that name, so helpers
+    started from a process without the variable still use the key. LIT_KEYCHAIN=off skips the Keychain."""
+    global _S2_KEY
     if os.environ.get("S2_API_KEY"):
-        return get_json(url, {"x-api-key": os.environ["S2_API_KEY"]})
-    return get_json(url, retries=retries)
+        return os.environ["S2_API_KEY"]
+    if _S2_KEY is None:
+        _S2_KEY = ""
+        if sys.platform == "darwin" and os.environ.get("LIT_KEYCHAIN", "").lower() not in ("off", "0", "no", "false"):
+            try:
+                r = subprocess.run(["security", "find-generic-password", "-s", "S2_API_KEY", "-w"],
+                                   capture_output=True, text=True, timeout=10)
+                _S2_KEY = r.stdout.strip() if r.returncode == 0 else ""
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return _S2_KEY
+
+
+S2_INTERVAL = 1.1  # seconds between Semantic Scholar calls: a key allows 1 request per second, all endpoints together
+
+
+def s2_pace(interval=S2_INTERVAL):
+    """Wait until `interval` has passed since the last Semantic Scholar call made from this machine by any
+    lit.py process (parallel helpers and searches share one key), then record this call. The time is kept
+    in a small file under a lock; without fcntl (Windows) only this process is paced."""
+    base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "literature-research"
+    try:
+        import fcntl
+        base.mkdir(parents=True, exist_ok=True)
+        with open(base / "s2-last-call", "a+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)  # held while waiting, so callers go one at a time
+            f.seek(0)
+            try:
+                last = float(f.read().strip() or 0)
+            except ValueError:
+                last = 0.0
+            wait = min(last + interval - time.time(), interval)  # a stamp from a clock ahead costs one interval, not more
+            if wait > 0:
+                time.sleep(wait)
+            f.seek(0)
+            f.truncate()
+            f.write(f"{time.time():.3f}")
+            return
+    except (ImportError, OSError):
+        pass
+    global _S2_LAST
+    wait = min(_S2_LAST + interval - time.time(), interval)
+    if wait > 0:
+        time.sleep(wait)
+    _S2_LAST = time.time()
+
+
+_S2_LAST = 0.0
+
+
+def s2_get(url, retries=7):
+    """Semantic Scholar GET, paced to one call per S2_INTERVAL across processes (s2_pace). Without
+    S2_API_KEY every caller shares one public pool, so the same request flips between 200 and 429:
+    retry patiently (about two minutes at retries=7)."""
+    s2_pace()
+    # Retried as patiently with a key: relevance search answers 429 to keyed calls too when busy (2026-11-08).
+    return get_json(url, {"x-api-key": s2_key()} if s2_key() else None, retries=retries)
 
 
 def search_s2(query, maxn, since):
     try:
         return search_s2_relevance(query, maxn, since)
     except NetError as e:
-        if "429" not in str(e) or os.environ.get("S2_API_KEY"):
+        if "429" not in str(e):
             raise
     # /search/bulk has its own, much less crowded limit; it is not relevance-ranked, so most-cited first
     records, note = search_s2_bulk(query, maxn, since)
@@ -480,14 +540,13 @@ def search_s2_relevance(query, maxn, since):
     while len(records) < maxn:
         limit = min(100, maxn - len(records))
         p = {"query": query, "limit": limit, "offset": offset, "fields": S2_FIELDS, "year": f"{since}-" if since else ""}
-        # keyless relevance search is the most crowded endpoint: two quick tries, then fall back to bulk
+        # relevance search is the most crowded endpoint (keyed or not): two quick tries, then fall back to bulk
         js = s2_get("https://api.semanticscholar.org/graph/v1/paper/search?" + qs(p), retries=7 if offset else 2)
         data = js.get("data") or []
         records += [norm_s2(x) for x in data]
         offset += limit
         if len(data) < limit or "next" not in js:
             break
-        time.sleep(1)
     return records[:maxn], f"total {js.get('total', len(records))}"
 
 
@@ -502,7 +561,6 @@ def search_s2_bulk(query, maxn, since):
         token = js.get("token") or ""
         if not token:
             break
-        time.sleep(1)
     return records[:maxn], f"total {js.get('total', len(records))}"
 
 

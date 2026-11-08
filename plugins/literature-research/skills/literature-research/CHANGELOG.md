@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.2.0 (2026-11-08)
+- Semantic Scholar key also from the macOS Keychain; calls paced to 1 per 1.1 s across all lit.py processes (keyed limit 1/s); keyed relevance search retries and falls back to bulk on 429 (owner's request 2026-11-08)
+
 ## 0.1.1 (2026-11-07)
 - Semantic Scholar without a key (owner, 7 Nov): the shared keyless pool flips between 200 and 429 (measured: relevance search 429 on 8 of 8 calls, `/search/bulk` and paper lookups answering). Patient jittered retries (capped 30 s), relevance search gives up after two quick tries and falls back to `/search/bulk` sorted by citations, logged as such (a keyless search went from 223 s to 12 s).
 - Full text (pilot to_fetch.md: 15 papers the owner fetched by hand, several free): new routes for bioRxiv/medRxiv (latest version via api.biorxiv.org), eLife (fixed PDF address; doi.org served HTML) and a Europe PMC DOI-to-PMCID lookup feeding the open-access XML route. Re-run on the 15: 4 now arrive without the owner (was 0); the rest are publisher sites that refuse scripts (J Neurosci, APS, OUP, Nature, Elsevier).
