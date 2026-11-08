@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O4 2026-11-08 [friction] 6 audit: ra.py stage() needs the audit's status field to be exactly 'pass'; the Argon checker wrote 'pass. <reasons>' and status stayed '6 audit' with 0 check problems. Would help: accept 'pass' as the first word, or have check say the status value is not pass/disagreement. (simple_complex_v1)
 
 ## Resolved
 
