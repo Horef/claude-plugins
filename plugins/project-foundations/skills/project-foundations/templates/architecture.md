@@ -2,7 +2,7 @@ Produces `docs/ARCHITECTURE.md`; read only when the project has boundaries or in
 
 ```markdown
 # Architecture
-Updated <YYYY-MM-DD>. Only what rarely changes; the file-level map is generated in docs/MAP.md.
+Status: current (verified <YYYY-MM-DD>). Only what rarely changes; the file-level map is generated in docs/MAP.md.
 
 ## Overview
 <The problem and the main data/control flow, possibly as a small text diagram.>

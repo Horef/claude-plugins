@@ -28,7 +28,8 @@ Installed by the project-foundations skill (source: its scripts/docmap.py; see D
   python tools/docmap.py runs          add local run manifests to the run index (docs/RUNS.md; needs [tool.docmap.runs])
   python tools/docmap.py local         print what can be detected about this machine, for AGENTS.local.md
   python tools/docmap.py docs          list every lifecycle doc with its Status line and age (what to verify next)
-  python tools/docmap.py ids           every id defined as a heading (A1, H3, NB-H1), by family; ids defined in several files first
+  python tools/docmap.py ids           every id family (A1, L2, NB-H1) with where it is defined and the files that cite
+                                       an id defined in several folders without saying which; those first
 Configuration: optional [tool.docmap] table in pyproject.toml, or docmap.toml (same keys, top level).
 """
 from __future__ import annotations
@@ -51,7 +52,8 @@ DEFAULTS = {
     "status": "docs/STATUS.md", "worklog": "docs/WORKLOG.md", "worklog_dir": "docs/worklog",
     "status_max_commits": 8,            # warn if STATUS is older than this many commits
     "status_line_max_words": 80,        # warn when a bullet or paragraph line in STATUS is longer (detail belongs in the workstream's folder)
-    "id_scan_exempt": ["docs/archive/*"],  # markdown whose heading ids are not checked for collisions
+    "id_scan_exempt": ["docs/archive/*", "docs/worklog/*", "docs/WORKLOG.md", "backlog/*"],  # markdown whose ids are neither defined nor cited for the id check
+    "id_cite_exempt": [],               # ids (or regexes, matched whole) never reported as ambiguous citations, e.g. domain words like "L4" or "V1"
     "indexes": [{"file": "docs/DECISIONS.md", "pattern": r"^## (D\d+)\.\s*(.+)$", "ids": r"\bD[1-9]\d*\b"},
                 {"file": "docs/RESULTS.md", "pattern": r"^#{2,3} (\d+[a-z]?)\.(?!\d)\s*(.+)$"}],  # "5.1" is a subsection, not an entry
     "forbid": [],                       # [{source="pkg", except=["pkg.adapters"], imports=["torch"], reason="..."}]
@@ -226,13 +228,36 @@ def file_summary(path: str, mods_by_path: dict[str, Module]) -> str:
             if ln.startswith("#"):
                 return ln.lstrip("# ").strip()
     if p.suffix in CODE_EXT or p.suffix in {".toml", ".yml", ".yaml", ".sbatch", ".cfg", ".ini"}:
-        for ln in lines:
+        for i, ln in enumerate(lines):
             s = ln.strip()
             if s.startswith("#!") or not s:
                 continue
+            if s.startswith("/*"):
+                return block_comment_summary(lines[i:])
             m = re.match(r"^(#|//|--|%|;)\s*(.+)", s)
             return m.group(2).strip() if m else ""
     return ""
+
+
+def block_comment_summary(lines: list[str]) -> str:
+    """First text of a `/* ... */` or `/** ... */` header (one line, or the first ` * text` line)."""
+    for n, ln in enumerate(lines):
+        t = ln.strip()
+        if n == 0:
+            t = re.sub(r"^/\*+!?\s*", "", t)
+        ended = "*/" in t
+        t = re.sub(r"\s*\*+/.*$", "", t)
+        t = re.sub(r"^\*+\s?", "", t).strip()
+        if t:
+            return t
+        if ended:
+            return ""
+    return ""
+
+
+HEADER_FORMS = "# // -- % ; /* /**"
+FOLDER_TABLE_HEAD = "| Entry | What it is | Imported by |"
+NOT_SENTENCE_END = r"(?<!\bet al)(?<!\be\.g)(?<!\bi\.e)(?<!\bvs)(?<!\bcf)(?<!\bFig)(?<!\bFigs)(?<!\bEq)(?<!\bMr)(?<!\bDr)(?<!\bSt)"
 
 
 def readme_description(d: str) -> str:
@@ -241,9 +266,11 @@ def readme_description(d: str) -> str:
         return ""
     text = strip_block(p.read_text(encoding="utf-8"))
     for para in re.split(r"\n\s*\n", text):
-        s = " ".join(para.split())
+        s = " ".join(ln for ln in para.splitlines() if not STATUS_LINE.match(ln.strip()) and not re.match(r"^\s*Updated\b", ln)).strip()
+        s = " ".join(s.split())
         if s and not s.startswith("#"):
-            return "" if "TODO(docmap)" in s else s.split(". ")[0].rstrip(".") + "."
+            first = re.split(NOT_SENTENCE_END + r"\.\s+(?=[A-Z(\[`\"'\d])", s, maxsplit=1)[0]
+            return "" if "TODO(docmap)" in s else first.rstrip(".") + "."
     return ""
 
 
@@ -265,13 +292,19 @@ def replace_block(text: str, body: str, after_first_para=False) -> str:
 
 # ---------------------------------------------------------------- generation
 def code_dirs(files: list[str]) -> list[str]:
+    """Folders that directly hold a code file, plus folders whose README already carries docmap's folder table
+    (so existing tables stay current; delete the generated block from a README to opt that folder out)."""
     dirs = set()
     for f in files:
+        d = str(Path(f).parent)
+        if d in ("", "."):
+            continue
         if Path(f).suffix in CODE_EXT:
-            d = Path(f).parent
-            while str(d) not in ("", "."):
-                dirs.add(str(d))
-                d = d.parent
+            dirs.add(d)
+        elif Path(f).name == "README.md":
+            text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
+            if BEGIN in text and FOLDER_TABLE_HEAD in text:
+                dirs.add(d)
     return sorted(d for d in dirs if not matches(d, CFG["readme_exempt"]))
 
 
@@ -289,7 +322,7 @@ def folder_table(d: str, files, mods_by_path, imp) -> str:
             entries.add((Path(f).name, f))
         elif f.startswith(d + "/") and parent != d:
             entries.add((f[len(d) + 1:].split("/")[0] + "/", d + "/" + f[len(d) + 1:].split("/")[0]))
-    rows = ["| Entry | What it is | Imported by |", "|---|---|---|"]
+    rows = [FOLDER_TABLE_HEAD, "|---|---|---|"]
     for name, full in sorted(entries, key=lambda e: (not e[0].endswith("/"), e[0].lower())):
         if name.endswith("/"):
             desc, used = readme_description(full), ""
@@ -305,10 +338,14 @@ def build_map(files, mods_by_path, imp, dirs) -> str:
     code = [f for f in files if Path(f).suffix in CODE_EXT]
     folders_only = len(code) > CFG["map_files_max"]  # a big map costs every reader; files are in the folder READMEs
     out = ["# Project map", "",
-           "Generated by `python tools/docmap.py update`; do not edit by hand. Read this first, then the folder's",
-           "`README.md`, then the file's header docstring. Look code up with `python tools/docmap.py where NAME` (definition",
-           "and uses), `calls NAME` (callers and callees), `deps PATH` (module imports) or `map --budget 2000` (the most-used",
-           "symbols of the repo).", ""]
+           "Generated by `python tools/docmap.py update`; do not edit by hand. Read this first, then the folder's"]
+    if mods_by_path:  # the lookups read Python only
+        out += ["`README.md`, then the file's header docstring. Look code up with `python tools/docmap.py where NAME` (definition",
+                "and uses), `calls NAME` (callers and callees), `deps PATH` (module imports) or `map --budget 2000` (the most-used",
+                "symbols of the repo)."]
+    else:
+        out.append("`README.md`, then the file's header docstring.")
+    out.append("")
     if folders_only:
         out += [f"{len(code)} code files: folders only (above `map_files_max` = {CFG['map_files_max']}); "
                 "each folder's README lists its files.", ""]
@@ -369,53 +406,69 @@ def generated(files):
     return out, mods
 
 
+def one_line(v) -> str:
+    return " ".join(str(v).split())
+
+
+def load_structured(f: str):
+    """(data, error) of a JSON or TOML file; error is a short text when it cannot be read."""
+    import json
+    try:
+        text = (ROOT / f).read_text(encoding="utf-8")
+        if f.endswith(".json"):
+            return json.loads(text), None
+        if f.endswith(".toml"):
+            import tomllib
+            return tomllib.loads(text), None
+    except ValueError:
+        return None, "UNPARSEABLE FILE"
+    return None, "UNSUPPORTED FILE (use json or toml)"
+
+
 def fact_value(spec: dict) -> str:
     """One fact from a source file: `key` = dotted path into JSON/TOML, or `pattern` = regex with one group."""
     p = ROOT / spec["file"]
     if not p.exists():
         return "MISSING FILE"
-    text = p.read_text(encoding="utf-8")
     if "key" in spec:
-        import json
-        if p.suffix == ".json":
-            data = json.loads(text)
-        elif p.suffix == ".toml":
-            import tomllib
-            data = tomllib.loads(text)
-        else:
+        if p.suffix not in (".json", ".toml"):
             return "UNSUPPORTED FILE (use pattern)"
+        data, err = load_structured(spec["file"])
+        if err:
+            return err
         v = dig(data, spec["key"])
-        return "MISSING KEY" if v is None else str(v)
-    m = re.search(spec["pattern"], text, re.M)
-    return m.group(1).strip() if m else "NO MATCH"
+        return "MISSING KEY" if v is None else one_line(v)
+    m = re.search(spec["pattern"], p.read_text(encoding="utf-8"), re.M)
+    return one_line(m.group(1)) if m else "NO MATCH"
 
 
-def glob_facts(spec: dict) -> list[tuple[str, str, str]]:
-    """(file, key, value) for each top-level key (matching the optional `keys` regex) of each JSON/TOML file matching `files`."""
+def glob_facts(spec: dict) -> list[tuple[str, str, str, str]]:
+    """(file, label suffix, source key, value) per matching JSON/TOML file: one row per file when `key` (a dotted
+    path) is given, else one row per top-level key matching the optional `keys` regex. A key that occurs in
+    several files carries its file's stem in the label, so every label is unique."""
     import json
     paths = sorted(f for f in tracked_files() if matches(f, [spec["files"]]))  # same glob rules as every other key
     if not paths:
-        return [(spec["files"], "", "NO FILES MATCH")]
+        return [(spec["files"], "", "", "NO FILES MATCH")]
     rows = []
     for f in paths:
-        text = (ROOT / f).read_text(encoding="utf-8")
-        try:
-            if f.endswith(".json"):
-                data = json.loads(text)
-            elif f.endswith(".toml"):
-                import tomllib
-                data = tomllib.loads(text)
-            else:
-                rows.append((f, "", "UNSUPPORTED FILE (use json or toml)"))
-                continue
-        except ValueError:
-            rows.append((f, "", "UNPARSEABLE FILE"))
-            continue
-        for k in sorted(data) if isinstance(data, dict) else []:
-            if not spec.get("keys") or re.search(spec["keys"], k):
-                v = data[k]
-                rows.append((f, k, json.dumps(v, default=str) if isinstance(v, (dict, list)) else str(v)))
-    return rows
+        data, err = load_structured(f)
+        if err:
+            rows.append((f, Path(f).stem, "", err))
+        elif "key" in spec:
+            v = dig(data, spec["key"])
+            rows.append((f, Path(f).stem, spec["key"], "MISSING KEY" if v is None else one_line(json.dumps(v, default=str) if isinstance(v, (dict, list)) else v)))
+        else:
+            for k in sorted(data) if isinstance(data, dict) else []:
+                if not spec.get("keys") or re.search(spec["keys"], k):
+                    v = data[k]
+                    rows.append((f, k, k, one_line(json.dumps(v, default=str) if isinstance(v, (dict, list)) else v)))
+    seen = defaultdict(int)
+    for f, label, src, _ in rows:
+        if "key" not in spec and src:
+            seen[label] += 1
+    return [(f, f"{label} ({Path(f).stem})" if "key" not in spec and src and seen[label] > 1 else label, src, v)
+            for f, label, src, v in rows]
 
 
 def build_facts() -> str | None:
@@ -425,29 +478,141 @@ def build_facts() -> str | None:
             "(or the source) instead of copying these values, so a changed default changes in one place.", "", BEGIN,
             "| Fact | Value | Source | Note |", "|---|---|---|---|"]
     for name, spec in sorted(CFG["facts"].items()):
-        if "files" in spec:  # one row per (file, top-level key)
-            for f, k, v in glob_facts(spec):
-                rows.append(f"| {name}{': ' + k if k else ''} | {v.replace('|', '/')} | {f}{f' `{k}`' if k else ''} | {spec.get('note', '')} |")
+        if "files" in spec:  # one row per file (`key`) or per (file, top-level key)
+            for f, label, src, v in glob_facts(spec):
+                rows.append(f"| {name}{': ' + label if label else ''} | {v.replace('|', '/')} | {f}{f' `{src}`' if src else ''} | {spec.get('note', '')} |")
             continue
         src = spec["file"] + (f" `{spec['key']}`" if "key" in spec else "")
         rows.append(f"| {name} | {fact_value(spec).replace('|', '/')} | {src} | {spec.get('note', '')} |")
     return "\n".join(rows + [END, ""])
 
 
-ID_HEADING = re.compile(r"^#{2,4} ((?:[A-Z][A-Za-z0-9]*-)?[A-Z]+\d+[a-z]?)[:.](?!\d)", re.M)
+ID_PAT = r"(?:[A-Z][A-Za-z0-9]*-)?[A-Z]+\d+(?:\.\d+)?[a-z]?"   # A1, H5f, R1.2, NB-H1
+ID_HEADING = re.compile(r"^#{2,4}[ \t]+(" + ID_PAT + r")[:.](?!\d)", re.M)
+ID_BULLET = re.compile(r"^[-*][ \t]+(" + ID_PAT + r")[.:](?=\s|$)", re.M)
+ID_CITE = re.compile(r"(?<![A-Za-z0-9_/-])(" + ID_PAT + r")(?![A-Za-z0-9_/-]|\.\d)")   # not NB-A1 for A1, not L2/3 for L2, not A1.2 for A1
 
 
-def heading_ids(files: list[str]) -> dict[str, list[str]]:
-    """{id: files defining it as a heading} over tracked Markdown, minus generated blocks, code fences and HTML comments."""
-    found = defaultdict(list)
-    for f in files:
-        if not f.endswith(".md") or matches(f, CFG["id_scan_exempt"]):
+def id_family(i: str) -> str:
+    return re.sub(r"\d+(?:\.\d+)?[a-z]?$", "", i)
+
+
+def id_key(i: str):
+    m = re.match(r"(.*?)(\d+)(?:\.(\d+))?([a-z]?)$", i)
+    return m.group(1), int(m.group(2)), int(m.group(3) or -1), m.group(4)
+
+
+def id_range(ids, limit: int = 8) -> str:
+    """'A1-A6' for runs of three or more consecutive plain ids of one family, the rest listed."""
+    out, run = [], []
+    plain = lambda i: re.fullmatch(r"(.*?[A-Z])(\d+)", i)
+    for i in sorted(ids, key=id_key):
+        p = plain(i)
+        if p and run and plain(run[-1]).group(1) == p.group(1) and int(p.group(2)) == int(plain(run[-1]).group(2)) + 1:
+            run.append(i)
             continue
-        text = strip_block((ROOT / f).read_text(encoding="utf-8", errors="replace"))
-        text = re.sub(r"<!--.*?-->", "", re.sub(r"```.*?```", "", text, flags=re.S), flags=re.S)
-        for i in set(ID_HEADING.findall(text)):
-            found[i].append(f)
-    return found
+        out += [f"{run[0]}-{run[-1]}"] if len(run) >= 3 else run
+        run = [i] if p else []
+        if not p:
+            out.append(i)
+    out += [f"{run[0]}-{run[-1]}"] if len(run) >= 3 else run
+    return ", ".join(out[:limit]) + (f" (+{len(out) - limit} more)" if len(out) > limit else "")
+
+
+def id_text(f: str) -> str:
+    """A Markdown file without generated blocks, code fences and HTML comments."""
+    text = strip_block((ROOT / f).read_text(encoding="utf-8", errors="replace"))
+    return re.sub(r"<!--.*?-->", "", re.sub(r"(```|~~~).*?\1", "", text, flags=re.S), flags=re.S)
+
+
+def table_ids(text: str) -> list[str]:
+    """First-column ids of Markdown tables whose header's first cell is `id`."""
+    ids, in_table, id_col = [], False, False
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s.startswith("|"):
+            in_table = False
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if not in_table:
+            in_table, id_col = True, cells[0].strip("*` ").lower() == "id"
+        elif id_col and not re.fullmatch(r"[\s:|-]+", s) and re.fullmatch(ID_PAT, c := cells[0].strip("*`[] ")):
+            ids.append(c)
+    return ids
+
+
+def defined_ids(text: str) -> set[str]:
+    """Ids a file defines (heading, bullet or id-table row) in a family it really numbers: two ids, or <family>1."""
+    raw = set(ID_HEADING.findall(text)) | set(ID_BULLET.findall(text)) | set(table_ids(text))
+    fams = defaultdict(set)
+    for i in raw:
+        fams[id_family(i)].add(i)
+    return {i for fam, ids in fams.items() if len(ids) >= 2 or fam + "1" in ids for i in ids}
+
+
+def id_scope(f: str) -> str:
+    """The workstream subtree an id lives in: docs/<group>/<slug>/ below docs/, else the file's folder."""
+    parts = Path(f).parts
+    if parts[0] == "docs" and len(parts) >= 4:
+        return "/".join(parts[:3]) + "/"
+    d = str(Path(f).parent)
+    return "./" if d == "." else d + "/"
+
+
+def id_files(files: list[str]) -> list[str]:
+    """Markdown the id check reads: not generated, archived, superseded or historical, throwaway or under verify/."""
+    out = []
+    for f in files:
+        if not f.endswith(".md") or f == CFG["map"] or matches(f, CFG["id_scan_exempt"]):
+            continue
+        if Path(f).name.startswith("_") or "verify" in Path(f).parts[:-1]:
+            continue
+        if (st := doc_status(f)) and st[0] in ("superseded", "historical"):
+            continue
+        out.append(f)
+    return out
+
+
+def cite_exempt(i: str) -> bool:
+    for e in CFG["id_cite_exempt"]:
+        try:
+            if i == e or re.fullmatch(e, i):
+                return True
+        except re.error:
+            pass
+    return False
+
+
+def id_analysis(files: list[str]):
+    """(defs {id: files}, ambiguous {id: scopes}, cites {(file, family): ids}): ids defined in several scopes, and the
+    files outside all of them that cite such an id bare, without a line naming one of the defining folders."""
+    texts = {f: id_text(f) for f in id_files(files)}
+    defs = defaultdict(set)
+    for f, t in texts.items():
+        for i in defined_ids(t):
+            defs[i].add(f)
+    ambiguous = {i: sorted({id_scope(f) for f in fs}) for i, fs in defs.items() if len({id_scope(f) for f in fs}) > 1}
+    cites = defaultdict(set)
+    for f, t in (texts.items() if ambiguous else []):
+        scope = id_scope(f)
+        for ln in re.sub(r"https?://\S+", "", re.sub(r"`[^`\n]*`", "", t)).splitlines():
+            for i in set(ID_CITE.findall(ln)) & ambiguous.keys():
+                slugs = [s.rstrip("/").rsplit("/", 1)[-1] for s in ambiguous[i] if s != "./"]
+                if scope in ambiguous[i] or cite_exempt(i) or any(re.search(r"(?<![\w-])" + re.escape(s) + r"(?![\w-])", ln, re.I) for s in slugs):
+                    continue
+                cites[(f, id_family(i))].add(i)
+    return defs, ambiguous, cites
+
+
+def id_warnings(files: list[str]) -> list[str]:
+    _, ambiguous, cites = id_analysis(files)
+    out = []
+    for (f, _fam), ids in sorted(cites.items()):
+        scopes = sorted({s for i in ids for s in ambiguous[i]})
+        first = sorted(ids, key=id_key)[0]
+        fix = f"tag them with their folder's tag (<TAG>-{first}, e.g. NB-H1) or name the folder" if "-" not in first else "name the folder on that line"
+        out.append(f"{f} cites {id_range(ids)} bare; defined in {len(scopes)} places ({', '.join(scopes[:4])}{', ...' if len(scopes) > 4 else ''}): {fix}")
+    return out
 
 
 def lifecycle_docs(files: list[str]) -> list[str]:
@@ -613,7 +778,7 @@ def cmd_check(_args):
             errors.append(f"{m.path}: no module docstring (first line = what the file is for)")
     for f in files:  # other code files: want a header comment
         if Path(f).suffix in CODE_EXT - {".py"} and not file_summary(f, {}) and not matches(f, CFG["docstring_exempt"]):
-            errors.append(f"{f}: no header comment")
+            errors.append(f"{f}: no header comment (the file's first line must be a comment: {HEADER_FORMS})")
     md_files = [f for f in files if f.endswith(".md")]
     for f in md_files:  # relative links
         text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
@@ -639,18 +804,33 @@ def cmd_check(_args):
                 for ref in set(re.findall(ix["ids"], text)):
                     if ref not in defined:
                         warnings.append(f"{f}: cites {ref}, which is not in {ix['file']}")
-    for i, fs in sorted(heading_ids(files).items()):  # one id, one meaning
-        if len(fs) > 1:
-            warnings.append(f"{i} is defined as a heading in {len(fs)} files ({', '.join(fs[:4])}{', ...' if len(fs) > 4 else ''}); "
-                            "tag folder-local ids (NB-H1) so a bare id never means two things")
+    warnings.extend(id_warnings(files))  # one id, one meaning: bare citations of an id defined in several folders
     status = ROOT / CFG["status"]
     if status.exists():  # STATUS keeps one short line per workstream
-        text, in_code = strip_block(status.read_text(encoding="utf-8")), False
-        for n, ln in enumerate(text.splitlines(), 1):
-            if ln.lstrip().startswith(("```", "~~~")):
+        in_code = in_block = False
+        section = ""
+        for n, ln in enumerate(status.read_text(encoding="utf-8").splitlines(), 1):
+            s = ln.strip()
+            if BEGIN in ln or END in ln:
+                in_block = BEGIN in ln
+                continue
+            if in_block:
+                continue
+            if s.startswith(("```", "~~~")):
                 in_code = not in_code
-            elif not in_code and not ln.lstrip().startswith(("#", "|")) and \
-                    len(w := re.sub(r"^\s*(?:[-*+]|\d+\.)\s+", "", ln).split()) > CFG["status_line_max_words"]:
+                continue
+            if in_code:
+                continue
+            if s.startswith("#"):
+                section = s.lstrip("#").strip().lower()
+                continue
+            if s.startswith("|"):
+                if section != "workstreams" or re.fullmatch(r"[\s:|-]+", s):
+                    continue  # other tables (Works, verification commands) may hold long cells
+                w = " ".join(c.strip() for c in s.strip("|").split("|")).split()
+            else:
+                w = re.sub(r"^\s*(?:[-*+]|\d+\.)\s+", "", ln).split()
+            if len(w) > CFG["status_line_max_words"]:
                 warnings.append(f"{CFG['status']}:{n}: a line of {len(w)} words (status_line_max_words = {CFG['status_line_max_words']}); "
                                 "keep one short line per workstream and move the detail to the workstream's own folder or plan")
     for rule in CFG["forbid"]:  # import boundaries
@@ -1552,7 +1732,6 @@ def cmd_local(_args):
     print(f"- machine: {platform.node()} ({platform.system()} {platform.release()}, {platform.machine()}, {os.cpu_count()} CPUs{ram})")
     print(f"- user: {getpass.getuser()}" + (f" (git: {git_user})" if git_user else ""))
     print(f"- python: {sys.executable} (Python {platform.python_version()})")
-    print(f"- repo: {ROOT}")
     print(f"- nvidia_gpu: {'yes (nvidia-smi found)' if shutil.which('nvidia-smi') else 'no'}")
 
 
@@ -1567,18 +1746,27 @@ def cmd_docs(_args):
 
 
 def cmd_ids(_args):
-    """Every id defined as a heading, by family (the letters before the number, with any folder tag); ids defined in several files first."""
-    found = heading_ids(tracked_files())
+    """Every id family (the letters before the number, with any folder tag), where its ids are defined, and the files
+    that cite an id defined in several folders without saying which; families with such ids first."""
+    defs, ambiguous, cites = id_analysis(tracked_files())
     fams = defaultdict(dict)
-    for i, fs in found.items():
-        fams[re.sub(r"\d+[a-z]?$", "", i)][i] = fs
-    for fam in sorted(fams, key=lambda f: (-sum(len(fs) > 1 for fs in fams[f].values()), f)):
-        ids, files = fams[fam], sorted({f for fs in fams[fam].values() for f in fs})
-        dup = sorted(i for i, fs in ids.items() if len(fs) > 1)
-        print(f"{fam:<8} {len(ids):3d} id(s)  {len(files)} file(s): {', '.join(files[:4])}{', ...' if len(files) > 4 else ''}"
-              + (f"\n         defined in several files: {', '.join(dup)}" if dup else ""))
+    for i, fs in defs.items():
+        fams[id_family(i)][i] = fs
+    citers = defaultdict(set)
+    for (f, fam), _ids in cites.items():
+        citers[fam].add(f)
+    for fam in sorted(fams, key=lambda f: (-sum(i in ambiguous for i in fams[f]), f)):
+        ids = fams[fam]
+        scopes = sorted({id_scope(f) for fs in ids.values() for f in fs})
+        print(f"{fam:<8} {len(ids):3d} id(s) in {len(scopes)} place(s): {', '.join(scopes[:4])}{', ...' if len(scopes) > 4 else ''}")
+        amb = [i for i in ids if i in ambiguous]
+        if amb:
+            places = sorted({s for i in amb for s in ambiguous[i]})
+            print(f"         defined in several places: {id_range(amb)} ({', '.join(places[:4])}{', ...' if len(places) > 4 else ''})")
+            bare = sorted(f for f in citers[fam])
+            print("         cited bare in: " + (", ".join(bare[:6]) + (", ..." if len(bare) > 6 else "") if bare else "nowhere outside those places"))
     if not fams:
-        print("no ids defined as headings")
+        print("no ids defined (headings `## A1:`, bullets `- A1.`, or the first column of an `id` table)")
 
 
 COMMANDS = {"update": cmd_update, "check": cmd_check, "where": cmd_where, "show": cmd_show, "uses": cmd_uses, "rotate": cmd_rotate, "runs": cmd_runs,

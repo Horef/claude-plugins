@@ -2,7 +2,7 @@ Produces `docs/BRIEF.md`; read in Bootstrap, and in Retrofit when no brief exist
 
 ```markdown
 # Brief
-Updated <YYYY-MM-DD>.
+Status: current (verified <YYYY-MM-DD>)
 
 ## Goal
 <What success looks like, in 2-5 sentences.>
