@@ -336,7 +336,7 @@ def main() -> int:
         p = docmap(root, "check")
         hits = [ln for ln in p.stdout.splitlines() if " bare; defined in " in ln]
         notes = [ln for ln in hits if ln.startswith("warning: docs/notes.md ")]
-        expect(len(notes) == 1 and "cites L1-L3 bare; defined in 2 places (docs/literature/gosi/, docs/literature/nmda/)" in notes[0] and "NB-L1" in notes[0],
+        expect(len(notes) == 1 and "cites L1-L3 bare; defined in 2 places (docs/literature/gosi/, docs/literature/nmda/)" in notes[0] and "<TAG>-L1" in notes[0],
                "check groups ids defined in two ledger tables and cited bare into one warning per citing file and family", p)
         expect(not any(f"warning: {f} " in ln for ln in hits for f in ("docs/named.md", "docs/literature/gosi/notes.md")),
                "no warning when the line names a defining folder or the citer lives inside one definer's folder", p)
