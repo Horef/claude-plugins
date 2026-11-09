@@ -501,6 +501,33 @@ def unsourced_sentences(body: str, limit: int = 12) -> list[str]:
     return out
 
 
+def grey_figures(d: Path, figs: list[str]) -> list[str]:
+    """Figures drawn with no colour at all (every pixel grey), when other figures of the write-up use colour: the same
+    thing should keep its colour in every figure, main and supplementary (owner, 2026-11-09). Needs pdftoppm."""
+    if not shutil.which("pdftoppm"):
+        return []
+    sat = {}
+    for f in figs:
+        m = re.search(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", f)
+        lab = re.search(r"\\label\{([^}]+)\}", f)
+        if not m or not lab:
+            continue
+        pdf = (d / m.group(1))
+        pdf = pdf if pdf.suffix else pdf.with_suffix(".pdf")
+        if not pdf.exists() or pdf.suffix.lower() != ".pdf":
+            continue
+        r = subprocess.run(["pdftoppm", "-r", "20", "-singlefile", str(pdf)], capture_output=True)
+        data = r.stdout
+        if r.returncode or not data.startswith(b"P6"):
+            continue
+        parts = data.split(maxsplit=4)
+        px = parts[4][1:] if parts[4][:1].isspace() else parts[4]
+        sat[lab.group(1)] = max((max(px[i:i + 3]) - min(px[i:i + 3]) for i in range(0, len(px) - 2, 3)), default=0)
+    coloured = [k for k, v in sat.items() if v > 40]
+    return [f"{k}: drawn in grey only, while {len(coloured)} other figures use colour; give the things it shows the "
+            "colours they have elsewhere" for k, v in sat.items() if v <= 40 and coloured]
+
+
 def notes(d: Path) -> list[str]:
     """Reports that never fail the check: figure heights against the page, figure numbers against the text."""
     body = _strip_comments(_tex_sources(d)).split("\\begin{document}", 1)[-1]
@@ -509,6 +536,7 @@ def notes(d: Path) -> list[str]:
     out += ["numbers " + x for x in figure_number_misses(d, body, figs)]
     if figs and not shutil.which("pdftoppm"):
         out.append("edge check skipped: pdftoppm (poppler) is missing, so figures cut off at their edge are not detected")
+    out += ["colour " + x for x in grey_figures(d, figs)]
     out += [f"source: names no source (who measured it, in what): '{x}'" for x in unsourced_sentences(body)]
     if not _ledger(d)["has_condition"] and _ledger(d)["claims"]:
         out.append("ledger.md has no condition column; add one (what each claim was tested under)")

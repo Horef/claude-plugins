@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.6.0 (2026-11-09)
+- \figref and \Figref are robust (work inside captions; the plain macro was fatal there, twice in one write-up); a thing keeps its colour in main and supplementary figures, and wr.py check notes a figure drawn in grey only when others use colour (owner request 2026-11-09). New eval cases. (O15, O16)
+
 ## 0.5.0 (2026-11-09)
 - Name every outside source where it is used (who, in what preparation, citation in the sentence); wr.py check notes sentences with measured/reported/known/in vivo... and no citation (owner preference 2026-11-09) (O14)
 
