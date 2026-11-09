@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-09 - project-foundations 5.10.0: partial supersession, custom id families
+
+- O17 (wonderful-agent, entitlements): any "superseded by D<n>" in a heading or Status line counted as full, so partly superseded decisions gave false warnings, and the "supersed" workaround hid real ones. Now full only from the status (heading `status:` field, a `Status:` line, or the older `(superseded by D7)` heading form); "partly superseded by D<n>: <part>" is partial and not reported; check skips only the id a line marks superseded, not the whole line. Templates show both forms.
+- O18 (wonderful-agent, benefits-assistant): `get` and `ids` now follow the configured `indexes` (e.g. A1-A7 in docs/ANALYSES.md), and `ids` reads `## A1 — Title` headings.
+- Code to the brief by a Copilot helper (Sonnet 5.5); review added back-compat for the older heading form and its eval.
+- Commands: `loop.py eval project-foundations` 0 failures (new cases for O17, O18); `loop.py check` 0/0; `docmap.py check` 0 errors, 6 warnings (as before); `git diff --check` clean.
+- Next: projects that run a Node port of docmap (wonderful-agent repos) need it re-ported from 5.10.0 or replaced by the Python script.
+
 ## 2026-11-08 - research-assistant 0.2.0: question tags and short names
 
 - Owner's request (simple_complex_v1 pilot, gate 2): hypothesis ids H1-H4 read as the project's wiring names (H3, H5t). Option chosen: a per-question tag plus short names.

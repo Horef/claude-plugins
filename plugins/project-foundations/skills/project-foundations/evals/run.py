@@ -354,6 +354,62 @@ def main() -> int:
         p = docmap(root, "check")
         expect("bare; defined in" not in p.stdout, "id_cite_exempt (ids or regexes) and id_scan_exempt silence the id warnings", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O17: only a status that says "superseded by" is a full supersession; skip only the id the line marks
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "docs/DECISIONS.md").write_text(
+            "# Decision log\nDecisions.\n\n"
+            "## D1. Old (2026-10-30; status: superseded by D3)\n- **Decision:** a.\n\n"
+            "## D2. Kept (2026-10-30; status: accepted; partly superseded by D3: the cache)\n- **Decision:** b.\n\n"
+            "## D3. New (2026-10-30; status: accepted)\n- **Decision:** c.\n\n"
+            "## D4. Older (2026-10-30; status: accepted)\n- Status: superseded by D3\n- **Decision:** d.\n\n"
+            "## D5. Mixed (2026-10-30; status: accepted)\n- Status: accepted; its limit superseded by D3\n- **Decision:** e.\n\n"
+            "## D6. Parts (2026-10-30)\n- **Decision:** f. Its retry rule is superseded by D3.\n\n"
+            "## D7. Legacy (superseded by D3)\n- **Decision:** g.\n\n"
+            "## D8. Legacy part (partly superseded by D3: the log)\n- **Decision:** h.\n", encoding="utf-8")
+        ok = "Status: current (verified 2999-01-01)\n"
+        (root / "docs/live.md").write_text(ok + "Full: D1 holds.\n\nPartial: D2 and D5 hold.\n\nOwn line: D1 (superseded by D3) said x.\n\n"
+                                           "Other id: D1 (superseded by D3) and D4 both matter.\n\nAfter: D4, now superseded, and D1 hold.\n\n"
+                                           "Legacy: D7 and D8 hold.\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        cites = [ln for ln in p.stdout.splitlines() if "cites D" in ln and "superseded by" in ln]
+        expect(any("docs/live.md:2: cites D1, superseded by D3" in ln for ln in cites),
+               "a heading status field `superseded by D3` is a full supersession: citing D1 is reported", p)
+        expect(any("docs/live.md:8: cites D4, superseded by D3" in ln for ln in cites) and not any("live.md:8: cites D1" in ln for ln in cites),
+               "a line saying D1 is superseded is not reported for D1, but another superseded id on it (D4, from a Status line) is", p)
+        expect(any("live.md:10: cites D1" in ln for ln in cites) and not any("live.md:10: cites D4" in ln for ln in cites)
+               and not any("live.md:6: " in ln for ln in cites), "only the id the line marks superseded is skipped: D4 (\"D4, now superseded\") but not D1 on that line", p)
+        expect(not any("cites D2" in ln or "cites D5" in ln or "cites D6" in ln for ln in cites),
+               "`partly superseded by D3: ...` and `status: accepted; its X superseded by D3` are partial: no note for D2, D5, D6", p)
+        expect(any("live.md:12: cites D7" in ln for ln in cites) and not any("cites D8" in ln for ln in cites),
+               "a heading without a status field: `(superseded by D3)` is still full (older form), `(partly superseded by D3: ...)` partial", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O18: `get` and `ids` follow the configured indexes
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "docmap.toml").write_text(
+            "indexes = [{file = 'docs/DECISIONS.md', pattern = '^## (D\\d+)\\.\\s*(.+)$', ids = '\\bD[1-9]\\d*\\b'},\n"
+            "           {file = 'docs/ANALYSES.md', pattern = '^## (A\\d+) \u2014 (.+)$', ids = '\\bA[1-9]\\d*\\b'}]\n", encoding="utf-8")
+        (root / "docs/ANALYSES.md").write_text("# Analyses\nThe analyses.\n\n## A1 \u2014 First\nbody one\n\n## A2 \u2014 Second\nbody two\n", encoding="utf-8")
+        (root / "docs/plain.md").write_text("Status: current (verified 2999-01-01)\n# Plain\n\n## B1 - Dash\nx\n\n## B2: Colon\ny\n\n## C1. Dot\nz\n\n## C2 \u2013 En\nw\n", encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        docmap(root, "update")
+        p = docmap(root, "get", "A2")
+        expect("## A2 \u2014 Second" in p.stdout and "body two" in p.stdout and "A1" not in p.stdout, "get A2 prints the entry of a configured custom index", p)
+        p = docmap(root, "get", "D2")
+        expect("## D2. Pure core" in p.stdout, "get D2 still works with a custom index list", p)
+        p = docmap(root, "get", "Z9")
+        expect(p.returncode != 0 and "A<n>" in (p.stdout + p.stderr) and "D<n>" in (p.stdout + p.stderr), "get of an unknown family lists the configured families", p)
+        p = docmap(root, "ids")
+        expect(re.search(r"^A\s+2 id", p.stdout, re.M) and re.search(r"^B\s+2 id", p.stdout, re.M) and re.search(r"^C\s+2 id", p.stdout, re.M),
+               "ids lists families defined by `## A1 \u2014 T` (index), `## B1 - T`, `## B2: T`, `## C1. T` and `## C2 \u2013 T` headings", p)
+
     with tempfile.TemporaryDirectory() as tmp:  # O16: [tool.docmap.facts] takes a glob; the single-file forms are unchanged
         root = Path(tmp)
         for rel, text in FILES.items():

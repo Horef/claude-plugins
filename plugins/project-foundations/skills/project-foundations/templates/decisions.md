@@ -2,7 +2,7 @@ Produces `docs/DECISIONS.md` - append-only, stable IDs; read when it is first wr
 
 ```markdown
 # Decision log
-Every choice between alternatives, and every gap the code or sources leave that we filled ourselves. IDs are permanent. To change a decision, add a new entry and set the old one's status to "superseded by" the new ID; do not rewrite it.
+Every choice between alternatives, and every gap the code or sources leave that we filled ourselves. IDs are permanent. To change a decision, add a new entry and set the old one's status to "superseded by" the new ID; do not rewrite it. If the new entry replaces only part of it, keep the status accepted and add "partly superseded by D<n>: <which part>" (`check` reads that as partial and warns about no citations of it).
 
 ## D1. <Decision title> (<YYYY-MM-DD>; status: accepted | provisional - confirm with owner | superseded by D7)
 - **Context:** <the problem and constraints>
