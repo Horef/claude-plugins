@@ -59,7 +59,8 @@ test('renders and drops segments when narrow', async ($, on) => {
     const narrow = await draw($, surface, 60, true)
     console.log(surface, 'narrow:', narrow)
     expect(narrow).toContain('⏳')
-    expect(narrow).not.toContain('$1.23')
+    // Rows: cost moves to the last row rather than being dropped.
+    expect(narrow).toContain('$1.23')
     expect(narrow).toContain('5h 24%')
   }
 })
