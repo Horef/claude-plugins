@@ -96,6 +96,46 @@ def rect_pdf(path: Path, x0: int, y0: int, x1: int, y1: int, w: int = 200, h: in
     path.write_text(out, encoding="latin-1")
 
 
+def colour_checks() -> list[str]:
+    """A figure drawn in grey only is noted when another figure uses colour; a \\figref inside a caption builds."""
+    import sys as _s
+    _s.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import wr
+    fails = []
+    if not shutil.which("pdftoppm"):
+        print("pdftoppm missing: colour check not run")
+        return fails
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t)
+        (d / "figures").mkdir()
+        rect_pdf(d / "figures" / "grey.pdf", 20, 20, 120, 80)
+        col = (d / "figures" / "red.pdf")
+        rect_pdf(col, 20, 20, 120, 80)
+        col.write_text(col.read_text(encoding="latin-1").replace("0 g 20 20", "1 0 0 rg 20 20").replace(
+            "/Length 18", "/Length 24"), encoding="latin-1")
+        fig = lambda f, lab: ("\\begin{figure}\\includegraphics{figures/%s.pdf}\\caption{\\textbf{T.}}\\label{%s}"
+                              "\\end{figure}" % (f, lab))
+        got = wr.grey_figures(d, [fig("grey", "fig:g"), fig("red", "fig:r")])
+        if len(got) != 1 or not got[0].startswith("fig:g:"):
+            fails.append(f"grey figure not noted (or colour one noted): {got}")
+        if wr.grey_figures(d, [fig("grey", "fig:g")]):
+            fails.append("a write-up with no colour figure at all should not be noted")
+    if shutil.which("latexmk") and shutil.which("lualatex"):
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t) / "w"
+            run("init", str(d), "--title", "T")
+            m = (d / "main.tex").read_text()
+            i = m.index("\\begin{document}") + len("\\begin{document}")
+            body = ("\n\\section{T}\nSee \\figref{fig:a}.\n\\begin{figure}[h]\\centering\\rule{1cm}{1cm}"
+                    "\\caption{\\textbf{A.} Compare \\figref{fig:b}.}\\label{fig:a}\\end{figure}\n"
+                    "\\begin{figure}[h]\\centering\\rule{1cm}{1cm}\\caption{\\textbf{B.}}\\label{fig:b}\\end{figure}\n")
+            j = m.index("\\end{document}")
+            (d / "main.tex").write_text(m[:i] + body + m[j:])
+            if run("build", str(d)).returncode:
+                fails.append("a \\figref inside a caption does not build")
+    return fails
+
+
 def source_checks() -> list[str]:
     """Owner preference (2026-11-09): 'measured', 'reported', ... without a citation in the sentence are noted."""
     import sys as _s
@@ -186,6 +226,7 @@ def main() -> int:
     fails += new_checks()
     fails += edge_checks()
     fails += source_checks()
+    fails += colour_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")

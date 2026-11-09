@@ -25,10 +25,11 @@
 % ---- the skill's marks (checked by wr.py check)
 % \claim{C3}: this paragraph carries claim C3 of ledger.md (prints nothing)
 \newcommand{\claim}[1]{}
-% \figref{fig:x}: cite a figure; records the page of the first citation for wr.py (page of figure vs of its first mention)
+% \figref{fig:x}: cite a figure; records the page of the first citation for wr.py (page of figure vs of its first mention).
+% Robust, so it also works inside a \caption (a moving argument; a plain \newcommand is fatal there).
 \makeatletter
-\newcommand{\figref}[1]{\cref{#1}\protected@write\@auxout{}{\string\wrfigcite{#1}{\thepage}}}
-\newcommand{\Figref}[1]{\Cref{#1}\protected@write\@auxout{}{\string\wrfigcite{#1}{\thepage}}}
+\DeclareRobustCommand{\figref}[1]{\cref{#1}\protected@write\@auxout{}{\string\wrfigcite{#1}{\thepage}}}
+\DeclareRobustCommand{\Figref}[1]{\Cref{#1}\protected@write\@auxout{}{\string\wrfigcite{#1}{\thepage}}}
 \newcommand{\wrfigcite}[2]{}
 \makeatother
 % \status{established|plausible|open}: the evidence label of a claim, printed as a small tag
