@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.10.1 (2026-11-09)
+- check: an id followed by 'by <its replacement>' in the same clause or table cell counts as marked superseded (O19)
+
 ## 5.10.0 (2026-11-09)
 - partial supersession ("partly superseded by D<n>: <part>") and a skip for only the id a line marks; get and ids follow the configured indexes and '## A1 — Title' headings (O17, O18)
 

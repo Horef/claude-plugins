@@ -372,7 +372,9 @@ def main() -> int:
         ok = "Status: current (verified 2999-01-01)\n"
         (root / "docs/live.md").write_text(ok + "Full: D1 holds.\n\nPartial: D2 and D5 hold.\n\nOwn line: D1 (superseded by D3) said x.\n\n"
                                            "Other id: D1 (superseded by D3) and D4 both matter.\n\nAfter: D4, now superseded, and D1 hold.\n\n"
-                                           "Legacy: D7 and D8 hold.\n", encoding="utf-8")
+                                           "Legacy: D7 and D8 hold.\n\n"
+                                           "Named: D1, whose cache rule is now superseded by D3, and D4 hold.\n\n"
+                                           "| Marked superseded: D1 (by D3: cache), D4 (by D3: retry) | D7 still applies |\n", encoding="utf-8")
         sh(root, "git", "init", "-q")
         docmap(root, "update")
         p = docmap(root, "check")
@@ -387,6 +389,10 @@ def main() -> int:
                "`partly superseded by D3: ...` and `status: accepted; its X superseded by D3` are partial: no note for D2, D5, D6", p)
         expect(any("live.md:12: cites D7" in ln for ln in cites) and not any("cites D8" in ln for ln in cites),
                "a heading without a status field: `(superseded by D3)` is still full (older form), `(partly superseded by D3: ...)` partial", p)
+        expect(any("live.md:14: cites D4" in ln for ln in cites) and not any("live.md:14: cites D1" in ln for ln in cites),
+               "an id followed by `by <its replacement>` in the same clause is marked (D1 ... superseded by D3), a later id is not (D4)", p)
+        expect(any("live.md:16: cites D7" in ln for ln in cites) and not any("live.md:16: cites D1" in ln or "live.md:16: cites D4" in ln for ln in cites),
+               "in a table cell `D1 (by D3: ...)` marks D1; an id in another cell (D7) is still reported", p)
 
     with tempfile.TemporaryDirectory() as tmp:  # O18: `get` and `ids` follow the configured indexes
         root = Path(tmp)

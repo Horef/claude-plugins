@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-09 - project-foundations 5.10.1: supersession marks that name the replacement
+
+- O19: upgrading simple_complex_v1 to 5.10.0 gave 4 false warnings where a line names the replacement more than 30 characters after the id ("D22, whose awake-preset decision is superseded by D34"; an audit table "D16 (by D20: ...)"). Now an id followed by "by <its replacement>" in the same clause or table cell counts as marked. The upgrade also surfaced 2 real stale citations the old whole-line skip hid.
+- Commands: `loop.py eval project-foundations` 0 failures (2 new cases); `loop.py check --base origin/main` 0/0; `docmap.py check` 0 errors.
+
 ## 2026-11-09 - project-foundations 5.10.0: partial supersession, custom id families
 
 - O17 (wonderful-agent, entitlements): any "superseded by D<n>" in a heading or Status line counted as full, so partly superseded decisions gave false warnings, and the "supersed" workaround hid real ones. Now full only from the status (heading `status:` field, a `Status:` line, or the older `(superseded by D7)` heading form); "partly superseded by D<n>: <part>" is partial and not reported; check skips only the id a line marks superseded, not the whole line. Templates show both forms.
