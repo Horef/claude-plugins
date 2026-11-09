@@ -96,6 +96,18 @@ def rect_pdf(path: Path, x0: int, y0: int, x1: int, y1: int, w: int = 200, h: in
     path.write_text(out, encoding="latin-1")
 
 
+def source_checks() -> list[str]:
+    """Owner preference (2026-11-09): 'measured', 'reported', ... without a citation in the sentence are noted."""
+    import sys as _s
+    _s.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import wr
+    body = ("The ratio is within the measured range. Kloc and Maffei measured 0.27 \\parencite{KM}. "
+            "We measured the cell at 2x. Smith's model has a known decay of 20 ms.")
+    got = wr.unsourced_sentences(body)
+    want = ["The ratio is within the measured range.", "Smith's model has a known decay of 20 ms."]
+    return [] if got == want else [f"unsourced sentences: {got}"]
+
+
 def edge_checks() -> list[str]:
     """A figure whose drawing reaches its bottom edge (rows cut off, the Mel write-up's Fig. 7) is a problem; one with
     a margin is not."""
@@ -173,6 +185,7 @@ def main() -> int:
             print("LaTeX not installed: build, pages and readers not checked")
     fails += new_checks()
     fails += edge_checks()
+    fails += source_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")
