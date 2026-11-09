@@ -19,8 +19,8 @@ export type Stats = {
   switchedAtTurn: number | null
 }
 
-/** `auto`: one line when everything fits, else two; `one` / `two` force it. */
-export type Layout = 'auto' | 'one' | 'two'
+/** `auto`: one line when everything fits, else rows (Claude, helpers, the rest); `one` / `rows` force it. */
+export type Layout = 'auto' | 'one' | 'rows'
 
 /** One account rate-limit window (`five_hour`, `seven_day`, ...). */
 export type Limit = { kind: string; percentUsed: number; resetsAt?: string }
@@ -38,10 +38,10 @@ export type Usage = {
 
 /**
  * One outside budget read by the mod itself: Kiro credits, Copilot premium
- * credits, or Claude's extra usage (the paid credits used past the 5h / weekly limits).
+ * credits, Antigravity's 5h and weekly limits, or Claude's extra usage (the paid credits used past the 5h / weekly limits).
  */
 export type Quota = {
-  id: 'kiro' | 'copilot' | 'extra'
+  id: 'kiro' | 'copilot' | 'agy' | 'extra'
   /** Share of the period's allowance used; may pass 100 (overage). */
   percent?: number
   /** When the allowance resets (ISO). */
@@ -51,6 +51,8 @@ export type Quota = {
   /** Claude extra usage: the monthly cap, in `currency`. */
   cap?: number
   currency?: string
+  /** Antigravity: per model group, the share used (percent) of its 5h and weekly limits. */
+  groups?: { name: string; five?: number; week?: number; weekResetsAt?: string }[]
   /** The service's login has gone stale: ask the person to log in again. */
   login?: boolean
   /** When this reading was taken (epoch ms). */

@@ -7,3 +7,4 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 ## Open
 
 ## Resolved
+- O1 2026-11-09 [wish] rows: owner asked (2026-11-09) for row 1 = model, context, 5h, 7d; row 2 = helpers (Kiro, Copilot, agy); cost and the rest below; and agy's 5h/weekly limits, readable from agy -p /usage --output-format json (simple_complex_v1) → 0.5.0

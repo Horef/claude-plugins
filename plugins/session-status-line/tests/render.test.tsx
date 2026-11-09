@@ -59,7 +59,8 @@ test('renders and drops segments when narrow', async ($, on) => {
     const narrow = await draw($, surface, 60, true)
     console.log(surface, 'narrow:', narrow)
     expect(narrow).toContain('⏳')
-    expect(narrow).not.toContain('$1.23')
+    // Rows: cost moves to the last row rather than being dropped.
+    expect(narrow).toContain('$1.23')
     expect(narrow).toContain('5h 24%')
   }
 })
@@ -89,6 +90,17 @@ const quotaEngine = (on: any, opts: { kiroStatus?: number; whoamiFails?: boolean
           quota_reset_date_utc: '2026-11-01T00:00:00.000Z',
           quota_snapshots: { premium_interactions: { entitlement: 30000, credits_used: 30000, remaining: 0, unlimited: false } },
         }),
+      }
+    }
+    if (cmd === 'agy') {
+      const b = (id: string, window: string, rem: number, reset: string) => ({ id, window, remaining_fraction: rem, reset_time: reset })
+      return {
+        exitCode: 0, stderr: '',
+        stdout: JSON.stringify({ command: { name: 'usage', data: { groups: [
+          { name: 'Gemini Models', buckets: [b('gemini-weekly', 'weekly', 0.99, '2026-11-07T07:00:00Z'), b('gemini-5h', '5h', 0.79, '2026-10-31T15:00:00Z')] },
+          { name: 'Claude and GPT models', buckets: [b('3p-weekly', 'weekly', 1, '2026-11-07T07:00:00Z'), b('3p-5h', '5h', 1, '2026-10-31T15:00:00Z')] },
+          { name: 'Gemini 4 Argon', buckets: [b('argon-weekly', 'weekly', 0.64, '2026-11-05T16:00:00Z')] },
+        ] } } }),
       }
     }
     return { exitCode: 127, stdout: '', stderr: 'not found' }
@@ -146,4 +158,24 @@ test('a rejected Kiro token also asks to log in', async ($, on) => {
   quotaEngine(on, { kiroStatus: 403 })
   await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
   expect(await draw($, 'terminal', 220)).toContain('Kiro log in')
+})
+
+test('Antigravity limits and the three rows', async ($, on) => {
+  quotaEngine(on)
+  await $.session.measure({ context: { tokens: 296_000, window: 1_000_000, percent: 30 }, rateLimits: [
+    { kind: 'five_hour', percentUsed: 21, resetsAt: '2026-10-31T16:14:00Z' },
+    { kind: 'seven_day', percentUsed: 30, resetsAt: '2026-11-04T04:00:00Z' },
+  ], cost: { usd: 35.3 }, changed: ['context', 'cost'] } as any)
+  await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
+  const wide = await draw($, 'terminal', 400)
+  console.log('agy wide:', wide)
+  expect(wide).toContain('agy 5h 21% 7d 1%')
+  expect(wide).toContain('Argon 36% ⟳5d4h')
+  // Narrow enough to split: Claude's own row, then the helpers, then the rest (rows join without a separator).
+  const split = await draw($, 'terminal', 120)
+  console.log('rows:', split)
+  const dbg = await $.command.run({ command: 'status-line', args: 'debug' } as any)
+  expect((dbg as any).text).toContain('3 line(s)')
+  expect(split).toContain('7d 30% ⟳3d16hKiro 103%')
+  expect(split).toContain('Argon 36% ⟳5d4h │ extra $12.40/$50$35.3')
 })
