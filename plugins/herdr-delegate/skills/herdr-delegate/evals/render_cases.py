@@ -122,6 +122,9 @@ check(command_line("kiro-light") == "kiro-cli chat --v3 --trust-workspace --mode
 check(command_line("kiro-deep") == "kiro-cli chat --v3 --trust-workspace --model claude-opus-5.5 --effort high", "kiro deep", command_line("kiro-deep"))
 check(command_line("copilot-light") == "copilot --no-ask-user --model gpt-6-luna --reasoning-effort high", "copilot light", command_line("copilot-light"))
 check(command_line("agy-standard") == "agy --model claude-sonnet-5-5-high --mode auto", "agy puts the level in the model id", command_line("agy-standard"))
+_agy_settings = Path(os.environ["XDG_CONFIG_HOME"]) / "herdr-delegate" / "agy-settings.json"
+check(_agy_settings.exists() and "command(git log)" in _agy_settings.read_text() and "command(hc send)" in _agy_settings.read_text()
+      and command_line("agy-standard").endswith(f"--settings {_agy_settings}"), "render writes agy's allowlist and passes it with --settings")
 check(command_line("agy-light") == "agy --model gemini-3.8-flash-high --mode auto", "agy light", command_line("agy-light"))
 check(command_line("copilot-fusion-max").endswith("copilot --no-ask-user --model auto --auto-tier hydrafusion-max")
       and command_line("copilot-fusion-max").startswith("COPILOT_CLI_ENABLED_FEATURE_FLAGS="), "fusion keeps its fixed command", command_line("copilot-fusion-max"))

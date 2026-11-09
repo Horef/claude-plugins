@@ -179,7 +179,11 @@ def prompts(names):
 
 # What a helper used, read from its screen (measured 2026-11-08). Kiro prints a line after
 # every turn, the session figure running; Copilot keeps a running total in its status bar and
-# prints a summary on exit. agy shows none. The last match on the screen is the current one.
+# prints a summary on exit. The last match on the screen is the current one. agy shows none on
+# screen, but `agy -p /usage --output-format json` gives each model group's remaining weekly
+# fraction: `pick` saves a snapshot when it picks an agy template and `usage` reports the
+# drop since then, in percentage points of that group's weekly limit (measured 2026-11-09).
+# Two agy helpers running at once share a group, so their figures overlap.
 USAGE = {
     "kiro": (re.compile(r"Credits:\s*turn\s*[\d.]+\s*\S\s*session\s*([\d.]+)"), "credits"),
     "copilot": (re.compile(r"Session:\s*([\d.]+)\s*AIC used|AI Credits\s+([\d.]+)"), "AIC"),
@@ -197,14 +201,71 @@ def usage_of(provider, screen):
     return {"provider": provider, "amount": amount, "unit": unit} if amount > 0 else None
 
 
+def agy_snapshot_file():
+    return cfg_home() / "herdr-delegate" / "agy-usage.json"
+
+
+def agy_weekly():
+    """{group name: remaining weekly fraction} from agy's /usage, or {} when it can't be read."""
+    out = run_text(["agy", "-p", "/usage", "--output-format", "json"], timeout=90)
+    try:
+        groups = json.loads(out)["command"]["data"]["groups"]
+    except (ValueError, KeyError, TypeError):
+        return {}
+    got = {}
+    for g in groups:
+        for b in g.get("buckets", []):
+            if b.get("window") == "weekly" and "remaining_fraction" in b:
+                got[g["name"]] = float(b["remaining_fraction"])
+    return got
+
+
+def agy_group(model_id, groups):
+    """The /usage group a model id draws on: Argon has its own, Claude and GPT share one, other Gemini the last."""
+    m = model_id.lower()
+    want = "argon" if "argon" in m else ("claude" if m.startswith(("claude", "gpt")) else "gemini")
+    hits = [g for g in groups if want in g.lower()]
+    if want == "gemini":
+        hits = [g for g in hits if "argon" not in g.lower()]
+    return hits[0] if hits else None
+
+
+def agy_mark():
+    """Save the weekly fractions before an agy helper starts (called by pick)."""
+    now = agy_weekly()
+    if now:
+        write_json(agy_snapshot_file(), {"time": time.time(), "weekly": now})
+
+
+def agy_usage(name):
+    try:
+        cmd = (templates_dir() / f"{name}.md").read_text()
+    except OSError:
+        cmd = ""
+    m = re.search(r"--model\s+(\S+)", cmd)
+    before = read_json(agy_snapshot_file(), {}).get("weekly", {})
+    now = agy_weekly()
+    group = agy_group(m.group(1) if m else "", list(now))
+    if not m or not group or group not in before:
+        return None
+    used = round((before[group] - now[group]) * 100, 2)
+    return {"provider": "agy", "amount": used, "unit": f"% of {group} weekly"} if used > 0 else None
+
+
 def usage_cmd(name):
-    """Print the helper's usage as JSON, or nothing (exit 1) when its screen shows none."""
+    """Print the helper's usage as JSON, or nothing (exit 1) when it shows none."""
     got = subprocess.run(["hc", "get", name], capture_output=True, text=True)
     try:
         template = json.loads(got.stdout).get("template") or ""
     except ValueError:
         template = ""
     provider = (template or name).split("-")[0]
+    if provider == "agy":
+        used = agy_usage(template or name)
+        if not used:
+            return 1
+        print(json.dumps(used))
+        return 0
     screen = subprocess.run(["hc", "read", name], capture_output=True, text=True)
     if screen.returncode != 0:
         print(f"{name}: hc read failed: {(screen.stderr or screen.stdout).strip()}", file=sys.stderr)
@@ -263,6 +324,23 @@ def fill(pattern, **values):
     return pattern
 
 
+def settings_file(pname):
+    """Where render writes a provider's per-session settings (agy: the command allowlist)."""
+    return cfg_home() / "herdr-delegate" / f"{pname}-settings.json"
+
+
+def command_for(pname, prov, model, effort):
+    return fill(prov["command"], model=model, effort=effort, model_id=full_model_id(prov, model, effort),
+                settings=str(settings_file(pname)))
+
+
+def write_settings(cfg):
+    """Write each provider's `settings` block to its file (agy reads it via --settings)."""
+    for pname, prov in cfg.get("providers", {}).items():
+        if "settings" in prov:
+            write_json(settings_file(pname), prov["settings"])
+
+
 def full_model_id(prov, model, effort):
     """The id the CLI is given: for agy the level is part of it (rule `model_id`)."""
     return fill(prov.get("model_id", "{model}"), model=model, effort=effort)
@@ -280,7 +358,7 @@ def template_specs(cfg):
                 command = entry["command"]
                 fixed = True
             else:
-                command = fill(prov["command"], model=model, effort=effort, model_id=full_model_id(prov, model, effort))
+                command = command_for(pname, prov, model, effort)
                 fixed = False
             text = f": {texts[tier]}" if tier in texts else ""
             desc = entry.get("description") or f"{prov.get('label', pname)} helper, {tier} tier ({model} {effort}){text}. {prov.get('note', '')}".strip()
@@ -292,7 +370,7 @@ def template_specs(cfg):
         name = f"{pname}-{slug(model)}-{effort}"
         if not prov or name in specs:
             continue
-        command = fill(prov["command"], model=model, effort=effort, model_id=full_model_id(prov, model, effort))
+        command = command_for(pname, prov, model, effort)
         desc = f"{prov.get('label', pname)} helper, custom ({model} {effort}). {prov.get('note', '')}".strip()
         specs[name] = dict(provider=pname, tier=None, model=model, effort=effort, command=command,
                            description=desc, custom=True, fixed=False)
@@ -352,6 +430,7 @@ def compute(cfg, force=False, only=None, orphans=None):
 
 def apply_plan(cfg, plan):
     specs = template_specs(cfg)
+    write_settings(cfg)
     templates_dir().mkdir(parents=True, exist_ok=True)
     for kind, name in plan:
         if kind in ("new", "update", "overwrite"):
@@ -763,6 +842,8 @@ def main(argv, today=None):
                 print(f"skipped {name}: its model is not offered (last `helpers.py models`)", file=sys.stderr)
                 continue
             if usable(name, state, today):
+                if name.split("-")[0] == "agy":
+                    agy_mark()
                 print(name)
                 return 0
         return 1

@@ -78,5 +78,29 @@ for provider, name, want in USAGE_CASES:
 ok = helpers.usage_of("kiro", "▸ Credits: turn 0.00 • session 0.00 | Time: 1s") is None
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} usage of 0 is not reported")
+# agy usage (2026-11-09): /usage groups, and the drop in the model's weekly fraction since pick's snapshot.
+GROUPS = ["Gemini Models", "Claude and GPT models", "Gemini 4 Argon"]
+ok = ([helpers.agy_group(m, GROUPS) for m in ("gemini-4-argon-medium", "claude-opus-5-5-high", "gpt-oss-120b-medium",
+       "gemini-3.8-flash-high")] == ["Gemini 4 Argon", "Claude and GPT models", "Claude and GPT models", "Gemini Models"])
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} agy model ids map to their /usage group")
+import tempfile as _tf
+_tmp = Path(_tf.mkdtemp())
+_saved = (helpers.agy_weekly, helpers.templates_dir, helpers.agy_snapshot_file)
+helpers.templates_dir = lambda: _tmp
+helpers.agy_snapshot_file = lambda: _tmp / "agy-usage.json"
+(_tmp / "agy-argon.md").write_text("---\nname: agy-argon\ncommand: agy --model gemini-4-argon-high --mode auto\n---\n")
+helpers.agy_weekly = lambda: {"Gemini Models": 1.0, "Gemini 4 Argon": 0.64}
+helpers.agy_mark()
+helpers.agy_weekly = lambda: {"Gemini Models": 0.99, "Gemini 4 Argon": 0.6}
+got = helpers.agy_usage("agy-argon")
+ok = got == {"provider": "agy", "amount": 4.0, "unit": "% of Gemini 4 Argon weekly"}
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} agy usage is the drop in its group's weekly fraction since pick: {got}")
+helpers.agy_weekly = lambda: {}
+ok = helpers.agy_usage("agy-argon") is None
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} agy usage is None when /usage can't be read")
+helpers.agy_weekly, helpers.templates_dir, helpers.agy_snapshot_file = _saved
 print(f"{failures} failure(s)")
 sys.exit(1 if failures else 0)
