@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.5.0 (2026-11-09)
+- Name every outside source where it is used (who, in what preparation, citation in the sentence); wr.py check notes sentences with measured/reported/known/in vivo... and no citation (owner preference 2026-11-09) (O14)
+
 ## 0.4.0 (2026-11-07)
 - wr.py check: a figure whose ink reaches its own edge (drawing runs past the canvas: rows, labels or markers cut off) is a problem; pdftoppm greyscale, stdlib only, 0.8 mm band, >1% of an edge inked. Owner request 2026-11-07 after cut-off figures in the cell1542 Mel write-up (Fig. 7 lost three rows of panel c); on the two existing write-ups it flags 5 of 20 figures, all confirmed by looking, none clean flagged. Eval case added (mutation-tested).
 

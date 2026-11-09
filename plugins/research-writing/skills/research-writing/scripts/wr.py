@@ -482,6 +482,25 @@ def figure_number_misses(d: Path, body: str, figs: list[str]) -> list[str]:
     return found
 
 
+# Words that point at someone else's finding; a sentence that uses one names its source (owner preference, 2026-11-09).
+_SOURCE_WORDS = re.compile(r"\b(measured|reported|observed|recorded|published|known|the literature|studies|in vivo|in vitro|"
+                           r"experiments?|demonstrated|estimated by)\b", re.I)
+_CITED = re.compile(r"\\(?:paren|text|foot)?cite|\\cref|\\ref|\\figref|\\S|§|RESULTS|Section~|\b(?:we|our|here|this (?:model|cell|work))\b", re.I)
+
+
+def unsourced_sentences(body: str, limit: int = 12) -> list[str]:
+    """Sentences that say 'measured', 'reported', 'known', ... with no citation or own-work reference in them."""
+    text = re.sub(r"\\begin\{figure\*?\}.*?\\end\{figure\*?\}", " ", body, flags=re.S)
+    text = re.sub(r"\\(?:section|subsection|label|claim|lead|input|status)\*?\{[^}]*\}", " ", text)
+    out = []
+    for sent in re.split(r"(?<=[.!?])\s+(?=[A-Z\\])", re.sub(r"\s+", " ", text)):
+        if _SOURCE_WORDS.search(sent) and not _CITED.search(sent):
+            out.append(sent.strip()[:140])
+            if len(out) >= limit:
+                break
+    return out
+
+
 def notes(d: Path) -> list[str]:
     """Reports that never fail the check: figure heights against the page, figure numbers against the text."""
     body = _strip_comments(_tex_sources(d)).split("\\begin{document}", 1)[-1]
@@ -490,6 +509,7 @@ def notes(d: Path) -> list[str]:
     out += ["numbers " + x for x in figure_number_misses(d, body, figs)]
     if figs and not shutil.which("pdftoppm"):
         out.append("edge check skipped: pdftoppm (poppler) is missing, so figures cut off at their edge are not detected")
+    out += [f"source: names no source (who measured it, in what): '{x}'" for x in unsourced_sentences(body)]
     if not _ledger(d)["has_condition"] and _ledger(d)["claims"]:
         out.append("ledger.md has no condition column; add one (what each claim was tested under)")
     return out
