@@ -1,8 +1,9 @@
 // session-status-line: one compact row above the prompt showing activity,
 // model + effort, context fill, rate limits (with reset and pace), cost,
 // last turn time and a few cheap extras; outside budgets (Kiro, Copilot,
-// Claude extra usage) read every few minutes where their logins exist.
-// Commands: `/status-line` toggles; `on|off`; `auto|one|two` picks the layout;
+// Antigravity, Claude extra usage) read every few minutes where their logins exist.
+// Rows: model, context and Claude limits; helper budgets; the rest.
+// Commands: `/status-line` toggles; `on|off`; `auto|one|rows` picks the layout;
 // `quotas on|off` reads the outside budgets or not; `debug` reports the
 // version, measured width and the last quota readings. Env fallbacks: NO_COLOR=1
 // drops colors, SESSION_STATUS_ASCII=1 swaps emoji/box glyphs for plain ASCII.
@@ -11,7 +12,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Layout, Limit, Quota, Quotas, Stats, Usage } from '../types'
 
-const VERSION = '0.4.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.5.0' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -46,10 +47,15 @@ const CONFIG = {
   // Proportional fonts (the desktop app) draw ▰▱ at uneven sizes; these stay even.
   desktopBar: { barFull: '●', barEmpty: '○' },
   barWidth: 6,
-  // Default layout; `/status-line auto|one|two` changes it and is remembered.
+  // Default layout; `/status-line auto|one|rows` changes it and is remembered.
   layout: 'auto' as Layout,
-  // Segments on the first ("now") line when two lines are used; the rest go below.
-  firstLine: ['head', 'ctx', 'ctxTokens', 'hint', 'cost'],
+  // Rows when the line does not fit (or `rows` is chosen): Claude's own state, then the
+  // helpers' budgets; every segment not listed goes on a last row. Empty rows are skipped.
+  rows: [
+    ['head', 'ctx', 'ctxTokens', 'hint', 'limit5h', 'reset5h', 'pace5h', 'limit7d', 'reset7d', 'pace7d',
+      'limitOther', 'resetOther', 'paceOther'],
+    ['kiro', 'resetkiro', 'copilot', 'resetcopilot', 'agy', 'argon', 'resetargon', 'extra'],
+  ],
   // Thinking-effort tags shown after the model name; a numeric budget shows as e.g. (8k).
   effortLabels: { low: 'L', medium: 'M', high: 'H', xhigh: 'XH', max: 'Max' } as Record<string, string>,
   // Rate-limit windows: short label and length (the length drives the pace warning).
@@ -74,8 +80,8 @@ const CONFIG = {
   // Activity, model and the context bar are never dropped. A reset or pace
   // tag must be listed before its limit, since it is glued to it.
   dropOrder: [
-    'session', 'files', 'lastTurn', 'resetcopilot', 'resetkiro', 'cost', 'compactions', 'ctxTokens',
-    'copilot', 'kiro', 'reset7d', 'pace7d', 'limit7d', 'resetOther', 'paceOther', 'limitOther',
+    'session', 'files', 'lastTurn', 'resetargon', 'resetcopilot', 'resetkiro', 'cost', 'compactions', 'ctxTokens',
+    'agy', 'argon', 'copilot', 'kiro', 'reset7d', 'pace7d', 'limit7d', 'resetOther', 'paceOther', 'limitOther',
     'reset5h', 'hint', 'pace5h', 'extra', 'limit5h',
   ],
 }
@@ -200,6 +206,32 @@ const quotaSegments = (q: Quotas, u: Usage, now: number, ic: Icons): Segment[] =
           },
         ],
       })
+      continue
+    }
+    if (item.id === 'agy') {
+      // Antigravity: the 5h and weekly use of its shared groups (worst one), and Argon's own weekly limit.
+      const shared = (item.groups ?? []).filter(g => !/argon/i.test(g.name))
+      const argon = (item.groups ?? []).find(g => /argon/i.test(g.name))
+      const pc = (v: number | undefined, key: string): Piece[] => {
+        if (v === undefined) return []
+        const lv = level(v)
+        return [{ text: ` ${key} `, dim: true }, { text: `${Math.round(v)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit', dim: old }]
+      }
+      const worst = (k: 'five' | 'week') => {
+        const v = shared.map(g => g[k]).filter((x): x is number => x !== undefined)
+        return v.length ? Math.max(...v) : undefined
+      }
+      const body = [...pc(worst('five'), '5h'), ...pc(worst('week'), '7d')]
+      if (body.length) out.push({ id: 'agy', pieces: [{ text: 'agy', dim: true }, ...body] })
+      if (argon?.week !== undefined) {
+        const lv = level(argon.week)
+        out.push({ id: 'argon', pieces: [
+          { text: 'Argon ', dim: true },
+          { text: `${Math.round(argon.week)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit', dim: old },
+        ] })
+        const r = argon.weekResetsAt ? Date.parse(argon.weekResetsAt) : NaN
+        if (!Number.isNaN(r) && r > now) out.push({ id: 'resetargon', glue: true, pieces: [{ text: ` ${ic.reset}${fmtSpan(r - now)}`, dim: true }] })
+      }
       continue
     }
     const label = item.id === 'kiro' ? 'Kiro' : 'Copilot'
@@ -341,12 +373,16 @@ const fit = (segs: Segment[], columns: number): Segment[] => {
   return kept
 }
 
-/** One line when it all fits (or is forced), else a "now" line and a "budget" line. */
+/** One line when it all fits (or is forced), else the rows of CONFIG.rows plus a row for the rest. */
 const toLines = (segs: Segment[], columns: number, mode: Layout, maxRows: number): Segment[][] => {
   if (maxRows < 2 || mode === 'one' || (mode === 'auto' && rowWidth(segs) <= columns)) return [fit(segs, columns)]
-  const first = segs.filter(s => CONFIG.firstLine.includes(s.id))
-  const second = segs.filter(s => !CONFIG.firstLine.includes(s.id))
-  return [fit(first, columns), fit(second, columns)].filter(line => line.length > 0)
+  const listed = CONFIG.rows.flat()
+  const rows = [...CONFIG.rows.map(ids => segs.filter(s => ids.includes(s.id))), segs.filter(s => !listed.includes(s.id))]
+  return rows
+    .filter(r => r.length > 0)
+    .slice(0, maxRows)
+    .map(r => fit(r[0]?.glue ? [{ ...r[0], glue: false }, ...r.slice(1)] : r, columns))
+    .filter(line => line.length > 0)
 }
 
 /**
@@ -486,6 +522,29 @@ async function readExtra($: EngineInterface, now: number): Promise<Quota | null>
 }
 
 /**
+ * Antigravity: each model group's 5h and weekly remaining share, from `agy -p /usage`
+ * (a local command that answers without a model turn; measured 2026-11-09).
+ */
+async function readAgy($: EngineInterface, now: number): Promise<Quota | null> {
+  const home = await $.env.get('HOME')
+  const args = ['-p', '/usage', '--output-format', 'json']
+  let r = await $.process.run(['agy', ...args], { timeoutMs: 60_000 }).catch(() => null)
+  if ((!r || r.exitCode !== 0) && home) r = await $.process.run([`${home}/.local/bin/agy`, ...args], { timeoutMs: 60_000 }).catch(() => null)
+  if (!r || r.exitCode !== 0) return miss('agy', `agy exit ${r?.exitCode ?? 'none'}`)
+  const groups = ((JSON.parse(r.stdout) as Json).command?.data?.groups ?? []) as Json[]
+  if (!groups.length) return miss('agy', 'no usage groups')
+  const used = (b?: Json) => (num(b?.remaining_fraction) === undefined ? undefined : (1 - b!.remaining_fraction) * 100)
+  return {
+    id: 'agy', at: now,
+    groups: groups.map(g => {
+      const bs = (g.buckets ?? []) as Json[]
+      const five = bs.find(b => b.window === '5h'), week = bs.find(b => b.window === 'weekly')
+      return { name: String(g.name), five: used(five), week: used(week), weekResetsAt: week?.reset_time }
+    }),
+  }
+}
+
+/**
  * Reads all budgets in the background, at most every `CONFIG.quotas.everyMs`
  * across all chats (the readings are shared through $.store). A reader that
  * fails keeps its previous reading.
@@ -516,6 +575,7 @@ async function readQuotas($: EngineInterface, force: boolean) {
     const got = {
       kiro: await readKiro($, now).catch(caught('kiro')),
       copilot: await readCopilot($, now).catch(caught('copilot')),
+      agy: await readAgy($, now).catch(caught('agy')),
       extra: await readExtra($, now).catch(caught('extra')),
     }
     const items: Quota[] = []
@@ -536,13 +596,14 @@ export const register: Register = on => {
     const saved = await $.store.get('enabled')
     if (typeof saved === 'boolean') await update($, enabled, () => saved)
     const savedLayout = await $.store.get('layout')
-    if (savedLayout === 'auto' || savedLayout === 'one' || savedLayout === 'two') await update($, layout, () => savedLayout)
+    if (savedLayout === 'auto' || savedLayout === 'one' || savedLayout === 'rows') await update($, layout, () => savedLayout)
+    if (savedLayout === 'two') await update($, layout, () => 'rows')
     const savedQuotas = await $.store.get('quotasOn')
     if (typeof savedQuotas === 'boolean') await update($, quotas, q => ({ ...q, on: savedQuotas }))
 
     await $.command.register({
       name: 'status-line',
-      description: 'Session status line: toggle, on | off, layout auto | one | two, quotas on | off, or debug',
+      description: 'Session status line: toggle, on | off, layout auto | one | rows, quotas on | off, or debug',
     })
     await Promise.all([refreshModel($), refreshUsage($), loadCompactions($)])
     void refreshQuotas($) // network and CLI calls: never hold up the session
@@ -582,16 +643,17 @@ export const register: Register = on => {
       const why = Object.entries(misses).map(([k, v]) => `${k}: ${v}`).join('; ')
       return {
         text: isOn
-          ? `Outside budgets on (${n} found: Kiro, Copilot, Claude extra usage where logged in)${why ? `. Not read: ${why}` : ''}.`
+          ? `Outside budgets on (${n} found: Kiro, Copilot, Antigravity, Claude extra usage where logged in)${why ? `. Not read: ${why}` : ''}.`
           : 'Outside budgets off.',
       }
     }
-    if (arg === 'auto' || arg === 'one' || arg === 'two') {
-      await update($, layout, () => arg)
+    if (arg === 'auto' || arg === 'one' || arg === 'rows' || arg === 'two') {
+      const mode: Layout = arg === 'two' ? 'rows' : arg
+      await update($, layout, () => mode)
       await update($, enabled, () => true)
-      await $.store.set('layout', arg)
+      await $.store.set('layout', mode)
       await $.store.set('enabled', true)
-      return { text: `Session status line layout: ${arg}.` }
+      return { text: `Session status line layout: ${mode}.` }
     }
     const value = await update($, enabled, cur => (arg === 'on' ? true : arg === 'off' ? false : !cur))
     await $.store.set('enabled', value)

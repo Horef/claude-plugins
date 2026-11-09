@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.5.0 (2026-11-09)
+- Three rows (Claude: model, context, 5h, 7d; helpers: Kiro, Copilot, Antigravity, extra; the rest); Antigravity's 5h/weekly and Argon weekly limits read from agy -p /usage; layout 'rows' (two = alias) (owner request 2026-11-09) (O1)
+
 ## 0.4.0 (2026-10-31)
 - Outside budgets on the budget line: Kiro credits with overage charges and reset, Copilot premium credits and reset, Claude extra usage once credits are spent or a window is full; `Kiro log in` when its login is stale
 - Read every five minutes in the background, shared across chats; `/status-line quotas on|off`; `debug` shows the readings

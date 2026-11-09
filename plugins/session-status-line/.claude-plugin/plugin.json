@@ -1,6 +1,6 @@
 {
   "name": "session-status-line",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, Kiro and Copilot quotas and Claude extra usage, cost, last turn, compactions and files edited; one line, or two when narrow",
   "license": "MIT",
   "types": "./types/index.d.ts"
