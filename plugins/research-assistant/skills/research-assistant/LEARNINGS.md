@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O9 2026-11-09 [friction] status, rounds: after ra.py close, adding round-2 proposed analyses makes status read '5 run' although nothing new is approved; plan.md has no notion of a round (round 2 added as a free '# Round 2' heading with its own stop rules and cost table). Would help: status 'round 2: 4 (plan, gate 3 next)' when a closed question gains proposed analyses, and an 'ra.py round DIR' that writes the round heading (simple_complex_v1 NB round 2)
 
 ## Resolved
 
