@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O6 2026-10-30 [wish] Step 6 Audit: nothing measures whether AGENTS.md helps; research (Gloaguen et al. 2026, "Evaluating AGENTS.md") found LLM-written context files can lower success and raise cost. An audit step that tries one task with and without a doubtful rule would ground pruning in evidence (claude-code-web, research for strange-loop)
+- O19 2026-11-09 [failure] docmap check, lifecycle (5.10.0): marks_superseded misses lines that name the replacement further than 30 chars from the id: 'D22, whose awake-preset decision is superseded by D34' and an audit table 'Headings marked superseded: D16 (by D20: ...), D23 (by D36: ...)' gave 4 false warnings on upgrade; 2 real stale citations surfaced too. Would help: an id followed by 'by <its replacement>' in the same clause or table cell counts as marked (claude-code, simple_complex_v1 5.10.0 upgrade)
 
 ## Resolved
 - O18 2026-11-09 [missing] docmap get / ids: get accepts only D<n>, R<n> or a date (docmap.py cmd_get ~l.1656; Node cmdGet), though docmap.json "indexes" defines the repo's own id pattern. In benefits-assistant (A1–A7) the template's "read it with get" step fails, and ids says "no ids defined" for "## A1 — Title" headings. Would help: get and ids driven by the configured indexes patterns (wonderful-agent, benefits-assistant 5.9.0 upgrade) → 5.10.0
