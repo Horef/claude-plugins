@@ -11,5 +11,5 @@ Status: current (verified {date}). Verdicts (research-assistant, rules F); every
 - variants: <the spread across variants, with [source]>
 - analyses run: <count of runs, including failed ones (no source needed)>
 - rival: <the nearest rival hypothesis and whether the data separate them; numbers with [source]>
-- verdict: <supports {pre}H1 | rejects {pre}H1 | inconclusive | failed>
+- verdict: <supports {pre}H1 | rejects {pre}H1 | inconclusive | failed | exploratory: what it shows>
 -->

@@ -231,6 +231,31 @@ def main() -> int:
         want(run("check", d).returncode == 0, "clean done analysis with audit has problems:\n" + out)
         want("7 write-up" in run("status", d).stdout, "status does not show the write-up stage")
 
+        # 0.3.0 (pilot O4-O7), on a copy so the checks below see the folder unchanged
+        import shutil
+        c = Path(t) / "copy"
+        shutil.copytree(d, c)
+        au = c / "verify" / "audit-1.md"
+        au.write_text(au.read_text().replace("- status: pass", "- status: pass. Every number matches its source."))
+        want("7 write-up" in run("status", c).stdout and run("check", c).returncode == 0,
+             "an audit status 'pass. <reasons>' is not read as pass (O4)")
+        au.write_text(au.read_text().replace("- status: pass. Every", "- status: looks fine. Every"))
+        want("status must start with 'pass' or 'disagreement'" in run("check", c).stdout,
+             "an audit status that is neither pass nor disagreement is not reported (O4)")
+        au.write_text(au.read_text().replace("- status: looks fine.", "- status: pass."))
+        h = run("handover", c)
+        want(h.returncode == 0 and "| A1 NMDA ratio sweep" in h.stdout and "confirmatory" in h.stdout and "RESULTS §55" in h.stdout
+             and "deviations: 2" in h.stdout, "handover rows (O6):\n" + h.stdout)
+        want(run("close", c, "").returncode == 1, "close without a destination accepted (O5)")
+        want(run("close", c, "docs/writeups/x/ (commit abc123)").returncode == 0, "close (O5)")
+        want("closed (handed over: docs/writeups/x/ (commit abc123))" in run("status", c).stdout, "status after close (O5)")
+        want(run("close", c, "again").returncode == 1, "close of a closed question accepted (O5)")
+        # an exploratory analysis needs an 'exploratory' verdict (O7)
+        pl = c / "plan.md"
+        pl.write_text(pl.read_text().replace("- status: done\n", "- status: done\n- kind: exploratory\n", 1))
+        want("its verdict starts with 'exploratory'" in run("check", c).stdout, "exploratory verdict rule (O7)")
+        want("exploratory" in run("handover", c).stdout, "handover marks exploratory analyses (O7)")
+
         # verdict faults
         (d / "verdict.md").write_text(GOOD.replace("- rival: H2 predicts the same at 1; not separated\n", ""))
         want("verdict.md A1: no 'rival'" in run("check", d).stdout, "missing rival not reported")

@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.3.0 (2026-11-09)
+- Pilot gaps (owner request 2026-11-09): audit status read by its first word and checked to be pass or disagreement (O4); ra.py close and a 'closed' stage (O5); ra.py handover prints draft ledger rows with confirmatory/exploratory, condition, evidence and the disclosure counts (O6); 'kind: exploratory' analyses with an 'exploratory' verdict, and a rule for side literature questions and extras after gate 3 (O7). O8 (win: gates, verbatim rules, cross-family audit) kept as is. (O4, O5, O6, O7, O8)
+
 ## 0.2.0 (2026-11-08)
 - Question tags and short names (owner, 8 Nov): ra.py init --tag NB prefixes every id (NB-H1, NB-A1, NB-Q1), refusing tags whose ids already occur in the repo; headings are short names with the claim in 'statement'; status and the gate log print ids with names; bare ids typed at gates are read as the question's; ra.py retag renames an existing folder (headings, id fields, log; fingerprints kept) and lists prose mentions. Hypotheses template gains 'statement' and 'Not taken forward'. (O2, O3)
 
