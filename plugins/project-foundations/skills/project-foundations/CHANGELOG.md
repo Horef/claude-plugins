@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.11.0 (2026-11-09)
+- Merged worktrees: docmap.py check warns about a linked worktree whose branch is merged into the main worktree's branch, with the remove command; AGENTS.md template: worktrees are for parallel work and are removed once merged (owner request 2026-11-09) (O20)
+
 ## 5.10.1 (2026-11-09)
 - check: an id followed by 'by <its replacement>' in the same clause or table cell counts as marked superseded (O19)
 
