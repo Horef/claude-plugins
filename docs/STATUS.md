@@ -1,5 +1,5 @@
 # Status
-Updated 2026-11-08. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-09. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
@@ -8,6 +8,7 @@ Updated 2026-11-08. Snapshot only - overwrite each session; history is in `docs/
 | `loop.py` note/status/digest/check/eval/bump/absorb/pack/link/sync/hook/new | `loop.py eval strange-loop` → 16 unit tests OK (incl. two clones syncing through one remote, new and --from), 2026-10-30 |
 | Adding a skill end to end (sandbox) | `loop.py new` → check flags placeholders → written → check and `claude plugin validate` pass → pushed → `claude plugin install` → note command from its own SKILL.md recorded O1, 2026-10-30 |
 | The whole round trip on a sandboxed Mac setup (fake home, local stand-in for GitHub, the real `claude` CLI) | install from the marketplace → session-start hook → notes from another project → auto-sync push → a second machine's note pulled → reply block absorbed → skills linked for a local agent → version bump reaches the installed plugin (0.7.0 → 0.7.1), 2026-10-30 |
+| project-foundations 5.10.0: partial supersession ("partly superseded by D<n>: <part>"), skip only the id a line marks; `get`/`ids` follow configured `indexes` and `## A1 — Title` (O17, O18) | `loop.py eval project-foundations` → 0 failures; `docmap.py check` → 0 errors, 2026-11-09. Node ports of docmap in other repos not updated |
 | project-foundations 5.6.0: AGENTS.md template Conventions line 'Design for what will vary next' (owner request, generalised from gui-design) | `loop.py eval project-foundations` → pass, 2026-11-04 |
 | research-writing 0.1.0 (new): write-ups and paper drafts as an argument; claims ledger, LaTeX template, `wr.py` (build, check, pages, readers), fresh-reader question loop; rules distilled from Schimel, Mensh & Kording, Gopen & Swan, Pinker, Williams & Bizup, Rougier; story techniques from GEB and three papers | `evals/run.py` pass, 2026-11-04; piloted on simple_complex_v1's Wilson write-up (draft, 4 readers, 170 questions, revision). Judged cases not run blind |
 | `docmap.py` from its new home | `loop.py eval project-foundations` → 8/8 OK, 2026-10-30 |
