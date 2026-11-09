@@ -289,6 +289,30 @@ def main() -> int:
         expect(p.returncode == 1 and "broken link -> missing.md" in p.stdout and "x-devonthink" not in p.stdout,
                "check still fails on a real missing relative link", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # worktrees: check warns about a linked worktree whose branch is merged (owner, 2026-11-09)
+        root = Path(tmp) / "proj"
+        root.mkdir()
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        for a in (("init", "-q", "-b", "main"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-qm", "base")
+        sh(root, "git", "worktree", "add", "-q", str(Path(tmp) / "proj_done"), "-b", "done")
+        sh(root, "git", "worktree", "add", "-q", str(Path(tmp) / "proj_open"), "-b", "open")
+        (Path(tmp) / "proj_open" / "x.txt").write_text("x", encoding="utf-8")
+        sh(Path(tmp) / "proj_open", "git", "add", "x.txt")
+        sh(Path(tmp) / "proj_open", "git", "commit", "-qm", "unmerged")
+        p = docmap(root, "check")
+        hits = [ln for ln in p.stdout.splitlines() if "worktree " in ln]
+        expect(len(hits) == 1 and "branch done" in hits[0] and "git worktree remove" in hits[0],
+               "check warns about the merged worktree only, not the one with unmerged commits", p)
+        sh(root, "git", "worktree", "remove", str(Path(tmp) / "proj_done"))
+        p = docmap(root, "check")
+        expect(not [ln for ln in p.stdout.splitlines() if "worktree " in ln], "the warning goes once the worktree is removed", p)
+
     with tempfile.TemporaryDirectory() as tmp:  # O14: STATUS keeps one short line per workstream
         root = Path(tmp)
         for rel, text in FILES.items():

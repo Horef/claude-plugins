@@ -65,4 +65,5 @@ Update in the same commit as the change that requires it. A line tagged `[module
 - Before committing: tests and docs check green, `git diff --check` clean, staged diff reviewed for never-commit files.
 - After committing: `git push origin <branch>` (run unpiped if the SSH key prompts; never ask for or store the passphrase). If you can't push, say so.
 - Never force-push, rewrite pushed history or amend pushed commits. Ask before anything destructive.
+- A separate worktree (`git worktree add ../<repo>_<topic> -b <branch>`) is for parallel work only; once its branch is merged, remove it (`git worktree remove <path>`; the branch stays). `docmap.py check` warns about merged worktrees.
 ```
