@@ -44,7 +44,9 @@
     "agy": {
       "cli": "agy",
       "label": "Antigravity",
-      "command": "agy --model {model_id} --mode auto",
+      "command": "agy --model {model_id} --mode auto --settings {settings}",
+      "settings": {"permissions": {"allow": ["command(cat)", "command(head)", "command(tail)", "command(wc)", "command(ls)", "command(pwd)", "command(grep)", "command(rg)", "command(sed -n)", "command(sort)", "command(uniq)", "command(cut)", "command(diff)", "command(stat)", "command(du)", "command(file)", "command(jq)", "command(echo)", "command(date)", "command(which)", "command(pdftotext)", "command(git log)", "command(git diff)", "command(git show)", "command(git status)", "command(git grep)", "command(git blame)", "command(git ls-files)", "command(git rev-parse)", "command(hc send)"]}},
+      "settings_note": "Auto mode is still a rollout (agy says \"--mode auto is not available for this account\" and falls back to asking for every command), so the template passes a read-only allowlist with --settings; everything else still asks the lead.",
       "model_id": "{model}-{effort}",
       "efforts": ["low", "medium", "high"],
       "note": "Personal subscription: small quota, use after Kiro and Copilot.",

@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.8.0 (2026-11-09)
+- agy templates pass a read-only command allowlist (--settings, rendered from the config) since Auto mode is unavailable on the account; helpers.py usage reports agy's drop in weekly limit from /usage, snapshotted at pick (owner request 2026-11-09) (O18)
+
 ## 0.7.0 (2026-11-08)
 - helpers.py usage reads a helper's Kiro credits or Copilot AIC from its screen before cleanup; nothing (never 0) when none is shown (owner's request 2026-11-08)
 
