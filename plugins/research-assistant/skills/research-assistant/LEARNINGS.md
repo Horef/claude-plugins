@@ -6,6 +6,10 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O4 2026-11-08 [friction] 6 audit: ra.py stage() needs the audit's status field to be exactly 'pass'; the Argon checker wrote 'pass. <reasons>' and status stayed '6 audit' with 0 check problems. Would help: accept 'pass' as the first word, or have check say the status value is not pass/disagreement. (simple_complex_v1)
+- O5 2026-11-09 [missing] 7 Write-up: ra.py has no state after '7 write-up (ready for hand-over)': once the write-up is revised and pushed the question still reads as stage 7. Would help: a closing step (ra.py close DIR <writeup path/commit>) that logs the hand-over in log.md and makes status say 'closed'. (simple_complex_v1 NB pilot)
+- O6 2026-11-09 [missing] 7 Write-up: hand-over to an existing write-up is research-writing's Add mode, but nothing carries confirmatory/exploratory and the pre-registered rules into its ledger; done by hand (C5, C5a confirmatory; C5b exploratory, written 'not planned before the runs'). Would help: ra.py handover printing one ledger row per verdict section with tag, condition and sources. (simple_complex_v1 NB pilot)
+- O7 2026-11-09 [missing] 5 Run: a side literature question arose mid-run (is gOSI 0.3 a good threshold?) and exploratory extras (threshold counts, shuffle test, Allen comparison) were approved after gate 3; the skill has no slot for either. Handled as decisions.md NB-Q2 + docs/literature/gosi_threshold. Would help: a sub-question rule: a literature-research run linked from decisions.md; exploratory analyses declared as such in plan.md before running, kept out of the verdict rules. (simple_complex_v1 NB pilot)
+- O8 2026-11-09 [win] whole loop: gates + rules copied verbatim before runs + cross-family audit worked: NB-H3 (a pre-registered null) was rejected cleanly, the audit reproduced every number and caught 2 small slips, and the write-up could state which readings were planned. Sergiy's gate answers took minutes each. (simple_complex_v1 NB pilot)
 
 ## Resolved
 
