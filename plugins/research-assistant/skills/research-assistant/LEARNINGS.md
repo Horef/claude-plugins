@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O9 2026-11-09 [friction] status, rounds: after ra.py close, adding round-2 proposed analyses makes status read '5 run' although nothing new is approved; plan.md has no notion of a round (round 2 added as a free '# Round 2' heading with its own stop rules and cost table). Would help: status 'round 2: 4 (plan, gate 3 next)' when a closed question gains proposed analyses, and an 'ra.py round DIR' that writes the round heading (simple_complex_v1 NB round 2)
+- O10 2026-11-09 [failure] 6 audit, rounds: after round 2's verdicts, stage() reads '7 write-up (ready for hand-over)' because round 1's passing audit-1 counts; a new round's verdicts after the last pass should need a new audit. Would help: require an audit dated after the newest verdict/approval (or after the last close/G3) (simple_complex_v1 NB round 2)
 
 ## Resolved
 
