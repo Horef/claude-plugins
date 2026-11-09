@@ -17,6 +17,9 @@ Standard library only. Every command takes the question folder (docs/research/<t
   ra.py deviation DIR A2 "<what changed, why, before or after seeing any outcome>"
                                        logs the change and re-fingerprints the analysis
   ra.py audit DIR                      writes verify/audit-N.md for the fresh checker to fill
+  ra.py handover DIR                   draft claim rows for research-writing's ledger, one per verdict, with
+                                       confirmatory/exploratory, condition and evidence, plus what the write-up discloses
+  ra.py close DIR "<where it went>"     after a passing audit: logs the hand-over (write-up path, commit); status: closed
   ra.py status DIR                     stage, gates passed, analyses by status, open decisions
   ra.py check DIR                      the mechanical rules (exit 1 on a problem)
 
@@ -535,6 +538,29 @@ def audits(d: Path) -> list[dict[str, str]]:
     return [fields_of(p) for p in sorted((d / "verify").glob("audit-*.md"))] if (d / "verify").exists() else []
 
 
+def audit_status(f: dict[str, str]) -> str:
+    """The first word of an audit's status ('pass. All numbers match' -> 'pass'), lower case."""
+    m = re.match(r"\W*([A-Za-z]+)", f.get("status", ""))
+    return m.group(1).lower() if m else ""
+
+
+def kind_of(f: dict[str, str]) -> str:
+    """An analysis is confirmatory unless plan.md says 'kind: exploratory'."""
+    return "exploratory" if f.get("kind", "").strip().lower().startswith("explor") else "confirmatory"
+
+
+def closed(d: Path) -> str | None:
+    """Where the question was handed over, if a close line comes after the last gate-3 line."""
+    out = None
+    for line in log_lines(d):
+        if GATE_LINE.match(line) and " G3" in line[:16]:
+            out = None
+        m = re.match(r"- \S+ close: (.*)$", line)
+        if m:
+            out = m.group(1).strip()
+    return out
+
+
 def stage(d: Path) -> str:
     g = gates(d)
     if stopped(d):
@@ -546,9 +572,12 @@ def stage(d: Path) -> str:
             ver = sections(d / "verdict.md", pre(d, "A"))
             if any(k not in ver for k in live):
                 return "6 verdicts"
-            if not any(x.get("status") == "pass" for x in audits(d)):
+            if not any(audit_status(x) == "pass" for x in audits(d)):
                 return "6 audit (ra.py audit, then a fresh checker)"
-            return "7 write-up (ready for hand-over)"
+            where = closed(d)
+            if where:
+                return f"closed (handed over: {where})"
+            return "7 write-up (ready for hand-over: ra.py handover, then ra.py close)"
         return "5 run"
     if "G2" in g:
         return "4 plan (gate 3 next)"
@@ -704,6 +733,10 @@ def check(d: Path) -> list[str]:
                          "(a changed rule is a deviation)")
         if failed:
             continue
+        vv = v["fields"].get("verdict", "").strip().lower()
+        if kind_of(plan[aid]["fields"]) == "exploratory" and not vv.startswith("exploratory"):
+            probs.append(f"verdict.md {aid}: an exploratory analysis has no decision rule to pass or fail; "
+                         "its verdict starts with 'exploratory'")
         for k, val in v["fields"].items():
             if k in UNSOURCED_OK:
                 continue
@@ -724,7 +757,11 @@ def check(d: Path) -> list[str]:
             for k in ("checker", "inputs", "numbers", "rules", "deviations", "substitutions", "selection", "status"):
                 if empty(last.get(k)):
                     probs.append(f"verify/audit-{len(au)}.md: '{k}' is not filled")
-            if last.get("status") == "disagreement":
+            st = audit_status(last)
+            if not empty(last.get("status")) and st not in ("pass", "disagreement"):
+                probs.append(f"verify/audit-{len(au)}.md: status must start with 'pass' or 'disagreement' "
+                             f"(found '{last.get('status', '')[:40]}')")
+            if st == "disagreement":
                 probs.append(f"verify/audit-{len(au)}.md: disagreement; take it to the person (decisions.md), fix, "
                              "and audit again")
     dec = sections(d / "decisions.md", pre(d, "Q"))
@@ -736,6 +773,54 @@ def check(d: Path) -> list[str]:
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().strip("\"'").lower())
+
+
+def cmd_handover(a) -> int:
+    d = Path(a.dir)
+    st = stage(d)
+    if not (st.startswith("7") or st.startswith("closed")):
+        print(f"not ready for hand-over: stage {st}")
+        return 1
+    plan = sections(d / "plan.md", pre(d, "A"))
+    hyp = sections(d / "hypotheses.md", pre(d, "H"))
+    ver = sections(d / "verdict.md", pre(d, "A"))
+    print(f"Draft claim rows for research-writing's ledger (from {d}); rewrite each 'claim' as one sentence that "
+          "states a finding. Confirmatory rows follow a rule fixed before the runs; exploratory rows must say so in "
+          "the text ('not planned before the runs').\n")
+    print("| analysis | claim (from the verdict) | type | hypotheses | condition | evidence |")
+    print("|---|---|---|---|---|---|")
+    for aid, v in ver.items():
+        if aid not in plan:
+            continue
+        f, vf = plan[aid]["fields"], v["fields"]
+        hs = "; ".join(label(hyp, h) for h in _ids(f.get("hypotheses", ""), pre(d, "H")) if h in hyp)
+        cell = lambda x: re.sub(r"\s+", " ", x or "").replace("|", "/").strip()
+        print(f"| {label(plan, aid)} | {cell(vf.get('verdict'))}: {cell(vf.get('result'))[:300]} | {kind_of(f)} | "
+              f"{cell(hs)} | {cell(f.get('data'))[:160]} | {cell(f.get('results'))}; runs {cell(f.get('runs'))[:120]} |")
+    devs = [l for l in log_lines(d) if re.match(r"- \S+ deviation ", l)]
+    failed = [k for k, p in plan.items() if p["fields"].get("status") == "failed"]
+    dropped = [k for k, p in plan.items() if p["fields"].get("status") == "dropped"]
+    au = audits(d)
+    print("\nThe write-up discloses (G3): " + "; ".join([
+        f"{len(ver)} analyses with verdicts ({sum(kind_of(plan[k]['fields']) == 'exploratory' for k in ver if k in plan)} exploratory)",
+        f"failed: {', '.join(failed) or 'none'}", f"dropped at gate 3: {', '.join(dropped) or 'none'}",
+        f"deviations: {len(devs)}", f"audits: {len(au)} (last: {audit_status(au[-1]) if au else 'none'})",
+        "the person's gate decisions in log.md"]))
+    return 0
+
+
+def cmd_close(a) -> int:
+    d = Path(a.dir)
+    st = stage(d)
+    if not st.startswith("7"):
+        print(f"cannot close at stage {st}: close follows a passing audit and the hand-over")
+        return 1
+    if not a.where.strip():
+        print("say where the results went (the write-up path, a commit)")
+        return 1
+    append_log(d, f"- {today()} close: {a.where.strip()}")
+    print(f"closed: {a.where.strip()}")
+    return 0
 
 
 def cmd_check(a) -> int:
@@ -759,6 +844,8 @@ def main(argv=None) -> int:
     s.set_defaults(fn=cmd_deviation)
     s = sub.add_parser("audit"); s.add_argument("dir"); s.set_defaults(fn=cmd_audit)
     s = sub.add_parser("status"); s.add_argument("dir"); s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("handover"); s.add_argument("dir"); s.set_defaults(fn=cmd_handover)
+    s = sub.add_parser("close"); s.add_argument("dir"); s.add_argument("where"); s.set_defaults(fn=cmd_close)
     s = sub.add_parser("check"); s.add_argument("dir"); s.set_defaults(fn=cmd_check)
     a = p.parse_args(argv)
     return a.fn(a)

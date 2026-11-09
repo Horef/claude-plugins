@@ -12,6 +12,7 @@ Status: current (verified {date}). Analysis plan (research-assistant, rules D); 
 
 ## {pre}A1: <a short name, at most 8 words; for entry 'review', the reader question it answers>
 - status: proposed
+- kind: confirmatory <or exploratory: no rule to pass or fail, declared before it runs; its verdict starts with 'exploratory'>
 - hypotheses: <hypothesis ids it separates>
 - data: <inputs, splits, the held-out set no selection step may read>
 - metric: <the outcome measure and the model or test>
