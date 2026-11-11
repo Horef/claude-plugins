@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O6 2026-10-30 [wish] Step 6 Audit: nothing measures whether AGENTS.md helps; research (Gloaguen et al. 2026, "Evaluating AGENTS.md") found LLM-written context files can lower success and raise cost. An audit step that tries one task with and without a doubtful rule would ground pruning in evidence (claude-code-web, research for strange-loop)
+- O21 2026-11-11 [friction] docmap check worktree warning: a freshly created worktree branch with no commits yet is reported as 'merged into main, remove it' while a helper is actively working in it; skip branches whose tip equals their fork point (or that were created recently) (claude-code, simple_complex_v1)
 
 ## Resolved
 - O20 2026-11-09 [missing] Git: six merged git worktrees (scv1_*, simple_complex_v1-inh) lay next to simple_complex_v1 for up to two weeks; nothing said to remove a worktree once its branch is merged. Owner asked (2026-11-09) for a rule and a check warning (simple_complex_v1) → 5.11.0
