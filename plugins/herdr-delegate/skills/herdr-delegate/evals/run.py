@@ -103,4 +103,11 @@ failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} agy usage is None when /usage can't be read")
 helpers.agy_weekly, helpers.templates_dir, helpers.agy_snapshot_file = _saved
 print(f"{failures} failure(s)")
+# Claude-account helpers, readings-based quota, usage delta and Codex quota: own process, temp HOME/XDG, fake CLIs.
+acc = subprocess.run([sys.executable, str(HERE / "account_cases.py")], capture_output=True, text=True)
+tail = acc.stdout.strip().splitlines()[-1] if acc.stdout.strip() else acc.stderr.strip()[-300:]
+failures += acc.returncode != 0
+print(f"{'OK  ' if acc.returncode == 0 else 'FAIL'} account_cases.py: {tail}")
+if acc.returncode != 0:
+    print("\n".join(l for l in acc.stdout.splitlines() if l.startswith("FAIL")))
 sys.exit(1 if failures else 0)

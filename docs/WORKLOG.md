@@ -2,6 +2,15 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-11 - herdr-delegate 0.9.0, session-status-line 0.6.0, model-router 0.22.0: other Claude accounts and Codex
+
+- Owner request: two Claude accounts on one Mac (personal, university Team plan for scientists; separate `CLAUDE_CONFIG_DIR`) should see each other's limits and use each other as helpers; add Codex; make status line and router general for other users. Shared contract (account key = sha256[:8] of the config dir or `default`; readings in `$XDG_CONFIG_HOME/claude-accounts/<key>.json` written by each account's status line) designed here, implemented by three Copilot helpers in parallel worktrees after a generality audit (Haiku).
+- herdr-delegate 0.9.0: `helpers.py account add|rm|list` (kind=claude providers, `CLAUDE_CONFIG_DIR=... claude --permission-mode auto`), self-skip in pick, quota from readings, 7d-rise usage; Codex provider (`--no-daemon --approve-for-me`, models from `codex debug models`, quota from the wham endpoint or session files); provider order, units, login and usage readers are config, not code.
+- session-status-line 0.6.0: writes its own account's readings, shows the other accounts (`uni 5h 21% 7d 30%`), `/status-line account-label`, optional live read with an unexpired token (never refreshed); Codex budget; per-reader labels; Kiro XDG path; agy fallback only when present.
+- model-router 0.22.0: default helper orders from `helpers.py config` (installed, not this account), "(this account)" marks, units and labels from config, Claude and Codex effort flags, no-CLI case, XDG template path, genome note only where a genome exists.
+- Commands: `loop.py check --base origin/main` 0/0; `loop.py eval` herdr-delegate, model-router, session-status-line exit 0; `claude plugin test` model-router 80 pass, session-status-line 16 pass; `docmap.py check` 0 errors; against a copy of the real config: `pick` from ~/.claude gives the uni helper, from ~/.claude-uni the personal one.
+- Unverified: live read of another account's usage; paid-plan Codex windows; a launched Claude-account helper in hc; Kiro Linux data path.
+
 ## 2026-11-09 - project-foundations 5.10.1: supersession marks that name the replacement
 
 - O19: upgrading simple_complex_v1 to 5.10.0 gave 4 false warnings where a line names the replacement more than 30 characters after the id ("D22, whose awake-preset decision is superseded by D34"; an audit table "D16 (by D20: ...)"). Now an id followed by "by <its replacement>" in the same clause or table cell counts as marked. The upgrade also surfaced 2 real stale citations the old whole-line skip hid.

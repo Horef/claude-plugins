@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.9.0 (2026-11-11)
+- Claude Code accounts (CLAUDE_CONFIG_DIR) and Codex as helper providers: helpers.py account add/rm/list, self-skip, quota from session-status-line's readings files or Codex's usage endpoint, usage as the 7d rise since pick; provider order, login check, usage screen and model source are config (order, tier_order, opt_in, login_check, usage_screen, quota_source); config exposes kind, config_dir, label, unit, order, cli_found, self
+
 ## 0.8.0 (2026-11-09)
 - agy templates pass a read-only command allowlist (--settings, rendered from the config) since Auto mode is unavailable on the account; helpers.py usage reports agy's drop in weekly limit from /usage, snapshotted at pick (owner request 2026-11-09) (O18)
 

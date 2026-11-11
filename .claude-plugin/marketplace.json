@@ -50,13 +50,13 @@
     {
       "name": "session-status-line",
       "source": "./plugins/session-status-line",
-      "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, Kiro and Copilot quotas and Claude extra usage, cost, last turn, compactions and files edited; one line, or two when narrow",
+      "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, Kiro, Copilot and Codex quotas, your other Claude accounts' limits and Claude extra usage, cost, last turn, compactions and files edited; one line, or two when narrow",
       "category": "general"
     },
     {
       "name": "herdr-delegate",
       "source": "./plugins/herdr-delegate",
-      "description": "Delegate self-contained steps to helper agents on other subscriptions (Kiro, Antigravity/agy, GitHub Copilot) through Herdr's herdr-core (hc): pick a helper by tier, launch it with a brief, act as its approval judge, collect its report, review it, clean up. Use when the person asks to offload or delegate work, when Claude's limits are tight, or when a router plan marks a step for herdr. Needs hc on PATH.",
+      "description": "Delegate self-contained steps to helper agents on other subscriptions (Kiro, Antigravity/agy, GitHub Copilot, Codex, another Claude Code account) through Herdr's herdr-core (hc): pick a helper by tier, launch it with a brief, act as its approval judge, collect its report, review it, clean up. Use when the person asks to offload or delegate work, when Claude's limits are tight, or when a router plan marks a step for herdr. Needs hc on PATH.",
       "category": "general"
     },
     {

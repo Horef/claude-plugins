@@ -36,12 +36,17 @@ export type Usage = {
   limits?: Limit[]
 }
 
+/** One rate-limit window of an account or of Codex: share used, when it resets, and its label (`5h`, `7d`, `30d`). */
+export type Win = { label: string; percent: number; resetsAt?: string }
+
 /**
  * One outside budget read by the mod itself: Kiro credits, Copilot premium
- * credits, Antigravity's 5h and weekly limits, or Claude's extra usage (the paid credits used past the 5h / weekly limits).
+ * credits, Codex windows, Antigravity's 5h and weekly limits, or Claude's extra usage (the paid credits used past the 5h / weekly limits).
  */
 export type Quota = {
-  id: 'kiro' | 'copilot' | 'agy' | 'extra'
+  id: 'kiro' | 'copilot' | 'codex' | 'agy' | 'extra'
+  /** What the segment is called (`Kiro`, `Copilot`, `Codex`). */
+  label?: string
   /** Share of the period's allowance used; may pass 100 (overage). */
   percent?: number
   /** When the allowance resets (ISO). */
@@ -51,6 +56,8 @@ export type Quota = {
   /** Claude extra usage: the monthly cap, in `currency`. */
   cap?: number
   currency?: string
+  /** Codex: its rate-limit windows (5h and weekly on paid plans, a monthly one on the free plan). */
+  windows?: Win[]
   /** Antigravity: per model group, the share used (percent) of its 5h and weekly limits. */
   groups?: { name: string; five?: number; week?: number; weekResetsAt?: string }[]
   /** The service's login has gone stale: ask the person to log in again. */
@@ -59,8 +66,11 @@ export type Quota = {
   at: number
 }
 
+/** Another Claude account on this machine, as its own sessions last reported it (or a live read). */
+export type Account = { key: string; label: string; plan?: string; at: number; five?: Win; week?: Win }
+
 /** The last readings, and whether the mod reads them at all (`/status-line quotas on|off`). */
-export type Quotas = { on: boolean; at: number; items: Quota[] }
+export type Quotas = { on: boolean; at: number; items: Quota[]; accounts: Account[] }
 
 declare module 'claude-code' {
   interface PluginState {

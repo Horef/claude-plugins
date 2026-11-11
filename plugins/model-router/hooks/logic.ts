@@ -152,20 +152,94 @@ export const newStep = (id: string, title: string, tier: Tier, where: Step['wher
 
 export const isTier = (v: unknown): v is Tier => TIER_ORDER.includes(v as Tier)
 
+// --- Default helper orders: built from helpers.py's config, else the hard-coded strings ---------
+//
+// The one piece of state in this file: the orders and labels the config gives, kept here so the many pure callers that take
+// only `set` need no new argument. The hooks module sets it whenever helpers.py's config is (re)read.
+
+type HelperEnv = {
+  /** Per tier, the templates tried by default: providers by `order`, with an installed CLI, not this account. */
+  on: Partial<Record<Tier, string[]>>
+  /** Per tier, every template the config offers (for putting one back). */
+  all: Partial<Record<Tier, string[]>>
+  self: ReadonlySet<string>
+  units: Record<string, string>
+  labels: Record<string, string>
+  /** The config lists providers and none has its CLI installed. */
+  noCli: boolean
+}
+
+let helperEnv: HelperEnv | undefined
+
+/** The order a provider has when the config states none (helpers.py's own defaults). */
+const ORDER_OF: Record<string, number> = { kiro: 10, copilot: 20, codex: 30, agy: 40 }
+const orderOf = (name: string, p: HelperConfig['providers'][string]) => p.order ?? ORDER_OF[name] ?? (p.kind === 'claude' ? 50 : 100)
+
+/** A provider's name as shown: its config label, "Claude <label>" for another Claude account, else the name capitalised. */
+export const providerLabel = (provider: string) => helperEnv?.labels[provider] ?? cap(provider)
+
+/** Whether a provider is the session's own account (it cannot be its own helper). */
+export const isSelfProvider = (provider: string) => helperEnv?.self.has(provider) ?? false
+
+/** What the router knows of the config's providers; undefined (no helpers.py found) goes back to the hard-coded defaults. */
+export const setHelperConfig = (cfg: HelperConfig | undefined) => {
+  if (!cfg) {
+    helperEnv = undefined
+
+    return
+  }
+  const names = Object.keys(cfg.providers).sort((a, b) => orderOf(a, cfg.providers[a]!) - orderOf(b, cfg.providers[b]!) || a.localeCompare(b))
+  const on: HelperEnv['on'] = {}
+  const all: HelperEnv['all'] = {}
+  for (const t of TIER_ORDER) {
+    const has = names.filter(n => cfg.providers[n]!.tiers?.[t])
+    all[t] = has.map(n => `${n}-${t}`)
+    on[t] = has.filter(n => cfg.providers[n]!.cli_found !== false && !cfg.providers[n]!.self).map(n => `${n}-${t}`)
+  }
+  const entries = Object.entries(cfg.providers)
+  const labelOf = (p: HelperConfig['providers'][string]) => (p.kind === 'claude' && p.label && !/claude/i.test(p.label) ? `Claude ${p.label}` : p.label)
+  helperEnv = {
+    on,
+    all,
+    self: new Set(entries.filter(([, p]) => p.self).map(([n]) => n)),
+    units: Object.fromEntries(entries.flatMap(([n, p]) => (p.unit ? [[n, p.unit]] : []))),
+    labels: Object.fromEntries(entries.flatMap(([n, p]) => (labelOf(p) ? [[n, labelOf(p)!]] : []))),
+    noCli: entries.length > 0 && entries.every(([, p]) => p.cli_found === false),
+  }
+}
+
+/** True when helpers.py's config is known and none of its providers has an installed CLI. */
+export const noHelperCli = () => helperEnv?.noCli ?? false
+
+/** The default order of a tier's helper templates. */
+export const defaultHelperList = (tier: Tier): string[] => helperEnv?.on[tier] ?? parseList(DEFAULT_SETTINGS.helpers.tiers[tier])
+
+/** Whether a tier's stored order is the shipped default (never changed by the user), so the config's default applies. */
+const isDefaultOrder = (set: Settings, tier: Tier) => set.helpers.tiers[tier] === DEFAULT_SETTINGS.helpers.tiers[tier]
+
+/** A tier's helper templates as in force: the stored order if the user set one, else the default. */
+export const helperEffective = (set: Settings, tier: Tier): string[] => (isDefaultOrder(set, tier) ? defaultHelperList(tier) : parseList(set.helpers.tiers[tier]))
+
+/** Whether a tier's order differs from the default (for the pane's dot). */
+export const orderIsCustom = (set: Settings, tier: Tier) => !isDefaultOrder(set, tier) && helperEffective(set, tier).join(',') !== defaultHelperList(tier).join(',')
+
+/** A template with " (this account)" after it when its provider is the session's own account. */
+export const templateLabel = (template: string, shortName = template) => `${shortName}${isSelfProvider(template.split('-')[0]!) ? ' (this account)' : ''}`
+
 /** A tier's helper templates in the order they are tried, e.g. "kiro-deep → copilot-deep". */
-export const helperOrder = (set: Settings, tier: Tier) => helperList(set, tier).join(' → ')
+export const helperOrder = (set: Settings, tier: Tier) => helperList(set, tier).map(t => templateLabel(t)).join(' → ')
 
 /** A tier's helper templates in order, with Copilot Fusion added when its setting covers the tier. */
 export const helperList = (set: Settings, tier: Tier): string[] => {
-  const list = set.helpers.tiers[tier]
-    .split(',')
-    .map(x => x.trim())
-    .filter(Boolean)
+  const list = helperEffective(set, tier)
   const f = FUSION[tier]
   const on = set.helpers.fusion === 'both' || (set.helpers.fusion === 'deep' && tier === 'deep')
   if (!f || !on || list.includes(f.template)) return list
   const at = list.indexOf(f.before)
-  return at < 0 ? [...list, f.template] : [...list.slice(0, at), f.template, ...list.slice(at)]
+  // A default order without Copilot means its CLI is not installed: Fusion would have nothing to run on.
+  if (at < 0) return isDefaultOrder(set, tier) && helperEnv ? list : [...list, f.template]
+
+  return [...list.slice(0, at), f.template, ...list.slice(at)]
 }
 
 export const parseList = (v: string) =>
@@ -174,13 +248,14 @@ export const parseList = (v: string) =>
     .map(x => x.trim())
     .filter(Boolean)
 
-/** A tier's helpers as stored, in order, without Copilot Fusion (its own setting adds that). */
-export const helperItems = (set: Settings, tier: Tier) => parseList(set.helpers.tiers[tier])
+/** A tier's helpers as in force, in order, without Copilot Fusion (its own setting adds that). */
+export const helperItems = (set: Settings, tier: Tier) => helperEffective(set, tier)
 
-/** The default helper templates of a tier that are switched off now, offered back in the pane. */
+/** The templates of a tier the config offers that are switched off now, offered back in the pane. */
 export const helpersOff = (set: Settings, tier: Tier) => {
   const on = helperItems(set, tier)
-  return parseList(DEFAULT_SETTINGS.helpers.tiers[tier]).filter(x => !on.includes(x))
+
+  return (helperEnv?.all[tier] ?? parseList(DEFAULT_SETTINGS.helpers.tiers[tier])).filter(x => !on.includes(x))
 }
 
 /** The stored string after moving the helper at `index` one place (-1 up, 1 down); unchanged at an end. */
@@ -426,12 +501,14 @@ export const asHelperEffort = (v: unknown) => {
 
 /**
  * The thinking level a helper template sets on its command line (front matter `command:`): Kiro's `--effort X`,
- * Copilot's `--reasoning-effort X`; for agy, the level its model id ends with (`gemini-4-argon-high`). Nothing when it sets none.
+ * Copilot's `--reasoning-effort X`, Claude's `--effort X` (another account's helper), Codex's `-c model_reasoning_effort=X`; for agy, the level its model id ends with (`gemini-4-argon-high`). Nothing when it sets none.
  */
 export const effortOfTemplate = (text: string) => {
   const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ''
   const command = /^command:\s*(.+)$/m.exec(front)?.[1] ?? ''
-  const flag = /(?:^|\s)--(?:reasoning-)?effort(?:=|\s+)([a-z]+)\b/i.exec(command)?.[1]?.toLowerCase()
+  const flag = (
+    /(?:^|\s)--(?:reasoning-)?effort(?:=|\s+)([a-z]+)\b/i.exec(command) ?? /(?:^|\s)(?:-c|--config)(?:=|\s+)['"]?model_reasoning_effort\s*=\s*['"]?([a-z]+)\b/i.exec(command)
+  )?.[1]?.toLowerCase()
   if (flag) return EFFORTS.includes(flag as Effort) ? flag : undefined
   if (!/(?:^|\s)agy\s/.test(command)) return undefined
   const model = /--model(?:=|\s+)(\S+)/.exec(command)?.[1] ?? ''
@@ -580,11 +657,15 @@ export const fmtAmount = (n: number) => `${Number(n.toFixed(2))}`
 
 const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1)
 
-/** "Copilot 30 AIC": one provider's usage in its own unit. */
-export const usageLabel = (u: HelperUsage) => `${cap(u.provider)} ${fmtAmount(u.amount)} ${u.unit}`
+/** An amount with its unit: "30 AIC", but "1.5% of 7d" (a percent unit follows the number without a space). */
+export const amountWithUnit = (amount: number, unit: string) => `${fmtAmount(amount)}${unit.startsWith('%') ? '' : ' '}${unit}`
 
-/** The unit a provider reports in, for saying that it did not: what its screen shows. */
+/** "Copilot 30 AIC": one provider's usage in its own unit. */
+export const usageLabel = (u: HelperUsage) => `${providerLabel(u.provider)} ${amountWithUnit(u.amount, u.unit)}`
+
+/** The unit a provider reports in when the config names none, for saying that it did not: what its screen shows. */
 const UNIT_OF: Record<string, string> = { kiro: 'credits', copilot: 'AIC' }
+const unitOf = (provider: string) => helperEnv?.units[provider] ?? UNIT_OF[provider] ?? 'usage'
 
 /**
  * The one-line account of what was moved off Claude, or undefined when nothing was. A provider whose runs did not all
@@ -604,7 +685,7 @@ export const helperLine = (h: HelperTotals | undefined) => {
   const silent = Object.entries(runs)
     .filter(([provider, r]) => r.n > 0 && !used.some(u => u.provider === provider))
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([provider]) => `${cap(provider)}: ${UNIT_OF[provider] ?? 'usage'} not reported`)
+    .map(([provider]) => `${providerLabel(provider)}: ${unitOf(provider)} not reported`)
   const head = `${h.steps} helper step${h.steps === 1 ? '' : 's'}${h.ms > 0 ? `, ${fmtMin(h.ms)}` : ''}`
 
   return `Moved off Claude: ${[head, ...parts, ...silent].join('; ')}`
@@ -613,7 +694,7 @@ export const helperLine = (h: HelperTotals | undefined) => {
 /** A helper step's usage and time for its card: "30.04 AIC · 12 min", or when it started while it runs. */
 export const helperFacts = (s: Step) => {
   const parts: string[] = []
-  if (s.helperUsage && s.helperUsage.amount > 0) parts.push(`${fmtAmount(s.helperUsage.amount)} ${s.helperUsage.unit}`)
+  if (s.helperUsage && s.helperUsage.amount > 0) parts.push(amountWithUnit(s.helperUsage.amount, s.helperUsage.unit))
   if (runSpan(s) > 0) parts.push(fmtMin(runSpan(s)))
   else if (s.startedAt && s.status !== 'done') {
     parts.push(`started ${new Date(s.startedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`)
@@ -998,7 +1079,7 @@ export const helperSuggestions = (h: readonly HistoryEntry[], set: Settings, cfg
 
     return judgeRuns(xs, label, helperStep(ladder, from, 1), helperStep(ladder, from, -1))
   }
-  for (const provider of helperProviders(cfg, set)) {
+  for (const provider of helperProviders(cfg, set).filter(p => !cfg.providers[p]?.self)) {
     for (const tier of helperTierNames(cfg, provider)) {
       const now = helperTierRung(cfg, provider, tier)!
       const xs = runs.filter(x => !x.kind && x.helper === `${provider}-${tier}` && sameChoice(helperRungOf(x, cfg), { provider, ...now }))
@@ -1011,7 +1092,7 @@ export const helperSuggestions = (h: readonly HistoryEntry[], set: Settings, cfg
     const own = set.helpers.kinds[kind]
     const groups = own
       ? [{ provider: own.provider, tier: undefined as string | undefined, from: { model: own.model, effort: own.effort }, xs: mine.filter(x => sameChoice(helperRungOf(x, cfg), own)) }]
-      : helperProviders(cfg, set)
+      : helperProviders(cfg, set).filter(p => !cfg.providers[p]?.self)
           .flatMap(provider =>
             helperTierNames(cfg, provider).map(tier => {
               const now = helperTierRung(cfg, provider, tier)!
@@ -1068,7 +1149,7 @@ export const learnedHelpers = (h: readonly HistoryEntry[], set: Settings, cfg: H
  */
 export const helperPickFor = (s: Step, set: Settings, learned: HelperLearned | undefined, cfg: HelperConfig | undefined): Omit<HelperPick, 'template' | 'error'> | undefined => {
   if (s.group || s.where !== 'helper' || s.status !== 'planned' || s.helper || !s.kind || !cfg) return undefined
-  const allowed = providersOf(helperList(set, s.tier)).filter(p => cfg.providers[p])
+  const allowed = providersOf(helperList(set, s.tier)).filter(p => cfg.providers[p] && !cfg.providers[p]!.self)
   const auto = (learned?.[s.kind] ?? []).filter(c => allowed.includes(c.provider)).sort((a, b) => allowed.indexOf(a.provider) - allowed.indexOf(b.provider))[0]
   if (auto) return { provider: auto.provider, model: auto.model, effort: auto.effort, source: 'auto', n: auto.n }
   const own = set.helpers.kinds[s.kind]
