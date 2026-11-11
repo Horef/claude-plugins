@@ -12,6 +12,10 @@
       "command": "kiro-cli chat --v3 --trust-workspace --model {model} --effort {effort}",
       "efforts": ["low", "medium", "high", "xhigh", "max"],
       "note": "Approve-for-me permissions.",
+      "order": 10,
+      "unit": "credits",
+      "login_check": ["kiro-cli", "whoami"],
+      "usage_screen": {"pattern": "Credits:\\s*turn\\s*[\\d.]+\\s*\\S\\s*session\\s*([\\d.]+)", "unit": "credits"},
       "models_source": "kiro-list",
       "tiers": {
         "light": {"model": "claude-haiku-5.5", "effort": "low"},
@@ -25,6 +29,9 @@
       "command": "copilot --no-ask-user --model {model} --reasoning-effort {effort}",
       "efforts": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
       "note": "Assisted permissions. No status reports: hc wait cannot see it.",
+      "order": 20,
+      "unit": "AIC",
+      "usage_screen": {"pattern": "Session:\\s*([\\d.]+)\\s*AIC used|AI Credits\\s+([\\d.]+)", "unit": "AIC"},
       "models_source": "copilot-acp",
       "tiers": {
         "light": {"model": "gpt-6-luna", "effort": "high"},
@@ -32,13 +39,33 @@
         "deep": {"model": "claude-opus-5.5", "effort": "high"},
         "argon": {"model": "gemini-4-argon", "effort": "high"},
         "fusion-high": {
+          "opt_in": "fusion",
+          "rank": 2,
           "command": "COPILOT_CLI_ENABLED_FEATURE_FLAGS=DYNAMIC_AUTO_TIERS,HYDRAFUSION,HYDRAFUSION_ROLLOUT,HYDRAFUSION_PLAN_V2 copilot --no-ask-user --model auto --auto-tier hydrafusion",
           "description": "Copilot helper on Copilot Fusion High (a router across Claude and GPT-6 models; effort chosen per step, not settable). Opt-in, not in any default order. Assisted permissions. No status reports."
         },
         "fusion-max": {
+          "opt_in": "fusion",
+          "rank": 1,
           "command": "COPILOT_CLI_ENABLED_FEATURE_FLAGS=DYNAMIC_AUTO_TIERS,HYDRAFUSION,HYDRAFUSION_ROLLOUT,HYDRAFUSION_PLAN_V2 copilot --no-ask-user --model auto --auto-tier hydrafusion-max",
           "description": "Copilot helper on Copilot Fusion Max (a router across Claude and GPT-6 models; effort chosen per step, not settable). Opt-in, not in any default order. Assisted permissions. No status reports."
         }
+      }
+    },
+    "codex": {
+      "cli": "codex",
+      "label": "Codex",
+      "command": "codex --no-daemon --model {model} -c model_reasoning_effort={effort} --approve-for-me",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "note": "Automatic approval review (--approve-for-me) in a workspace-write sandbox.",
+      "order": 30,
+      "unit": "% of 7d",
+      "quota_source": "codex",
+      "models_source": "codex-models",
+      "tiers": {
+        "light": {"model": "gpt-6-luna", "effort": "low"},
+        "standard": {"model": "gpt-6-luna", "effort": "high"},
+        "deep": {"model": "gpt-6-luna", "effort": "xhigh"}
       }
     },
     "agy": {
@@ -49,13 +76,32 @@
       "settings_note": "Auto mode is still a rollout (agy says \"--mode auto is not available for this account\" and falls back to asking for every command), so the template passes a read-only allowlist with --settings; everything else still asks the lead.",
       "model_id": "{model}-{effort}",
       "efforts": ["low", "medium", "high"],
-      "note": "Personal subscription: small quota, use after Kiro and Copilot.",
+      "note": "Provider with a small quota: used after the bigger ones.",
+      "order": 40,
+      "tier_order": {"argon": 5},
+      "unit": "% of weekly",
+      "usage_source": "agy-weekly",
       "models_source": "agy-list",
       "tiers": {
         "light": {"model": "gemini-3.8-flash", "effort": "high"},
         "standard": {"model": "claude-sonnet-5-5", "effort": "high"},
         "deep": {"model": "claude-opus-5-5", "effort": "high"},
         "argon": {"model": "gemini-4-argon", "effort": "high"}
+      }
+    }
+  },
+  "kind_defaults": {
+    "claude": {
+      "cli": "claude",
+      "command": "CLAUDE_CONFIG_DIR={config_dir} claude --model {model} --effort {effort} --permission-mode auto",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "note": "Auto permission mode: Claude's own classifier acts as the judge.",
+      "order": 50,
+      "unit": "% of 7d",
+      "tiers": {
+        "light": {"model": "haiku", "effort": "high"},
+        "standard": {"model": "sonnet", "effort": "high"},
+        "deep": {"model": "opus", "effort": "high"}
       }
     }
   },

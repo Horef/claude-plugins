@@ -17,4 +17,4 @@ symbols of the repo).
 - `sciencefig.dynamics` — imported by 5
 - `sciencefig.anatomy` — imported by 3
 - `sciencefig` — imported by 3
-- `browser` — imported by 3
+- `helpers` — imported by 3

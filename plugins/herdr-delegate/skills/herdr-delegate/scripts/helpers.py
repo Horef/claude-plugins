@@ -10,15 +10,21 @@
   helpers.py prompt <name> [<name> ...]         print any permission prompt a helper's screen is waiting on
   helpers.py usage <name>                       the helper's session usage as JSON {provider, amount, unit}; run before hc kill
 
-  helpers.py config                             the effective config (default + your overrides) as JSON
+  helpers.py config [--json]                    the effective config (default + your overrides) as JSON, each provider with
+                                                kind, config_dir, label, unit, order, cli_found, self; plus default_orders per tier
+  helpers.py account add <name> <config_dir> [--label L]   a Claude Code helper under another account (CLAUDE_CONFIG_DIR)
+  helpers.py account rm <name> | account list   remove one / list the accounts, their quota readings and which is this session's
   helpers.py render [--check] [--force]         write ~/.config/herdr-core/templates from the config
   helpers.py set <provider> <tier> [model=X] [effort=Y] [--force]   change a tier's model/effort, then render
   helpers.py custom <provider> model=X effort=Y [--force]   render a one-off <provider>-<model>-<effort> template, print its name
   helpers.py custom [--prune]                   list custom templates, or forget them all
   helpers.py models [provider]                  ask the installed CLIs which models they offer; report gaps and newer ones
 
-Config: helpers.default.json (shipped next to SKILL.md) merged under ~/.config/herdr-delegate/helpers.json
-(only your overrides). Per provider: cli, command with {model} {effort} {model_id}, efforts, tiers.
+Config: helpers.default.json (shipped next to SKILL.md) merged under $XDG_CONFIG_HOME/herdr-delegate/helpers.json
+(default ~/.config; only your overrides). Per provider: cli, command with {model} {effort} {model_id} {config_dir},
+efforts, tiers, order (default pick order, lowest first; `tier_order` per tier), unit (what `usage` reports), and
+optional sources that make a provider plug in: login_check, usage_screen, usage_source, quota_source, models_source.
+A provider with kind "claude" and a config_dir is Claude Code under another account (see `account`).
 A template is usable when its file is in ~/.config/herdr-core/templates, its CLI is on
 PATH, and its provider (the name before the first '-') has no quota or login mark in force.
 Quota marks expire on their date by themselves; login marks last until `back`, or until
@@ -29,9 +35,11 @@ see it blocked) and exits 0 when at least one is waiting on an approval, 1 when 
 Rendered templates carry a `generated-by: herdr-delegate` line; render never touches a template without it unless --force.
 """
 import datetime as dt
+import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -61,19 +69,46 @@ def user_config_file():
 def models_file():
     return cfg_home() / "herdr-delegate" / "models.json"
 
-# Kiro, then Copilot (bigger quotas, monthly reset), then agy (a small personal plan),
-# at every tier: agy only when both others are out.
-ORDER = {
-    "light": ["kiro-light", "copilot-light", "agy-light"],
-    "standard": ["kiro-standard", "copilot-standard", "agy-standard"],
-    "deep": ["kiro-deep", "copilot-deep", "agy-deep"],
-    # agy first: the owner's Copilot plan lacks gemini-4-argon and silently falls back to
-    # Sonnet (O7), which defeats the point of a second model family.
-    "argon": ["agy-argon", "copilot-argon"],
-    # Opt-in only (the owner's choice, 2026-11-01): Copilot Fusion is a router, not a
-    # pinned model, and its quality per tier is unmeasured; never in the tier orders above.
-    "fusion": ["copilot-fusion-max", "copilot-fusion-high"],
-}
+NAME_OK = re.compile(r"[a-z][a-z0-9]*")  # a provider is the template name before the first '-'
+
+
+def provider_order(prov):
+    return prov.get("order", 100)
+
+
+def tier_names(cfg, group):
+    """Template names for a tier (or an opt-in group such as fusion), best first.
+
+    Providers sort by their `order` (a provider's `tier_order` can move it for one tier); a tier entry
+    with `opt_in: <group>` is in no tier's default order and is reached only by `pick <group>`.
+    """
+    rows = []
+    for pname, prov in cfg.get("providers", {}).items():
+        if not NAME_OK.fullmatch(pname):
+            continue
+        for tier, entry in prov.get("tiers", {}).items():
+            opt = entry.get("opt_in")
+            if opt and opt == group:
+                rows.append(((provider_order(prov), entry.get("rank", 0), pname), f"{pname}-{tier}"))
+            elif not opt and tier == group:
+                rows.append(((prov.get("tier_order", {}).get(tier, provider_order(prov)), 0, pname), f"{pname}-{tier}"))
+    return [name for _, name in sorted(rows)]
+
+
+class _Orders:
+    """ORDER[tier]: the default pick order for a tier, computed from the effective config."""
+
+    def get(self, tier, default=None):
+        return tier_names(effective_config(), tier) or default
+
+    def __getitem__(self, tier):
+        got = self.get(tier)
+        if got is None:
+            raise KeyError(tier)
+        return got
+
+
+ORDER = _Orders()
 
 
 def load():
@@ -98,12 +133,9 @@ def is_out(state, provider, today):
     return bool(until) and today < dt.date.fromisoformat(until)
 
 
-# Providers whose login can be checked: a login mark clears itself once this succeeds.
-LOGIN_CHECK = {"kiro": ["kiro-cli", "whoami"]}
-
-
 def logged_in(provider):
-    cmd = LOGIN_CHECK.get(provider)
+    """True when the provider's `login_check` command (config) succeeds; a login mark clears itself then."""
+    cmd = effective_config().get("providers", {}).get(provider, {}).get("login_check")
     if not cmd or not shutil.which(cmd[0]):
         return False
     try:
@@ -128,17 +160,223 @@ def command_of(name):
     try:
         for line in (templates_dir() / f"{name}.md").read_text().splitlines():
             if line.startswith("command:"):
-                # Skip leading VAR=value assignments (the Fusion templates set feature flags).
-                words = [w for w in line.split(":", 1)[1].split() if "=" not in w]
+                text = line.split(":", 1)[1]
+                try:
+                    words = shlex.split(text)
+                except ValueError:
+                    words = text.split()
+                # Skip leading VAR=value assignments (Fusion's feature flags, a Claude account's CLAUDE_CONFIG_DIR).
+                words = [w for w in words if not re.match(r"[A-Za-z_]\w*=", w)]
                 return words[0] if words else None
     except OSError:
         return None
     return None
 
 
-def usable(name, state, today):
+# ---------------------------------------------------------------- Claude accounts, quota readings
+
+def home():
+    return Path(os.path.expanduser("~"))
+
+
+def written_dir(path):
+    """A config dir as Claude Code sees it: tilde expanded, no trailing slash."""
+    text = os.path.expanduser(path)
+    return text.rstrip("/") or "/"
+
+
+def account_key(written):
+    """"default" for ~/.claude, else the first 8 hex of sha256 of the dir as written (Claude Code's Keychain suffix)."""
+    written = written_dir(written)
+    if os.path.realpath(written) == os.path.realpath(home() / ".claude"):
+        return "default"
+    return hashlib.sha256(written.encode()).hexdigest()[:8]
+
+
+def session_dir():
+    """This session's Claude config dir as written ($CLAUDE_CONFIG_DIR, else ~/.claude)."""
+    return os.environ.get("CLAUDE_CONFIG_DIR") or str(home() / ".claude")
+
+
+def is_self(prov):
+    """True for a kind=claude provider whose config dir is the current session's own."""
+    if prov.get("kind") != "claude" or not prov.get("config_dir"):
+        return False
+    return os.path.realpath(written_dir(prov["config_dir"])) == os.path.realpath(written_dir(session_dir()))
+
+
+def accounts_dir():
+    return cfg_home() / "claude-accounts"
+
+
+def dir_label(written):
+    """The default label of a config dir: its basename without a leading .claude- / .claude, "main" for ~/.claude."""
+    if account_key(written) == "default":
+        return "main"
+    base = os.path.basename(written_dir(written))
+    for lead in (".claude-", ".claude"):
+        if base.startswith(lead) and len(base) > len(lead):
+            return base[len(lead):]
+    return base.lstrip(".") or "account"
+
+
+def now_utc():
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def iso_epoch(text):
+    return dt.datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+
+
+def read_account(key):
+    """A readings file as {five_hour, seven_day: (percent, resets_at epoch)}, or None when absent or unreadable."""
+    data = read_json(accounts_dir() / f"{key}.json", None)
+    if not isinstance(data, dict):
+        return None
+    got = {}
+    try:
+        for win in ("five_hour", "seven_day"):
+            w = data.get(win)
+            if isinstance(w, dict) and "percent" in w:
+                got[win] = (float(w["percent"]), iso_epoch(w["resets_at"]) if w.get("resets_at") else None)
+    except (ValueError, TypeError):
+        return None
+    return got or None
+
+
+def effective_percent(window, now):
+    """A window's percent, or 0 once its reset time has passed."""
+    percent, resets = window
+    return 0.0 if resets is not None and resets <= now else percent
+
+
+LIMITS = {"five_hour": 95.0, "seven_day": 98.0}
+
+
+def reading_blocked(reading, now):
+    """When a reading says 5h >= 95 % or 7d >= 98 % (not yet reset): the reset time as text, else None."""
+    for win, limit in LIMITS.items():
+        w = reading.get(win)
+        if w and effective_percent(w, now) >= limit:
+            return dt.datetime.fromtimestamp(w[1], dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if w[1] else "its reset"
+    return None
+
+
+def codex_home():
+    return Path(os.environ.get("CODEX_HOME") or home() / ".codex")
+
+
+def codex_windows(items):
+    """[(percent, window seconds, resets epoch)] -> {five_hour, seven_day}: a window of 6 h or less is the 5h one, the longest the other."""
+    items = sorted((i for i in items if i[0] is not None), key=lambda i: i[1] or 0)
+    got = {}
+    if items and (items[0][1] or 0) <= 6 * 3600:
+        got["five_hour"] = (float(items[0][0]), items[0][2])
+        items = items[1:]
+    if items:
+        got["seven_day"] = (float(items[-1][0]), items[-1][2])
+    return got
+
+
+def parse_wham(data):
+    """{five_hour, seven_day} from the usage endpoint's JSON (rate_limit.primary_window / secondary_window)."""
+    rl = (data or {}).get("rate_limit") or {}
+    items = []
+    for key in ("primary_window", "secondary_window"):
+        w = rl.get(key)
+        if isinstance(w, dict) and w.get("used_percent") is not None:
+            items.append((w["used_percent"], w.get("limit_window_seconds"), w.get("reset_at")))
+    got = codex_windows(items)
+    if rl.get("limit_reached") is True and "seven_day" not in got:
+        got["seven_day"] = (100.0, items[-1][2] if items else None)
+    return got
+
+
+def parse_rollout_line(line):
+    """{five_hour, seven_day} from a Codex session-file line carrying rate_limits (resets_at in unix seconds)."""
+    try:
+        rl = (json.loads(line).get("payload") or {}).get("rate_limits") or {}
+    except (ValueError, AttributeError):
+        return {}
+    items = []
+    for key in ("primary", "secondary"):
+        w = rl.get(key)
+        if isinstance(w, dict) and w.get("used_percent") is not None:
+            items.append((w["used_percent"], (w.get("window_minutes") or 0) * 60, w.get("resets_at")))
+    return codex_windows(items)
+
+
+def codex_live():
+    try:
+        tokens = json.loads((codex_home() / "auth.json").read_text())["tokens"]
+        import urllib.request
+        req = urllib.request.Request("https://chatgpt.com/backend-api/wham/usage", headers={
+            "Authorization": "Bearer " + tokens["access_token"], "ChatGPT-Account-Id": tokens["account_id"],
+            "User-Agent": "herdr-delegate"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return parse_wham(json.load(r))
+    except Exception:  # noqa: BLE001 - no login, offline or a changed endpoint all mean: use the session files
+        return {}
+
+
+def codex_sessions(limit=6):
+    """The newest rate-limit figures in the latest few Codex session files (tail of each)."""
+    files = sorted((codex_home() / "sessions").glob("**/rollout-*.jsonl"), reverse=True)[:limit]
+    for f in files:
+        try:
+            with open(f, "rb") as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - 1_000_000))
+                lines = fh.read().decode("utf-8", "replace").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            if '"rate_limits"' in line:
+                got = parse_rollout_line(line)
+                if got:
+                    return got
+    return {}
+
+
+# Quota sources a provider names with `quota_source` (kind "claude" implies claude-readings):
+# name -> function(provider config) -> {five_hour, seven_day: (percent, resets epoch)} or {}.
+QUOTA_SOURCES = {
+    "claude-readings": lambda prov: read_account(account_key(prov["config_dir"])) or {},
+    "codex": lambda prov: codex_live() or codex_sessions(),
+}
+
+
+def quota_source(prov):
+    return prov.get("quota_source") or ("claude-readings" if prov.get("kind") == "claude" and prov.get("config_dir") else None)
+
+
+def provider_quota(prov):
+    fn = QUOTA_SOURCES.get(quota_source(prov) or "")
+    return fn(prov) if fn else {}
+
+
+def unusable_reason(provider, cfg=None, now=None):
+    """Why a provider cannot take work, from the config and its quota reading (this account, out), or None."""
+    try:
+        prov = (cfg or effective_config()).get("providers", {}).get(provider)
+        if not prov:
+            return None
+        if is_self(prov):
+            return "this account"
+        if quota_source(prov):
+            until = reading_blocked(provider_quota(prov), (now or now_utc()).timestamp())
+            if until:
+                return f"out of quota until {until} (its quota reading)"
+    except Exception:  # noqa: BLE001 - a broken reading must never stop pick
+        return None
+    return None
+
+
+def usable(name, state, today, check_config=True):
     cli = command_of(name)
-    return bool(cli) and shutil.which(cli) is not None and not is_out(state, name.split("-")[0], today)
+    provider = name.split("-")[0]
+    return (bool(cli) and shutil.which(cli) is not None and not is_out(state, provider, today)
+            and (not check_config or unusable_reason(provider) is None))
 
 
 # A pending approval box: a question, then a numbered option list and the key help line.
@@ -177,28 +415,68 @@ def prompts(names):
     return 0 if found else 1
 
 
-# What a helper used, read from its screen (measured 2026-11-08). Kiro prints a line after
-# every turn, the session figure running; Copilot keeps a running total in its status bar and
-# prints a summary on exit. The last match on the screen is the current one. agy shows none on
-# screen, but `agy -p /usage --output-format json` gives each model group's remaining weekly
-# fraction: `pick` saves a snapshot when it picks an agy template and `usage` reports the
-# drop since then, in percentage points of that group's weekly limit (measured 2026-11-09).
-# Two agy helpers running at once share a group, so their figures overlap.
-USAGE = {
-    "kiro": (re.compile(r"Credits:\s*turn\s*[\d.]+\s*\S\s*session\s*([\d.]+)"), "credits"),
-    "copilot": (re.compile(r"Session:\s*([\d.]+)\s*AIC used|AI Credits\s+([\d.]+)"), "AIC"),
-}
-
-
+# What a helper used. A provider's `usage_source` says how: "screen" (default when it has a
+# `usage_screen` {pattern, unit} in the config), "agy-weekly" or "quota-delta".
+# Screen (measured 2026-11-08): Kiro prints a line after every turn, the session figure running;
+# Copilot keeps a running total in its status bar and prints a summary on exit. The last match
+# on the screen is the current one.
+# agy-weekly: agy shows none on screen, but `agy -p /usage --output-format json` gives each model
+# group's remaining weekly fraction: `pick` saves a snapshot when it picks an agy template and
+# `usage` reports the drop since then, in percentage points of that group's weekly limit
+# (measured 2026-11-09). Two agy helpers running at once share a group, so their figures overlap.
+# quota-delta (kind "claude" accounts, Codex): the rise of the provider's 7d percent since the
+# snapshot `pick` saved.
 def usage_of(provider, screen):
     """{provider, amount, unit} from the last usage line on a helper's screen, or None (none shown, or 0)."""
-    known = USAGE.get(provider)
+    known = effective_config().get("providers", {}).get(provider, {}).get("usage_screen")
     if not known:
         return None
-    pattern, unit = known
+    pattern = re.compile(known["pattern"])
     found = [next(g for g in m.groups() if g) for m in pattern.finditer(screen)]
     amount = float(found[-1]) if found else 0.0
-    return {"provider": provider, "amount": amount, "unit": unit} if amount > 0 else None
+    return {"provider": provider, "amount": amount, "unit": known["unit"]} if amount > 0 else None
+
+
+def usage_source(prov):
+    return prov.get("usage_source") or ("quota-delta" if quota_source(prov) else "screen")
+
+
+def quota_snapshot_file():
+    return cfg_home() / "herdr-delegate" / "quota-snapshots.json"
+
+
+def seven_day_percent(prov, now=None):
+    got = provider_quota(prov).get("seven_day")
+    return round(effective_percent(got, (now or now_utc()).timestamp()), 2) if got else None
+
+
+def quota_mark(provider, prov):
+    """Save the provider's 7d percent before a helper starts (called by pick)."""
+    snaps = read_json(quota_snapshot_file(), {})
+    now = seven_day_percent(prov)
+    if now is None:
+        snaps.pop(provider, None)
+    else:
+        snaps[provider] = {"time": time.time(), "seven_day": now}
+    write_json(quota_snapshot_file(), snaps)
+
+
+def quota_usage(provider, prov):
+    """{provider, amount, unit}: the 7d percent-point rise since the snapshot, or None when unknown or not positive."""
+    before = read_json(quota_snapshot_file(), {}).get(provider, {}).get("seven_day")
+    now = seven_day_percent(prov)
+    if before is None or now is None or now - before <= 0:
+        return None
+    return {"provider": provider, "amount": round(now - before, 2), "unit": prov.get("unit") or "% of 7d"}
+
+
+def mark_usage(provider, prov):
+    """What `pick` records before a helper of this provider starts, so `usage` can report the difference."""
+    source = usage_source(prov)
+    if source == "agy-weekly":
+        agy_mark()
+    elif source == "quota-delta":
+        quota_mark(provider, prov)
 
 
 def agy_snapshot_file():
@@ -260,8 +538,10 @@ def usage_cmd(name):
     except ValueError:
         template = ""
     provider = (template or name).split("-")[0]
-    if provider == "agy":
-        used = agy_usage(template or name)
+    prov = effective_config().get("providers", {}).get(provider, {})
+    source = usage_source(prov)
+    if source in ("agy-weekly", "quota-delta"):
+        used = agy_usage(template or name) if source == "agy-weekly" else quota_usage(provider, prov)
         if not used:
             return 1
         print(json.dumps(used))
@@ -310,8 +590,21 @@ def load_user_config():
     return data if isinstance(data, dict) else {}
 
 
+def with_kind_defaults(cfg):
+    """Fill each provider of a kind (e.g. "claude") from cfg["kind_defaults"][kind]; the provider's own keys win."""
+    kinds = cfg.get("kind_defaults", {})
+    for pname, prov in cfg.get("providers", {}).items():
+        if isinstance(prov, dict) and prov.get("kind") in kinds:
+            cfg["providers"][pname] = deep_merge(kinds[prov["kind"]], prov)
+    return cfg
+
+
+def merged_config(user):
+    return with_kind_defaults(deep_merge(json.loads((SKILL / "helpers.default.json").read_text()), user))
+
+
 def effective_config():
-    return deep_merge(json.loads((SKILL / "helpers.default.json").read_text()), load_user_config())
+    return merged_config(load_user_config())
 
 
 def slug(text):
@@ -330,8 +623,9 @@ def settings_file(pname):
 
 
 def command_for(pname, prov, model, effort):
+    config_dir = shlex.quote(written_dir(prov["config_dir"])) if prov.get("config_dir") else ""
     return fill(prov["command"], model=model, effort=effort, model_id=full_model_id(prov, model, effort),
-                settings=str(settings_file(pname)))
+                settings=str(settings_file(pname)), config_dir=config_dir)
 
 
 def write_settings(cfg):
@@ -351,6 +645,9 @@ def template_specs(cfg):
     specs = {}
     texts = cfg.get("tier_text", {})
     for pname, prov in cfg.get("providers", {}).items():
+        if not NAME_OK.fullmatch(pname):
+            print(f"warning: provider name {pname!r} ignored: use lowercase letters and digits only, starting with a letter", file=sys.stderr)
+            continue
         for tier, entry in prov.get("tiers", {}).items():
             name = f"{pname}-{tier}"
             model, effort = entry.get("model", ""), entry.get("effort", "")
@@ -361,14 +658,15 @@ def template_specs(cfg):
                 command = command_for(pname, prov, model, effort)
                 fixed = False
             text = f": {texts[tier]}" if tier in texts else ""
-            desc = entry.get("description") or f"{prov.get('label', pname)} helper, {tier} tier ({model} {effort}){text}. {prov.get('note', '')}".strip()
+            who = f"Claude Code ({prov.get('label', pname)})" if prov.get("kind") == "claude" else f"{prov.get('label', pname)} helper"
+            desc = entry.get("description") or f"{who}, {tier} tier ({model} {effort}){text}. {prov.get('note', '')}".strip()
             specs[name] = dict(provider=pname, tier=tier, model=model, effort=effort, command=command,
                                description=desc, custom=False, fixed=fixed)
     for entry in cfg.get("custom", []):
         pname, model, effort = entry.get("provider"), entry.get("model", ""), entry.get("effort", "")
         prov = cfg.get("providers", {}).get(pname)
         name = f"{pname}-{slug(model)}-{effort}"
-        if not prov or name in specs:
+        if not prov or name in specs or not NAME_OK.fullmatch(pname):
             continue
         command = command_for(pname, prov, model, effort)
         desc = f"{prov.get('label', pname)} helper, custom ({model} {effort}). {prov.get('note', '')}".strip()
@@ -567,7 +865,14 @@ def fetch_kiro(cli):
     return parse_kiro(text), parse_kiro_credits(text)
 
 
+def parse_codex(text):
+    """`codex debug models`: JSON {"models": [{"slug", "visibility"}]}; keep the ones listed to users."""
+    return [m["slug"] for m in json.loads(text).get("models", []) if m.get("visibility") == "list" and m.get("slug")]
+
+
+# Model sources a provider names with `models_source`: name -> function(cli) -> ids, or (ids, credits).
 FETCHERS = {
+    "codex-models": lambda cli: parse_codex(run_text([cli, "debug", "models"], timeout=60)),
     "kiro-list": fetch_kiro,
     "agy-list": lambda cli: parse_agy(run_text([cli, "models"])),
     "copilot-acp": fetch_acp,
@@ -734,7 +1039,7 @@ def set_cmd(args):
     user = load_user_config()
     entry = user.setdefault("providers", {}).setdefault(provider, {}).setdefault("tiers", {}).setdefault(tier, {})
     entry.update(kv)
-    cfg = deep_merge(json.loads((SKILL / "helpers.default.json").read_text()), user)
+    cfg = merged_config(user)
     got = cfg["providers"][provider].get("tiers", {}).get(tier, {})
     if "command" in got:
         errors = [f"{provider}-{tier} has a fixed command (a router); edit its command in {user_config_file()} instead"]
@@ -797,16 +1102,112 @@ def custom_cmd(args):
     if entry not in user.setdefault("custom", []):
         user["custom"].append(entry)
         write_json(user_config_file(), user)
-    cfg = deep_merge(json.loads((SKILL / "helpers.default.json").read_text()), user)
+    cfg = merged_config(user)
     plan = compute(cfg, only={name})
     apply_plan(cfg, plan)
     print(name)
     return 0
 
 
+def provider_view(prov):
+    """A provider's config plus the derived fields other tools read: kind, config_dir, label, unit, order, cli_found, self."""
+    out = dict(prov)
+    out.update(kind=prov.get("kind", "cli"), config_dir=prov.get("config_dir"), label=prov.get("label"),
+               unit=prov.get("unit"), order=provider_order(prov),
+               cli_found=bool(shutil.which(prov.get("cli", ""))), self=is_self(prov))
+    return out
+
+
 def config_cmd():
-    print(json.dumps(effective_config(), indent=2, sort_keys=True))
+    """The effective config with derived provider fields and `default_orders` (per tier: installed providers other than this account's own)."""
+    cfg = effective_config()
+    views = {name: provider_view(prov) for name, prov in cfg.get("providers", {}).items()}
+    cfg["providers"] = views
+    groups = {t for prov in views.values() for t, e in prov.get("tiers", {}).items() if not e.get("opt_in")}
+    cfg["default_orders"] = {
+        t: [n for n in tier_names(cfg, t) if views[n.split("-")[0]]["cli_found"] and not views[n.split("-")[0]]["self"]]
+        for t in sorted(groups)}
+    cfg["session_account"] = {"config_dir": os.path.realpath(written_dir(session_dir())), "key": account_key(session_dir())}
+    print(json.dumps(cfg, indent=2, sort_keys=True))
     return 0
+
+
+def reading_text(reading):
+    now = now_utc().timestamp()
+    parts = [f"{label} {effective_percent(reading[win], now):.0f}%" for win, label in (("five_hour", "5h"), ("seven_day", "7d")) if win in reading]
+    return " ".join(parts) or "no reading"
+
+
+def account_cmd(args):
+    usage = "usage: helpers.py account add <name> <config_dir> [--label L] | account rm <name> | account list"
+    if not args:
+        print(usage, file=sys.stderr)
+        return 2
+    sub, rest = args[0], args[1:]
+    user = load_user_config()
+    if sub == "list":
+        cfg = effective_config()
+        found = False
+        for name, prov in cfg["providers"].items():
+            if prov.get("kind") != "claude":
+                continue
+            found = True
+            mark = "  (this account)" if is_self(prov) else ""
+            print(f"{name:12} {prov.get('label', ''):10} {prov.get('config_dir')}  key {account_key(prov['config_dir'])}  {reading_text(read_account(account_key(prov['config_dir'])) or {})}{mark}")
+        if not found:
+            print("no Claude accounts configured; add one with: helpers.py account add <name> <config_dir>")
+        return 0
+    if sub == "add":
+        label = None
+        if "--label" in rest:
+            i = rest.index("--label")
+            if i + 1 >= len(rest):
+                print(usage, file=sys.stderr)
+                return 2
+            label = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
+        if len(rest) != 2:
+            print(usage, file=sys.stderr)
+            return 2
+        name, config_dir = rest
+        if not NAME_OK.fullmatch(name):
+            print(f"error: name {name!r} must be lowercase letters and digits, starting with a letter (no '-': the name before the first '-' is the provider), e.g. claudeuni", file=sys.stderr)
+            return 1
+        existing = effective_config()["providers"].get(name)
+        if existing and existing.get("kind") != "claude":
+            print(f"error: {name!r} is already a {existing.get('label', name)} provider; pick another name", file=sys.stderr)
+            return 1
+        user.setdefault("providers", {})[name] = {"kind": "claude", "config_dir": config_dir.rstrip("/") or "/",
+                                                    "label": label or dir_label(config_dir)}
+        write_json(user_config_file(), user)
+        cfg = merged_config(user)
+        names = {f"{name}-{t}" for t in cfg["providers"][name].get("tiers", {})}
+        plan = compute(cfg, only=names)
+        for kind, n in plan:
+            print(LABEL_WRITE[kind].format(n=n))
+        apply_plan(cfg, plan)
+        if is_self(cfg["providers"][name]):
+            print(f"note: {config_dir} is this session's own account; pick skips it here and uses it from the other account")
+        return 0
+    if sub == "rm" and len(rest) == 1:
+        name = rest[0]
+        mine = user.get("providers", {}).get(name)
+        if not mine or mine.get("kind") != "claude":
+            print(f"error: {name!r} is not a Claude account in {user_config_file()}", file=sys.stderr)
+            return 1
+        del user["providers"][name]
+        if not user["providers"]:
+            del user["providers"]
+        write_json(user_config_file(), user)
+        cfg = merged_config(user)
+        plan = [p for p in compute(cfg, only=set(), orphans=True) if p[0] == "orphan" and p[1].startswith(f"{name}-")]
+        for kind, n in plan:
+            print(LABEL_WRITE[kind].format(n=n))
+        apply_plan(cfg, plan)
+        print(f"{name} removed")
+        return 0
+    print(usage, file=sys.stderr)
+    return 2
 
 
 def status_warnings(today):
@@ -837,13 +1238,18 @@ def main(argv, today=None):
     if cmd == "pick" and args:
         order = ORDER.get(args[0]) or [s.strip() for s in args[0].split(",") if s.strip()]
         absent = not_offered()
+        cfg = effective_config()
         for name in order:
             if name in absent:
                 print(f"skipped {name}: its model is not offered (last `helpers.py models`)", file=sys.stderr)
                 continue
-            if usable(name, state, today):
-                if name.split("-")[0] == "agy":
-                    agy_mark()
+            provider = name.split("-")[0]
+            why = unusable_reason(provider, cfg)
+            if why:
+                print(f"skipped {name}: {why}", file=sys.stderr)
+                continue
+            if usable(name, state, today, check_config=False):
+                mark_usage(provider, cfg.get("providers", {}).get(provider, {}))
                 print(name)
                 return 0
         return 1
@@ -874,16 +1280,24 @@ def main(argv, today=None):
             cli = command_of(mine[0]) if mine else None
             where = "installed" if cli and shutil.which(cli) else "not installed"
             quota = "ok"
+            prov = effective_config()["providers"].get(provider, {})
+            why = unusable_reason(provider)
             if state.get(provider) == "login":
                 quota = "needs login"
             elif is_out(state, provider, today):
                 quota = f"out until {state[provider]}"
+            elif why:
+                quota = why
+            elif quota_source(prov):
+                quota = "ok, " + reading_text(provider_quota(prov))
             print(f"{provider:10} {where:14} quota {quota:22} {', '.join(mine)}")
         for line in status_warnings(today):
             print(line)
         return 0
     if cmd == "config":
         return config_cmd()
+    if cmd == "account":
+        return account_cmd(args)
     if cmd == "render":
         return render_cmd(args)
     if cmd == "set":
