@@ -3,6 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
+import { helperList, helperOrder, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -1519,7 +1520,7 @@ test('advice for a kind that first reaches its threshold asks the lead, once, to
   const { store, step } = await boot($, on, [['history', [run(1, { verdict: 'weak' }), run(2, { verdict: 'ok' })]]], [
     { id: 'x1', description: '[r1] review' },
     { id: 'x2', description: '[r2] review' },
-  ])
+  ], new Map([[`${HOME}/.config/strange-loop/genome`, '/genome']]))
   await $.tool.call({
     tool: PLAN,
     steps: [
@@ -2457,4 +2458,135 @@ test('the rules send the lead to helpers.py usage, with the configured script wh
   const usage = JSON.stringify(tool.inputSchema.properties.done)
   expect(usage).toContain('helpers.py usage <name>')
   expect(usage).toContain('never send 0 or a guess')
+})
+
+// --- Other Claude accounts and Codex as helpers: orders, units and labels come from helpers.py's config ---
+
+const tiersOf = (m: string) => ({ light: { model: m, effort: 'low' }, standard: { model: m, effort: 'high' }, deep: { model: m, effort: 'high' } })
+const accountsConfig = () => ({
+  providers: {
+    kiro: { label: 'Kiro', cli_found: false, order: 10, unit: 'credits', tiers: tiersOf('k') },
+    copilot: { label: 'Copilot', cli_found: true, order: 20, unit: 'AIC', tiers: tiersOf('c') },
+    agy: { label: 'Antigravity', cli_found: true, order: 40, tiers: tiersOf('a') },
+    codex: { label: 'Codex', cli_found: true, order: 30, unit: '% of 7d', tiers: tiersOf('x') },
+    claudeuni: { kind: 'claude', config_dir: '~/.claude-uni', label: 'uni', cli_found: true, self: false, order: 50, unit: '% of 7d', tiers: tiersOf('haiku') },
+    claudemain: { kind: 'claude', config_dir: '~/.claude', label: 'main', cli_found: true, self: true, order: 50, unit: '% of 7d', tiers: tiersOf('haiku') },
+  },
+})
+
+test('default helper orders come from the config: by order, installed CLIs only, never this account; a stored order wins; no config, the old strings', () => {
+  const set = mergeSettings({})
+  try {
+    setHelperConfig(accountsConfig())
+    expect(helperList(set, 'light')).toEqual(['copilot-light', 'codex-light', 'agy-light', 'claudeuni-light'])
+    // Kiro is not installed: its templates are offered back, not tried.
+    expect(helpersOff(set, 'deep')).toEqual(['kiro-deep', 'claudemain-deep'])
+    // A stored order wins, and names this account as such.
+    const own = mergeSettings({ helpers: { tiers: { light: 'claudemain-light,kiro-light' } } as never })
+    expect(helperList(own, 'light')).toEqual(['claudemain-light', 'kiro-light'])
+    expect(helperOrder(own, 'light')).toBe('claudemain-light (this account) → kiro-light')
+    expect(helperList(own, 'deep')).toEqual(['copilot-deep', 'codex-deep', 'agy-deep', 'claudeuni-deep'])
+    // The order is the config's: a provider that moves up is tried first.
+    const moved = accountsConfig()
+    moved.providers.agy.order = 5
+    setHelperConfig(moved)
+    expect(helperList(set, 'standard')[0]).toBe('agy-standard')
+    // Copilot Fusion needs Copilot: with no installed Copilot a default order does not get it.
+    moved.providers.copilot.cli_found = false
+    setHelperConfig(moved)
+    expect(helperList(mergeSettings({ helpers: { fusion: 'both' } as never }), 'deep')).not.toContain('copilot-fusion-max')
+    expect(noHelperCli()).toBe(false)
+    const none = accountsConfig()
+    for (const p of Object.values(none.providers)) p.cli_found = false
+    setHelperConfig(none)
+    expect(noHelperCli()).toBe(true)
+  } finally {
+    setHelperConfig(undefined)
+  }
+  expect(helperList(set, 'light')).toEqual(['kiro-light', 'copilot-light', 'agy-light'])
+  expect(noHelperCli()).toBe(false)
+})
+
+test('helper usage in the config\'s units and labels: a percent unit follows its number and adds up per provider', () => {
+  const step = (id: string, helper: string, usage?: { provider: string; amount: number; unit: string }): Step => ({
+    id, title: id, tier: 'light', where: 'helper', status: 'done', usage: EMPTY_USAGE, cost: 0, mainCost: 0, reruns: 0, helper, ...(usage ? { helperUsage: usage } : {}),
+  })
+  const list = [
+    step('a', 'codex-light', { provider: 'codex', amount: 1.5, unit: '% of 7d' }),
+    step('b', 'codex-standard', { provider: 'codex', amount: 2, unit: '% of 7d' }),
+    step('c', 'claudeuni-light', { provider: 'claudeuni', amount: 0.5, unit: '% of 7d' }),
+    step('d', 'claudeuni-light'),
+    step('e', 'copilot-light', { provider: 'copilot', amount: 4, unit: 'AIC' }),
+  ]
+  const totals = helperTotalsOf(list)
+  expect(totals.usage).toEqual([
+    { provider: 'codex', amount: 3.5, unit: '% of 7d' },
+    { provider: 'claudeuni', amount: 0.5, unit: '% of 7d' },
+    { provider: 'copilot', amount: 4, unit: 'AIC' },
+  ])
+  expect(helperFacts(list[0]!)).toBe('1.5% of 7d')
+  expect(helperFacts(list[4]!)).toBe('4 AIC')
+  expect(helperLine(totals)).toBe('Moved off Claude: 5 helper steps; Claudeuni 0.5% of 7d (1 of 2 runs reported); Codex 3.5% of 7d; Copilot 4 AIC')
+  try {
+    setHelperConfig(accountsConfig())
+    expect(helperLine(totals)).toBe('Moved off Claude: 5 helper steps; Claude uni 0.5% of 7d (1 of 2 runs reported); Codex 3.5% of 7d; Copilot 4 AIC')
+    expect(helperLine(helperTotalsOf([step('f', 'agy-light'), step('g', 'claudeuni-light')]))).toBe('Moved off Claude: 2 helper steps; Antigravity: usage not reported; Claude uni: % of 7d not reported')
+  } finally {
+    setHelperConfig(undefined)
+  }
+})
+
+test('a Claude account helper\'s --effort and Codex\'s -c model_reasoning_effort are read as the template\'s thinking level', () => {
+  const tpl = (command: string) => `---\nname: x\ncommand: ${command}\n---\nbody`
+  expect(effortOfTemplate(tpl('CLAUDE_CONFIG_DIR=/h/.claude-uni claude --model haiku --effort xhigh --permission-mode auto'))).toBe('xhigh')
+  expect(effortOfTemplate(tpl('codex --no-daemon --model gpt-6 -c model_reasoning_effort=high --ask-for-approval on-request'))).toBe('high')
+  expect(effortOfTemplate(tpl('codex --model gpt-6 -c \'model_reasoning_effort="medium"\' --sandbox workspace-write'))).toBe('medium')
+  expect(effortOfTemplate(tpl('codex --model gpt-6 --config model_reasoning_effort=low'))).toBe('low')
+  expect(effortOfTemplate(tpl('codex --model gpt-6 --sandbox workspace-write'))).toBeUndefined()
+})
+
+test('with the config naming installed CLIs the rules list those, with this account marked; with none installed the rules and Settings say so', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  Object.assign(world.cfg, accountsConfig())
+  const { rows } = await boot($, on, [['settings', { helpers: { enabled: true, tiers: { standard: 'claudemain-standard,codex-standard' } } }]], [], files, world.setup)
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const rules = lastRow(rows)
+  expect(rules).toContain('light: copilot-light,codex-light,agy-light,claudeuni-light')
+  expect(rules).toContain('standard: claudemain-standard,codex-standard')
+  const planned = await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' }] } as never)
+  expect(String(planned.result)).toContain('helper (claudemain-standard (this account) → codex-standard)')
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^1\. claudemain \(this account\)$/))).toBeTruthy()
+  expect(await pane.find(text(/No helper CLI installed/))).toBeFalsy()
+  await pane.unmount()
+})
+
+test('with no helper CLI installed the rules do not mention helpers and Settings says so', async ($, on) => {
+  const files2 = new Map<string, string>()
+  const world2 = helperWorld(on, files2)
+  const none = accountsConfig()
+  for (const p of Object.values(none.providers)) p.cli_found = false
+  Object.assign(world2.cfg, none)
+  const second = await boot($, on, HELPERS, [], files2, world2.setup)
+  await $.turn.start({ text: 'first', turnId: 't1' })
+  expect(lastRow(second.rows)).not.toContain('runs a step on an agent from another subscription')
+  const pane2 = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane2.press({ key: 'settings' })
+  expect(await pane2.find(text(/No helper CLI installed/))).toBeTruthy()
+  await pane2.unmount()
+})
+
+test('without a strange-loop genome file on this machine, advice queues no strange-loop note and is not marked as noted', async ($, on) => {
+  const { store, step } = await boot($, on, [['history', [run(1, { verdict: 'weak' }), run(2, { verdict: 'ok' })]]], [
+    { id: 'x1', description: '[r1] review' },
+  ])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'r1', title: 'Review A', tier: 'light', where: 'agent', kind: 'code-review' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await step('t1', haikuUse, 'x1')
+  await end($, 'x1', 't1')
+  const res = await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'weak' }] } as never)
+  expect(String(res.result)).not.toContain('strange-loop')
+  expect(store.get('genomeNoted')).toBeUndefined()
 })

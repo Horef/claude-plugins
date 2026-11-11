@@ -49,6 +49,7 @@ import {
   helperSignature,
   helperTotalsOf,
   helpersOff,
+  helperEffective,
   hereNeeds,
   isDelegated,
   isHelperRun,
@@ -70,9 +71,11 @@ import {
   modelOf,
   moveHelper,
   newStep,
+  noHelperCli,
   nextRung,
   normKind,
   offeredModels,
+  orderIsCustom,
   parseHelperConfig,
   parseModelsCache,
   parseList,
@@ -84,6 +87,7 @@ import {
   runSpan,
   samePick,
   settleGroups,
+  setHelperConfig,
   stepChangeNote,
   trimDraft,
   VERSION,
@@ -91,6 +95,7 @@ import {
   rungStats,
   runsOn,
   suggestions,
+  templateLabel,
   templateOfRung,
   templateRung,
   verdictLine,
@@ -202,16 +207,23 @@ async function writeMirror($: EngineInterface) {
   }
 }
 
-const TEMPLATES = '.config/herdr-core/templates'
+/** The user's config directory: $XDG_CONFIG_HOME, else ~/.config. */
+const configBase = async ($: EngineInterface) => {
+  const xdg = await $.env.get('XDG_CONFIG_HOME')
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+  const base = xdg || (home ? `${home.replace(/[\\/]+$/, '')}/.config` : undefined)
+
+  return base ? base.replace(/[\\/]+$/, '') : undefined
+}
 
 /** The thinking level a helper's template sets (its `command:` line), or nothing: no home, no such template, or no level on it. */
 async function templateEffort($: EngineInterface, template: string) {
   try {
     if (!isTemplateName(template)) return undefined
-    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-    if (!home) return undefined
+    const base = await configBase($)
+    if (!base) return undefined
 
-    return effortOfTemplate(String(await $.fs.read(`${home.replace(/[\\/]+$/, '')}/${TEMPLATES}/${template}.md`)))
+    return effortOfTemplate(String(await $.fs.read(`${base}/herdr-core/templates/${template}.md`)))
   } catch {
     return undefined
   }
@@ -355,6 +367,17 @@ async function unitOf($: EngineInterface, kind: string) {
   return skills.includes(kind) ? kind : 'model-router'
 }
 
+/** Whether this machine has a strange-loop genome (the file ~/.config/strange-loop/genome that the note's command reads). */
+async function genomeKnown($: EngineInterface) {
+  try {
+    const base = await configBase($)
+
+    return !!base && (await readText($, `${base}/strange-loop/genome`)) !== undefined
+  } catch {
+    return false
+  }
+}
+
 /**
  * Advice for a kind that has just reached its threshold queues one router note asking the lead
  * to record a strange-loop observation (model-router O1): once per kind and direction, remembered.
@@ -370,6 +393,11 @@ async function noteForGenome($: EngineInterface) {
     const was = Array.isArray(stored) ? (stored as string[]) : await read($, genomeNoted)
     fresh = items.filter(a => !was.includes(keyOf(a)))
     if (fresh.length === 0) return
+    // The note's command runs the strange-loop genome's loop.py: with no genome file there is nothing to record into, and nothing is marked as noted.
+    if (!(await genomeKnown($))) {
+      fresh = []
+      return
+    }
     const next = [...was, ...fresh.map(keyOf)].slice(-500)
     if (ok) await $.store.set(STORE.genome, next)
     await update($, genomeNoted, () => next)
@@ -711,7 +739,7 @@ const firstLine = (text: string) =>
     ?.replace(/^error:\s*/i, '')
     .slice(0, 200) ?? ''
 
-/** helpers.py: the path set in Settings, else the newest installed herdr-delegate skill's (~/.claude/plugins/cache/<marketplace>/herdr-delegate/<version>/...). */
+/** helpers.py: the path set in Settings, else the newest installed herdr-delegate skill's (under $CLAUDE_CONFIG_DIR, default ~/.claude: plugins/cache/<marketplace>/herdr-delegate/<version>/...). */
 async function findHelpers($: EngineInterface, set: Settings): Promise<string | undefined> {
   if (set.helpers.script) return set.helpers.script
   try {
@@ -749,11 +777,9 @@ async function runHelpers($: EngineInterface, script: string, args: string[], ti
 }
 
 const modelsPath = async ($: EngineInterface) => {
-  const xdg = await $.env.get('XDG_CONFIG_HOME')
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-  const base = xdg || (home ? `${home.replace(/[\\/]+$/, '')}/.config` : undefined)
+  const base = await configBase($)
 
-  return base ? `${base.replace(/[\\/]+$/, '')}/herdr-delegate/models.json` : undefined
+  return base ? `${base}/herdr-delegate/models.json` : undefined
 }
 
 /** Reads helpers.py's effective config, the shipped defaults beside it and the model cache; run at the start, when Helpers go on, and after a change. */
@@ -764,6 +790,7 @@ async function loadHelperConfig($: EngineInterface) {
   const keep = (await read($, helperCfg)).warnings
   const script = await findHelpers($, set)
   if (!script) {
+    setHelperConfig(undefined)
     await update($, helperCfg, () => ({ status: 'missing', warnings: [] }))
     return
   }
@@ -771,16 +798,19 @@ async function loadHelperConfig($: EngineInterface) {
     const r = await runHelpers($, script, ['config'], 30_000)
     const config = r.exitCode === 0 ? parseHelperConfig(r.stdout) : undefined
     if (!config) {
+      setHelperConfig(undefined)
       const message = r.exitCode === 2 ? 'This helpers.py has no config command: update herdr-delegate to 0.6.0 or later.' : `helpers.py config failed: ${firstLine(r.stderr || r.stdout) || `exit ${r.exitCode}`}`
       await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message }))
       return
     }
+    setHelperConfig(config)
     const skill = script.replace(/[\\/]scripts[\\/][^\\/]*$/, '')
     const defaults = parseHelperConfig((await readText($, `${skill}/helpers.default.json`)) ?? '')
     const path = await modelsPath($)
     const models = path ? parseModelsCache((await readText($, path)) ?? '') : undefined
     await update($, helperCfg, () => ({ status: 'ready', script, config, ...(defaults ? { defaults } : {}), ...(models ? { models } : {}), warnings: keep }))
   } catch (err) {
+    setHelperConfig(undefined)
     await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
     return
   }
@@ -976,7 +1006,7 @@ async function registerPlanTool($: EngineInterface) {
               ? {
                   usage: {
                     type: 'object',
-                    description: 'A helper step\'s usage, exactly as `helpers.py usage <name>` printed it, e.g. {provider: "copilot", amount: 30.04, unit: "AIC"}. Leave it out when that printed nothing; never send 0 or a guess',
+                    description: 'A helper step\'s usage, exactly as `helpers.py usage <name>` printed it, e.g. {provider: "copilot", amount: 30.04, unit: "AIC"} or {provider: "codex", amount: 1.5, unit: "% of 7d"}. Leave it out when that printed nothing; never send 0 or a guess',
                     properties: { provider: { type: 'string' }, amount: { type: 'number' }, unit: { type: 'string' } },
                     required: ['provider', 'amount', 'unit'],
                   },
@@ -1068,8 +1098,8 @@ async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers'
 
 /** Switches a helper off, moves one, or puts one back, for a tier. */
 async function editHelperOrder($: EngineInterface, tier: Tier, fn: (list: string[]) => string) {
-  // Worked out from the settings as stored, not from this session's copy.
-  await editHelpers($, h => ({ tiers: { ...h.tiers, [tier]: fn(parseList(h.tiers[tier])) } }))
+  // Worked out from the settings as stored, not from this session's copy; a default order is first made explicit.
+  await editHelpers($, h => ({ tiers: { ...h.tiers, [tier]: fn(helperEffective({ helpers: h } as Settings, tier)) } }))
 }
 
 async function editHereEffort($: EngineInterface, patch: Partial<Settings['hereEffort']>) {
@@ -1175,18 +1205,20 @@ async function account($: EngineInterface, used: Usage, modelId: string, agentId
 const policy = (set: Settings, kinds: readonly string[] = []) => {
   const tiers = TIER_ORDER.map(t => `- ${t} (${rungLabel(set.tiers[t])}): ${TIER_USE[t]}`).join('\n')
   const skills = Object.entries(set.skills)
+  // With helpers on but no helper CLI installed, the rules do not advertise helpers or their orders.
+  const helpersLive = set.helpers.enabled && !noHelperCli()
   const skillRule = skills.length
-    ? `\n${set.helpers.enabled ? 7 : 6}. These skills run in a subagent on a tier: ${skills.map(([n, t]) => `${n} (${t})`).join(', ')}. To use one, delegate with the Agent tool, its description starting "[${SKILL_TAG}<name>]", and a brief that tells the subagent to invoke that skill with everything it needs from this conversation.`
+    ? `\n${helpersLive ? 7 : 6}. These skills run in a subagent on a tier: ${skills.map(([n, t]) => `${n} (${t})`).join(', ')}. To use one, delegate with the Agent tool, its description starting "[${SKILL_TAG}<name>]", and a brief that tells the subagent to invoke that skill with everything it needs from this conversation.`
     : ''
 
   const h = set.helpers
   const usageCmd = `python3 ${h.script ? h.script : `<the ${h.skill} skill's folder>/scripts/helpers.py`} usage <the helper's name>`
-  const helperRule = h.enabled
-    ? `\n6. where = "helper" runs a step on an agent from another subscription, through the ${h.skill} skill. ${
+  const helperRule = helpersLive
+    ? `\n6. where = "helper" runs a step on an agent from another subscription or account, through the ${h.skill} skill. ${
         h.use === 'all'
           ? 'Use it for every self-contained step that would otherwise be "agent".'
           : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
-      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')}. When a helper step's plan line says "launch <template>", the router chose that model and level for it (the template already exists): give the picker that template first, then the tier's order (pick <template>,<the order>), and launch what it prints. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself. Before you close the helper, run \`${usageCmd}\`: it prints the helper's usage as JSON {"provider","amount","unit"}, or nothing. Then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], passing that JSON as usage; leave usage out when it printed nothing, and never send 0 or a guess.`
+      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',') || 'none installed'}`).join('; ')}. When a helper step's plan line says "launch <template>", the router chose that model and level for it (the template already exists): give the picker that template first, then the tier's order (pick <template>,<the order>), and launch what it prints. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself. Before you close the helper, run \`${usageCmd}\`: it prints the helper's usage as JSON {"provider","amount","unit"}, or nothing. Then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], passing that JSON as usage; leave usage out when it printed nothing, and never send 0 or a guess.`
     : ''
 
   return `# Model routing (model-router mod)
@@ -1327,7 +1359,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     effort: set.tiers[t].effort !== D.tiers[t].effort,
     scope: set.tiers[t].scopeNote !== D.tiers[t].scopeNote,
   })
-  const orderDiffers = (t: Tier) => set.helpers.tiers[t] !== D.helpers.tiers[t]
+  const orderDiffers = (t: Tier) => orderIsCustom(set, t)
   const helperDiffers = (provider: string, tier: string) => helperTierDiffers(hcfg, hs.defaults, provider, tier)
   const helperModelsDiffer =
     set.helpers.enabled &&
@@ -2023,7 +2055,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             />
           )}
 
-          {group('Helpers', 'Run long self-contained steps on agents from other subscriptions (Kiro, Copilot, agy), started by a delegation skill. Needs that skill and herdr-core hc; with none usable, steps run as subagents.')}
+          {group('Helpers', `Run long self-contained steps on agents from other subscriptions or Claude accounts${hcfg ? ` (${Object.entries(hcfg.providers).map(([n, p]) => p.label ?? n).join(', ')})` : ''}, started by a delegation skill. Needs that skill and herdr-core hc; with none usable, steps run as subagents.`)}
+          {set.helpers.enabled && hs.status === 'ready' && noHelperCli() && (
+            <Text key="helpers-no-cli" color="warning" size="footnote" wrap="wrap">No helper CLI installed: helpers are off for now and the rules do not mention them.</Text>
+          )}
           {switchRow('helpers', 'Helpers (other subscriptions)', 'Let plans send steps to a helper.', set.helpers.enabled, () =>
             void editHelpers($, { enabled: !set.helpers.enabled }),
             differs.helpers,
@@ -2059,7 +2094,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   </Box>
                   {!mini && (
                     <Text dimColor size="footnote" wrap="wrap">
-                      GitHub's router across Claude and GPT models; tried before the pinned Copilot helper. Max is near Opus 5.5 at max effort for about half the cost; High is unmeasured.
+                      GitHub's router across Claude and GPT models; tried before the pinned Copilot helper. Measured 2026-11-01: Max is near Opus 5.5 at max effort for about half the cost; High is unmeasured.
                     </Text>
                   )}
                 </Box>
@@ -2093,7 +2128,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                     </Box>
                     {items.map((name, i) => (
                       <Box key={`helper:${t}:${name}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
-                        <Text size="footnote">{`${i + 1}. ${short(name)}`}</Text>
+                        <Text size="footnote">{`${i + 1}. ${templateLabel(name, short(name))}`}</Text>
                         {i > 0 && (
                           <Button key={`helper-up:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, -1))}>
                             ↑
@@ -2114,7 +2149,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                         <Text dimColor size="footnote">off:</Text>
                         {off.map(name => (
                           <Button key={`helper-on:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => [...l, name].join(','))}>
-                            {`+ ${short(name)}`}
+                            {`+ ${templateLabel(name, short(name))}`}
                           </Button>
                         ))}
                       </Box>
@@ -2427,6 +2462,7 @@ export const register: Register = on => {
       await update($, chatTotals, t => ({ ...t, helper: moved }))
     }
     await $.command.register({ name: 'router', description: 'Show the model-router pane' })
+    setHelperConfig(undefined)
     await loadHelperConfig($)
     await registerPlanTool($)
     await refreshStatus($)
