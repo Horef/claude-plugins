@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.22.0 (2026-11-11)
+- Helper default orders, labels and usage units come from helpers.py's config (order, cli_found, self, unit, label), so other Claude accounts and Codex work as helpers: this account shown and skipped, percent units shown and summed per provider, Claude/Codex effort flags read; no helper CLI installed is said in Settings and left out of the rules; the strange-loop note needs a genome file; template and model paths honour XDG_CONFIG_HOME
+
 ## 0.21.0 (2026-11-08)
 - Settings merge on write and refresh per turn, so another session's older copy no longer overwrites them; zero helper usage ignored, unreported runs shown, usage read by helpers.py usage (owner's request 2026-11-08)
 

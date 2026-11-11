@@ -46,11 +46,29 @@ export type HelperChoice = { provider: string; model: string; effort: string }
 /** One tier of a provider in helpers.py's config: a model and level, or a fixed command (a router). */
 export type HelperTierConfig = { model?: string; effort?: string; command?: string; description?: string }
 
-/** helpers.py's effective config (`helpers.py config`), the parts the router reads. */
+/** helpers.py's effective config (`helpers.py config --json`), the parts the router reads. */
 export type HelperConfig = {
   providers: Record<
     string,
-    { label?: string; cli?: string; efforts?: string[]; model_id?: string; models_source?: string; tiers?: Record<string, HelperTierConfig> }
+    {
+      label?: string
+      cli?: string
+      efforts?: string[]
+      model_id?: string
+      models_source?: string
+      tiers?: Record<string, HelperTierConfig>
+      /** 'claude' for another Claude account's helper. */
+      kind?: string
+      config_dir?: string
+      /** What the provider's usage is counted in ("credits", "AIC", "% of 7d"). */
+      unit?: string
+      /** Position in the default helper order (lower is tried first). */
+      order?: number
+      /** Its CLI is installed. */
+      cli_found?: boolean
+      /** The provider is this session's own account: it cannot be its own helper. */
+      self?: boolean
+    }
   >
   custom?: { provider: string; model: string; effort: string }[]
 }
