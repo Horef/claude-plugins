@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.6.0 (2026-11-11)
+- Other Claude accounts' 5h/7d limits (readings files, label command, optional live read), Codex budget, Kiro Linux path, agy fallback only if present, per-reader labels
+
 ## 0.5.0 (2026-11-09)
 - Three rows (Claude: model, context, 5h, 7d; helpers: Kiro, Copilot, Antigravity, extra; the rest); Antigravity's 5h/weekly and Argon weekly limits read from agy -p /usage; layout 'rows' (two = alias) (owner request 2026-11-09) (O1)
 
