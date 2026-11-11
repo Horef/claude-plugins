@@ -38,3 +38,17 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 **Good looks like:**
 - Every colour is readable on all three backgrounds; none is washed out.
 **Origin:** the owner found plain yellow unreadable on off-white.
+
+## Two Claude accounts
+**Task:** With `CLAUDE_CONFIG_DIR` set to a second dir (e.g. `~/.claude-uni`), open a chat in each account on a subscription; in one run `/status-line account-label work`; compare both status lines.
+**Good looks like:**
+- Each chat shows the *other* account as `<label> 5h N% 7d N% ⟳…`, never itself; the label set with the command appears in the other chat within a minute or two.
+- `~/.config/claude-accounts/` holds one small JSON file per account with no token or email.
+- An account whose reading is over six hours old is dimmed; with only one account nothing extra shows.
+**Origin:** the several-accounts request (docs/WORKLOG 2026-11-11).
+
+## Codex budget
+**Task:** On a machine with `codex` logged in, open a chat and read the helpers row.
+**Good looks like:**
+- `Codex 5h N% 7d N%` (or a window labelled by its length on a free plan) with the reset of the fullest window; without Codex nothing shows.
+**Origin:** Codex as a helper provider needs its budget in view.
