@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scripted evals for herdr-delegate: prompt detection on real Copilot screens (captured 2026-11-01), usage read from Kiro and Copilot screens (2026-11-08).
+"""Scripted evals for herdr-delegate (also account_cases.py, auto_account_cases.py, render_cases.py): prompt detection on real Copilot screens (captured 2026-11-01), usage read from Kiro and Copilot screens (2026-11-08).
 
 Exit 0 when every check passes, 1 otherwise.
 """
@@ -110,4 +110,11 @@ failures += acc.returncode != 0
 print(f"{'OK  ' if acc.returncode == 0 else 'FAIL'} account_cases.py: {tail}")
 if acc.returncode != 0:
     print("\n".join(l for l in acc.stdout.splitlines() if l.startswith("FAIL")))
+# Automatic discovery of other Claude accounts: own process, temp HOME/XDG per scenario, fake claude CLI.
+auto = subprocess.run([sys.executable, str(HERE / "auto_account_cases.py")], capture_output=True, text=True)
+tail = auto.stdout.strip().splitlines()[-1] if auto.stdout.strip() else auto.stderr.strip()[-300:]
+failures += auto.returncode != 0
+print(f"{'OK  ' if auto.returncode == 0 else 'FAIL'} auto_account_cases.py: {tail}")
+if auto.returncode != 0:
+    print("\n".join(l for l in auto.stdout.splitlines() if l.startswith("FAIL")))
 sys.exit(1 if failures else 0)

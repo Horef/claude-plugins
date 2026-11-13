@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUN
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.20.0'
+export const VERSION = '0.23.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -181,7 +181,7 @@ export const providerLabel = (provider: string) => helperEnv?.labels[provider] ?
 /** Whether a provider is the session's own account (it cannot be its own helper). */
 export const isSelfProvider = (provider: string) => helperEnv?.self.has(provider) ?? false
 
-/** What the router knows of the config's providers; undefined (no helpers.py found) goes back to the hard-coded defaults. */
+/** What the router knows of the config's providers; undefined (no helpers.py, no hc, or a config that failed) means there are no helpers at all. */
 export const setHelperConfig = (cfg: HelperConfig | undefined) => {
   if (!cfg) {
     helperEnv = undefined
@@ -211,14 +211,24 @@ export const setHelperConfig = (cfg: HelperConfig | undefined) => {
 /** True when helpers.py's config is known and none of its providers has an installed CLI. */
 export const noHelperCli = () => helperEnv?.noCli ?? false
 
-/** The default order of a tier's helper templates. */
-export const defaultHelperList = (tier: Tier): string[] => helperEnv?.on[tier] ?? parseList(DEFAULT_SETTINGS.helpers.tiers[tier])
+/** Whether any helper can run on this machine: helpers.py's config is known (so herdr-delegate and hc are there) and a provider's CLI is installed. */
+export const helpersAvailable = () => !!helperEnv && !helperEnv.noCli
 
-/** Whether a tier's stored order is the shipped default (never changed by the user), so the config's default applies. */
+/** Whether helpers are switched on and can run; the plan tool, the rules and the pane offer helper steps only then. */
+export const helpersLive = (set: Settings) => set.helpers.enabled && helpersAvailable()
+
+/** The default order of a tier's helper templates: only what is installed, so none when no config is known. */
+export const defaultHelperList = (tier: Tier): string[] => helperEnv?.on[tier] ?? []
+
+/**
+ * Whether a tier's stored order is the shipped default (never changed by the user), so the config's default applies.
+ * The hard-coded strings in DEFAULT_SETTINGS only serve as this "never changed" marker; they are never shown as helpers.
+ */
 const isDefaultOrder = (set: Settings, tier: Tier) => set.helpers.tiers[tier] === DEFAULT_SETTINGS.helpers.tiers[tier]
 
-/** A tier's helper templates as in force: the stored order if the user set one, else the default. */
-export const helperEffective = (set: Settings, tier: Tier): string[] => (isDefaultOrder(set, tier) ? defaultHelperList(tier) : parseList(set.helpers.tiers[tier]))
+/** A tier's helper templates as in force: the stored order if the user set one, else the default; none while no helper can run. */
+export const helperEffective = (set: Settings, tier: Tier): string[] =>
+  !helpersAvailable() ? [] : isDefaultOrder(set, tier) ? defaultHelperList(tier) : parseList(set.helpers.tiers[tier])
 
 /** Whether a tier's order differs from the default (for the pane's dot). */
 export const orderIsCustom = (set: Settings, tier: Tier) => !isDefaultOrder(set, tier) && helperEffective(set, tier).join(',') !== defaultHelperList(tier).join(',')
@@ -232,12 +242,13 @@ export const helperOrder = (set: Settings, tier: Tier) => helperList(set, tier).
 /** A tier's helper templates in order, with Copilot Fusion added when its setting covers the tier. */
 export const helperList = (set: Settings, tier: Tier): string[] => {
   const list = helperEffective(set, tier)
+  if (!helpersAvailable()) return list
   const f = FUSION[tier]
   const on = set.helpers.fusion === 'both' || (set.helpers.fusion === 'deep' && tier === 'deep')
   if (!f || !on || list.includes(f.template)) return list
   const at = list.indexOf(f.before)
   // A default order without Copilot means its CLI is not installed: Fusion would have nothing to run on.
-  if (at < 0) return isDefaultOrder(set, tier) && helperEnv ? list : [...list, f.template]
+  if (at < 0) return isDefaultOrder(set, tier) ? list : [...list, f.template]
 
   return [...list.slice(0, at), f.template, ...list.slice(at)]
 }
@@ -255,7 +266,7 @@ export const helperItems = (set: Settings, tier: Tier) => helperEffective(set, t
 export const helpersOff = (set: Settings, tier: Tier) => {
   const on = helperItems(set, tier)
 
-  return (helperEnv?.all[tier] ?? parseList(DEFAULT_SETTINGS.helpers.tiers[tier])).filter(x => !on.includes(x))
+  return helpersAvailable() ? (helperEnv?.all[tier] ?? []).filter(x => !on.includes(x)) : []
 }
 
 /** The stored string after moving the helper at `index` one place (-1 up, 1 down); unchanged at an end. */
@@ -268,8 +279,8 @@ export const moveHelper = (list: readonly string[], index: number, by: -1 | 1) =
   return next.join(',')
 }
 
-/** One string for every tier's helper order, to tell whether the orders the agent knows are still current. */
-export const helperSignature = (set: Settings) => TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')
+/** One string for every tier's helper order, to tell whether the orders the agent knows are still current; empty while no helper can run (the rules then name none). */
+export const helperSignature = (set: Settings) => !helpersAvailable() ? '' : TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')
 
 /** A whole number within [lo, hi], else undefined (a stored value that is missing or unusable). */
 const wholeIn = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : undefined)

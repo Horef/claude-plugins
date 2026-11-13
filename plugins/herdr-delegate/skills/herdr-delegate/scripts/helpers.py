@@ -11,9 +11,10 @@
   helpers.py usage <name>                       the helper's session usage as JSON {provider, amount, unit}; run before hc kill
 
   helpers.py config [--json]                    the effective config (default + your overrides) as JSON, each provider with
-                                                kind, config_dir, label, unit, order, cli_found, self; plus default_orders per tier
-  helpers.py account add <name> <config_dir> [--label L]   a Claude Code helper under another account (CLAUDE_CONFIG_DIR)
-  helpers.py account rm <name> | account list   remove one / list the accounts, their quota readings and which is this session's
+                                                kind, config_dir, label, unit, order, cli_found, self, auto; plus default_orders per tier
+  helpers.py account list                       the Claude accounts (found by themselves, see below), their quota readings, which is this session's
+  helpers.py account add <name> <config_dir> [--label L]   configure one by hand (overrides the auto-discovered one of that dir)
+  helpers.py account rm <name>                  remove one; an auto-discovered account stays out (excluded_accounts in your config)
   helpers.py render [--check] [--force]         write ~/.config/herdr-core/templates from the config
   helpers.py set <provider> <tier> [model=X] [effort=Y] [--force]   change a tier's model/effort, then render
   helpers.py custom <provider> model=X effort=Y [--force]   render a one-off <provider>-<model>-<effort> template, print its name
@@ -25,6 +26,10 @@ Config: helpers.default.json (shipped next to SKILL.md) merged under $XDG_CONFIG
 efforts, tiers, order (default pick order, lowest first; `tier_order` per tier), unit (what `usage` reports), and
 optional sources that make a provider plug in: login_check, usage_screen, usage_source, quota_source, models_source.
 A provider with kind "claude" and a config_dir is Claude Code under another account (see `account`).
+Other Claude accounts are found by themselves (marked "auto": true) when the machine has two or more: from the
+claude-accounts readings files (config_dir, label) and from ~/.claude, ~/.claude-*, ~/.claude_* in the home folder
+that hold .claude.json, .credentials.json, settings.json or projects/ (plus this session's own dir). `pick`, `status`
+and `config` render their templates; no `account add` needed. A one-account machine has none.
 A template is usable when its file is in ~/.config/herdr-core/templates, its CLI is on
 PATH, and its provider (the name before the first '-') has no quota or login mark in force.
 Quota marks expire on their date by themselves; login marks last until `back`, or until
@@ -218,6 +223,114 @@ def dir_label(written):
         if base.startswith(lead) and len(base) > len(lead):
             return base[len(lead):]
     return base.lstrip(".") or "account"
+
+
+# Markers of a real Claude Code config dir: any one of these inside it (the credentials file and
+# `.claude.json` exist only after a login; `settings.json` and `projects/` after any use).
+CONFIG_DIR_MARKERS = (".claude.json", ".credentials.json", "settings.json", "projects")
+
+
+def looks_like_claude_dir(path):
+    """True for a directory that holds at least one of CONFIG_DIR_MARKERS."""
+    p = Path(written_dir(str(path)))
+    try:
+        return p.is_dir() and any((p / m).exists() for m in CONFIG_DIR_MARKERS)
+    except OSError:
+        return False
+
+
+def discover_claude_dirs():
+    """Candidate Claude accounts on this machine as [(config_dir as written, readings label or None)].
+
+    Sources: the claude-accounts readings files (their config_dir and label; a reading proves it is a Claude dir),
+    this session's own dir, and ~/.claude plus ~/.claude-* / ~/.claude_* in the home folder that look like Claude
+    Code config dirs (looks_like_claude_dir). Dirs that no longer exist are skipped; one entry per real path,
+    readings first so their label wins.
+    """
+    found, seen = [], set()
+
+    def add(written, label=None, require_markers=True):
+        written = written_dir(str(written))
+        real = os.path.realpath(written)
+        if real in seen or not os.path.isdir(real):
+            return
+        if require_markers and not looks_like_claude_dir(written):
+            return
+        seen.add(real)
+        found.append((written, label))
+
+    try:
+        files = sorted(accounts_dir().glob("*.json"))
+    except OSError:
+        files = []
+    for f in files:
+        data = read_json(f, None)
+        if isinstance(data, dict) and isinstance(data.get("config_dir"), str) and data["config_dir"]:
+            label = data.get("label")
+            add(data["config_dir"], label if isinstance(label, str) and label.strip() else None, require_markers=False)
+    add(session_dir(), require_markers=False)
+    try:
+        names = sorted(n for n in os.listdir(home()) if n == ".claude" or n.startswith((".claude-", ".claude_")))
+    except OSError:
+        names = []
+    for n in names:
+        add(home() / n)
+    return found
+
+
+def auto_name(written, taken):
+    """A provider name for an auto-discovered account: "claude" + its default label's letters and digits (claudeuni)."""
+    base = "claude" + re.sub(r"[^a-z0-9]", "", dir_label(written).lower())
+    name = base
+    if name in taken:
+        name = base + account_key(written)[:4]
+    n = 2
+    while name in taken:
+        name = f"{base}{n}"
+        n += 1
+    return name
+
+
+def add_auto_accounts(cfg, user):
+    """Add the other Claude accounts found on this machine to cfg["providers"] as kind=claude with "auto": true.
+
+    Nothing is added on a one-account machine. With two or more accounts all appear, this session's own marked
+    `self` by is_self (so each session sees the same set and the shared templates stay the same). An account
+    already configured by hand (`account add`, same real dir) wins; keys listed in the user config's
+    `excluded_accounts` (`account rm` of an auto account) are not offered again.
+    """
+    providers = cfg.setdefault("providers", {})
+    excluded = {str(k) for k in user.get("excluded_accounts", [])} if isinstance(user.get("excluded_accounts"), list) else set()
+    manual = {os.path.realpath(written_dir(p["config_dir"])) for p in providers.values()
+              if isinstance(p, dict) and p.get("kind") == "claude" and p.get("config_dir")}
+    cands = [(w, lab) for w, lab in discover_claude_dirs() if account_key(w) not in excluded]
+    autos = [(w, lab) for w, lab in cands if os.path.realpath(w) not in manual]
+    if not autos or len(manual | {os.path.realpath(w) for w, _ in autos}) < 2:
+        return cfg
+    for written, label in autos:
+        name = auto_name(written, set(providers))
+        providers[name] = {"kind": "claude", "config_dir": written, "label": label or dir_label(written), "auto": True}
+    return cfg
+
+
+def auto_account_templates(cfg):
+    """Make the templates of auto-discovered accounts match the config (pick, status and config call this: there is
+    no `account add` step for these); returns the lines to report. Hand-made files are left alone; a generated
+    claude-account template whose account is gone (or was `rm`-ed) is removed."""
+    names = {f"{n}-{t}" for n, p in cfg.get("providers", {}).items() if p.get("auto") for t in p.get("tiers", {})}
+    plan = [p for p in compute(cfg, only=names, orphans=False) if p[0] in ("new", "update")]
+    specs = template_specs(cfg)
+    if templates_dir().is_dir():
+        for path in sorted(templates_dir().glob("*.md")):
+            try:
+                text = path.read_text()
+            except OSError:
+                continue
+            if path.stem not in specs and is_generated(text) and "CLAUDE_CONFIG_DIR=" in text:
+                plan.append(("orphan", path.stem))
+    if plan:
+        apply_plan(cfg, plan)
+    return [LABEL_WRITE[k].format(n=n) for k, n in plan]
 
 
 def now_utc():
@@ -600,7 +713,8 @@ def with_kind_defaults(cfg):
 
 
 def merged_config(user):
-    return with_kind_defaults(deep_merge(json.loads((SKILL / "helpers.default.json").read_text()), user))
+    cfg = deep_merge(json.loads((SKILL / "helpers.default.json").read_text()), user)
+    return with_kind_defaults(add_auto_accounts(cfg, user))
 
 
 def effective_config():
@@ -1110,11 +1224,11 @@ def custom_cmd(args):
 
 
 def provider_view(prov):
-    """A provider's config plus the derived fields other tools read: kind, config_dir, label, unit, order, cli_found, self."""
+    """A provider's config plus the derived fields other tools read: kind, config_dir, label, unit, order, cli_found, self, auto."""
     out = dict(prov)
     out.update(kind=prov.get("kind", "cli"), config_dir=prov.get("config_dir"), label=prov.get("label"),
                unit=prov.get("unit"), order=provider_order(prov),
-               cli_found=bool(shutil.which(prov.get("cli", ""))), self=is_self(prov))
+               cli_found=bool(shutil.which(prov.get("cli", ""))), self=is_self(prov), auto=bool(prov.get("auto")))
     return out
 
 
@@ -1152,10 +1266,12 @@ def account_cmd(args):
             if prov.get("kind") != "claude":
                 continue
             found = True
-            mark = "  (this account)" if is_self(prov) else ""
+            mark = ("  (auto)" if prov.get("auto") else "") + ("  (this account)" if is_self(prov) else "")
             print(f"{name:12} {prov.get('label', ''):10} {prov.get('config_dir')}  key {account_key(prov['config_dir'])}  {reading_text(read_account(account_key(prov['config_dir'])) or {})}{mark}")
+        if user.get("excluded_accounts"):
+            print(f"excluded from auto-discovery (account rm): {', '.join(map(str, user['excluded_accounts']))}; `account add` brings one back")
         if not found:
-            print("no Claude accounts configured; add one with: helpers.py account add <name> <config_dir>")
+            print("no other Claude accounts found; accounts are discovered from ~/.claude, ~/.claude-*, ~/.claude_* and the readings files, or add one with: helpers.py account add <name> <config_dir>")
         return 0
     if sub == "add":
         label = None
@@ -1179,6 +1295,11 @@ def account_cmd(args):
             return 1
         user.setdefault("providers", {})[name] = {"kind": "claude", "config_dir": config_dir.rstrip("/") or "/",
                                                     "label": label or dir_label(config_dir)}
+        key = account_key(config_dir)
+        if key in map(str, user.get("excluded_accounts", [])):
+            user["excluded_accounts"] = [k for k in user["excluded_accounts"] if str(k) != key]
+            if not user["excluded_accounts"]:
+                del user["excluded_accounts"]
         write_json(user_config_file(), user)
         cfg = merged_config(user)
         names = {f"{name}-{t}" for t in cfg["providers"][name].get("tiers", {})}
@@ -1186,25 +1307,38 @@ def account_cmd(args):
         for kind, n in plan:
             print(LABEL_WRITE[kind].format(n=n))
         apply_plan(cfg, plan)
+        for line in auto_account_templates(cfg):  # an auto account of the same dir under another name is now replaced
+            print(line)
         if is_self(cfg["providers"][name]):
             print(f"note: {config_dir} is this session's own account; pick skips it here and uses it from the other account")
         return 0
     if sub == "rm" and len(rest) == 1:
         name = rest[0]
         mine = user.get("providers", {}).get(name)
-        if not mine or mine.get("kind") != "claude":
-            print(f"error: {name!r} is not a Claude account in {user_config_file()}", file=sys.stderr)
+        auto = effective_config()["providers"].get(name)
+        if mine and mine.get("kind") == "claude":
+            config_dir = mine.get("config_dir")
+            del user["providers"][name]
+            if not user["providers"]:
+                del user["providers"]
+        elif auto and auto.get("kind") == "claude" and auto.get("auto"):
+            config_dir = auto["config_dir"]
+        else:
+            print(f"error: {name!r} is not a Claude account in {user_config_file()} or an auto-discovered one", file=sys.stderr)
             return 1
-        del user["providers"][name]
-        if not user["providers"]:
-            del user["providers"]
+        sticky = ""
+        if config_dir and account_key(config_dir) in {account_key(w) for w, _ in discover_claude_dirs()}:
+            key = account_key(config_dir)
+            if key not in map(str, user.get("excluded_accounts", [])):
+                user.setdefault("excluded_accounts", []).append(key)
+            sticky = f" (it stays out of auto-discovery: key {key} in excluded_accounts; `account add` brings it back)"
         write_json(user_config_file(), user)
         cfg = merged_config(user)
         plan = [p for p in compute(cfg, only=set(), orphans=True) if p[0] == "orphan" and p[1].startswith(f"{name}-")]
         for kind, n in plan:
             print(LABEL_WRITE[kind].format(n=n))
         apply_plan(cfg, plan)
-        print(f"{name} removed")
+        print(f"{name} removed{sticky}")
         return 0
     print(usage, file=sys.stderr)
     return 2
@@ -1235,6 +1369,9 @@ def main(argv, today=None):
     state = load()
     if cmd in ("pick", "status"):
         refresh_logins(state)
+    if cmd in ("pick", "status", "config"):
+        for line in auto_account_templates(effective_config()):
+            print(f"auto accounts: {line}", file=sys.stderr)
     if cmd == "pick" and args:
         order = ORDER.get(args[0]) or [s.strip() for s in args[0].split(",") if s.strip()]
         absent = not_offered()

@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
-import { helperList, helperOrder, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
+import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -333,8 +333,10 @@ const boot = async (
     return { result: { agentId: 'a1' } }
   })
 
-  // More mocks the test needs before the chat starts (helpers.py runs at the start).
-  setup?.()
+  // More mocks the test needs before the chat starts (helpers.py runs at the start). Without any, helpers.py, hc and the
+  // Kiro, Copilot and Antigravity CLIs are all there, as on the owner's machine.
+  if (setup) setup()
+  else helperWorld(on, files).setup()
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
   // Without agentId the usage is the main chat's own.
@@ -1917,10 +1919,12 @@ const OFFERED = {
  * helpers.py as the router sees it: the installed skill's folders, its files, and the python runs, answered from a config the
  * `set` and `custom` commands change. `ran` holds every argv; `fail` makes a subcommand exit 1 with that stderr.
  */
-const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o: { present?: boolean; oldScript?: string } = {}) => {
+const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o: { present?: boolean; oldScript?: string; noHc?: boolean; noCli?: boolean } = {}) => {
   const present = o.present ?? true
   const cfg = helperDefaults()
+  if (o.noCli) for (const p of Object.values(cfg.providers)) (p as { cli_found?: boolean }).cli_found = false
   const ran: string[][] = []
+  const hcRuns: string[][] = []
   const fail: Record<string, string> = {}
   files.set(`${SKILL}/helpers.default.json`, JSON.stringify(helperDefaults()))
   files.set(MODELS_FILE, JSON.stringify(OFFERED))
@@ -1936,6 +1940,12 @@ const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o:
     on('fs.exists', (_, e) => ({ value: present && (e as { path: string }).path.endsWith('/skills/herdr-delegate/scripts/helpers.py') }))
     on('process.run', (_, e) => {
       const argv = (e as { argv: string[] }).argv
+      // Herdr's hc: found unless the world says it is not (a program that cannot start is refused).
+      if (argv[0] === 'hc') {
+        hcRuns.push(argv)
+
+        return o.noHc ? { deny: 'ENOENT' } : result(0, 'hc 0.1.20\n')
+      }
       ran.push(argv)
       const [cmd, ...args] = argv.slice(2)
       const kv = Object.fromEntries(args.filter(a => a.includes('=')).map(a => [a.split('=')[0]!, a.split('=')[1]!]))
@@ -1963,7 +1973,7 @@ const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o:
     })
   }
 
-  return { setup, ran, fail, cfg, argsOf: (cmd: string) => ran.filter(a => a[2] === cmd) }
+  return { setup, ran, hcRuns, fail, cfg, argsOf: (cmd: string) => ran.filter(a => a[2] === cmd) }
 }
 
 const hrun = (n: number, over: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -2043,25 +2053,42 @@ test('Check models runs helpers.py models; the models no longer offered and the 
   await pane.unmount()
 })
 
-test('without helpers.py the pane says so and gives the command to run; a path set in Settings is used; an old helpers.py is named; steps keep the tier order', async ($, on) => {
+test('without helpers.py there are no helpers: the pane explains how to get them, hides the orders and pickers, the rules and the plan tool offer none; a path set by hand brings them in; an old helpers.py is named', async ($, on) => {
   const files = new Map<string, string>()
   const old = '/opt/old/skills/herdr-delegate/scripts/helpers.py'
   const world = helperWorld(on, files, { present: false, oldScript: old })
+  files.set(`${HOME}/.claude/plugins/installed_plugins.json`, JSON.stringify({ plugins: { 'model-router@mk': [{ version: '0.22.0' }] } }))
   const choice = { provider: 'kiro', model: 'claude-haiku-5.5', effort: 'medium' }
-  const { store, rows } = await boot($, on, [['settings', { helpers: { enabled: true, kinds: { summarize: choice } } }]], [], files, world.setup)
+  const { store, rows, registered } = await boot($, on, [['settings', { helpers: { enabled: true, kinds: { summarize: choice } } }]], [], files, world.setup)
   expect(world.ran).toEqual([])
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   await pane.press({ key: 'settings' })
-  expect(await pane.find(text(/^helpers\.py was not found .*by hand: python3 <path to herdr-delegate>\/skills\/herdr-delegate\/scripts\/helpers\.py set <provider> <tier> model=<model> effort=<effort>$/))).toBeTruthy()
+  expect(await pane.find(text(/^Helpers are agents on other subscriptions or accounts\. They are optional: model-router works without them, running every step as a Claude subagent\.$/))).toBeTruthy()
+  // The install line names the marketplace this plugin came from.
+  expect(await pane.find(text(/^1\. Install herdr-delegate from the same marketplace: \/plugin install herdr-delegate@mk$/))).toBeTruthy()
+  expect(await pane.find(text(/Install Herdr's hc/))).toBeTruthy()
+  expect(await pane.find(text(/Kiro, Copilot, Codex, Antigravity, or another Claude account/))).toBeTruthy()
+  // No helper rows: no orders, no "off" buttons, no model pickers, no Copilot Fusion, no check.
+  expect(await pane.find(text(/^\d\. (kiro|copilot|agy)|^(kiro|copilot|agy)\b/i))).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'helper-off:light:kiro-light' } as never)).toBeFalsy()
   expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeFalsy()
+  expect(await pane.find({ type: 'Select', key: 'helpers-fusion' } as never)).toBeFalsy()
   expect(await pane.find({ type: 'Button', key: 'helpers-check' } as never)).toBeFalsy()
+  // The path box sits behind a small disclosure.
+  expect(await pane.find({ type: 'Input', key: 'helpers-script' } as never)).toBeFalsy()
+  await pane.press({ key: 'helpers-path-toggle' })
+  expect(await pane.find({ type: 'Input', key: 'helpers-script' } as never)).toBeTruthy()
 
-  // The router never guesses a model it cannot make a template for: the lead gets the tier order.
+  // The rules do not offer helper steps, and a helper step in a plan is a subagent step.
   await $.turn.start({ text: 'first', turnId: 't0' })
-  const planned = await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Summarize', tier: 'standard', where: 'helper', kind: 'summarize' }] } as never)
-  expect(String(planned.result)).toContain('[h1] Summarize: standard, helper (kiro-standard → copilot-standard → agy-standard), kind summarize, planned')
   expect(lastRow(rows)).toContain('# Model routing')
+  expect(lastRow(rows).toLowerCase()).not.toContain('helper')
+  expect(lastRow(rows)).not.toContain('herdr-delegate')
+  const planned = await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Summarize', tier: 'standard', where: 'helper', kind: 'summarize' }] } as never)
+  expect(String(planned.result)).toContain('[h1] Summarize: standard, sonnet/medium')
+  expect(String(planned.result)).not.toContain('helper (')
   expect(world.ran).toEqual([])
 
   // A path of its own: the config is read from there, and the shipped defaults beside it.
@@ -2071,16 +2098,48 @@ test('without helpers.py the pane says so and gives the command to run; a path s
   expect((store.get('settings') as { helpers: { script: string } }).helpers.script).toBe(own)
   expect(world.argsOf('config').at(-1)).toEqual(['python3', own, 'config'])
   expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'helper-off:light:kiro-light' } as never)).toBeTruthy()
   expect(JSON.parse(files.get(MIRROR) ?? '{}').settings.helpers.script).toBe(own)
+  // Helpers can run now: the plan tool offers helper steps again.
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here', 'helper'])
   // A path that is not a helpers.py is not taken.
   await pane.input({ key: 'helpers-script', text: '/opt/hp/run.sh' })
   expect((store.get('settings') as { helpers: { script: string } }).helpers.script).toBe(own)
   // The choice stored for the kind is used now that a template can be made.
-  expect(String((await $.tool.call({ tool: PLAN, done: [] } as never)).result)).toContain('[h1] Summarize: standard, helper (launch kiro-claude-haiku-5-5-medium:')
-  // A helpers.py older than the config command: the pane names the fix.
+  const again = await $.tool.call({ tool: PLAN, steps: [{ id: 'h2', title: 'Summarize', tier: 'standard', where: 'helper', kind: 'summarize' }] } as never)
+  expect(String(again.result)).toContain('[h2] Summarize: standard, helper (launch kiro-claude-haiku-5-5-medium:')
+  // A helpers.py older than the config command: the pane names the fix, and the helpers go again.
   await pane.input({ key: 'helpers-script', text: old })
   expect(await pane.find(text(/^This helpers\.py has no config command: update herdr-delegate to 0\.6\.0 or later\.$/))).toBeTruthy()
   expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeFalsy()
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
+  await pane.unmount()
+})
+
+test('without Herdr\'s hc there are no helpers either: its own message, no helper rows, no helper rule, helper steps run as subagents', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { noHc: true })
+  const { rows, registered } = await boot($, on, [HELPERS_ON], [], files, world.setup)
+  // hc was looked for; helpers.py was not run for a config.
+  expect(world.hcRuns[0]).toEqual(['hc', '--version'])
+  expect(world.ran).toEqual([])
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
+  for (const t of ['light', 'standard', 'deep'] as const) expect(helperList(mergeSettings({ helpers: { enabled: true } }), t)).toEqual([])
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(/^Helpers run through Herdr's hc, which was not found on your PATH\./))).toBeTruthy()
+  // herdr-delegate is installed here: its install line is not offered, the hc one is.
+  expect(await pane.find(text(/Install herdr-delegate/))).toBeFalsy()
+  expect(await pane.find(text(/^1\. Install Herdr's hc/))).toBeTruthy()
+  expect(await pane.find(text(/^\d\. (kiro|copilot|agy)|^(kiro|copilot|agy)\b/i))).toBeFalsy()
+  expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'helper-off:light:kiro-light' } as never)).toBeFalsy()
+
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows).toLowerCase()).not.toContain('helper')
+  const planned = await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'light', where: 'helper' }] } as never)
+  expect(String(planned.result)).toContain('[h1] Survey: light, haiku/low')
   await pane.unmount()
 })
 
@@ -2209,6 +2268,8 @@ test('a kind\'s stored helper choice names a tier template when one fits, a one-
 
 test('helper ladder, advice, learned rungs and template names, worked out from the config', () => {
   const cfg = helperDefaults() as never
+  // The helpers of a machine that has them: with no config there are none.
+  setHelperConfig(cfg)
   const ladder = (p: string, cache?: never) => helperLadder(cfg, p, cache).map(r => `${r.model}/${r.effort}`)
   // Tier order; each model from the lowest level a tier gives it up to high, the top model on to the provider's highest.
   expect(ladder('kiro')).toEqual(['claude-haiku-5.5/low', 'claude-haiku-5.5/medium', 'claude-haiku-5.5/high', 'claude-sonnet-5.5/high', 'claude-opus-5.5/high', 'claude-opus-5.5/xhigh', 'claude-opus-5.5/max'])
@@ -2287,6 +2348,7 @@ test('helper ladder, advice, learned rungs and template names, worked out from t
   expect(compareVersions('0.6.0', '0.5.1')).toBeGreaterThan(0)
   expect(compareVersions('0.10.0', '0.9.9')).toBeGreaterThan(0)
   expect(compareVersions('1.0', '1.0.0')).toBe(0)
+  setHelperConfig(undefined)
 })
 
 test('per-kind helper choices from storage keep only a provider, model and level of plain words', () => {
@@ -2474,7 +2536,7 @@ const accountsConfig = () => ({
   },
 })
 
-test('default helper orders come from the config: by order, installed CLIs only, never this account; a stored order wins; no config, the old strings', () => {
+test('default helper orders come from the config: by order, installed CLIs only, never this account; a stored order wins; no config, no helpers', () => {
   const set = mergeSettings({})
   try {
     setHelperConfig(accountsConfig())
@@ -2503,8 +2565,27 @@ test('default helper orders come from the config: by order, installed CLIs only,
   } finally {
     setHelperConfig(undefined)
   }
-  expect(helperList(set, 'light')).toEqual(['kiro-light', 'copilot-light', 'agy-light'])
+  // No config (no helpers.py, no hc, or a config that failed): there are no helpers, not the hard-coded ones.
+  for (const t of ['light', 'standard', 'deep'] as const) {
+    expect(helperList(set, t)).toEqual([])
+    expect(helpersOff(set, t)).toEqual([])
+  }
+  expect(helperList(mergeSettings({ helpers: { fusion: 'both' } as never }), 'deep')).toEqual([])
+  // Not even a stored order of the user's own is offered while no helper can run.
+  expect(helperList(mergeSettings({ helpers: { tiers: { light: 'kiro-light' } } as never }), 'light')).toEqual([])
+  expect(helpersAvailable()).toBe(false)
   expect(noHelperCli()).toBe(false)
+  // A config with no installed CLI is not available either.
+  try {
+    const none = accountsConfig()
+    for (const p of Object.values(none.providers)) p.cli_found = false
+    setHelperConfig(none)
+    expect(helpersAvailable()).toBe(false)
+    expect(helperList(set, 'light')).toEqual([])
+    expect(helpersOff(set, 'light')).toEqual([])
+  } finally {
+    setHelperConfig(undefined)
+  }
 })
 
 test('helper usage in the config\'s units and labels: a percent unit follows its number and adds up per provider', () => {
@@ -2574,7 +2655,10 @@ test('with no helper CLI installed the rules do not mention helpers and Settings
   expect(lastRow(second.rows)).not.toContain('runs a step on an agent from another subscription')
   const pane2 = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   await pane2.press({ key: 'settings' })
-  expect(await pane2.find(text(/No helper CLI installed/))).toBeTruthy()
+  expect(await pane2.find(text(/^No helper CLI is installed: install at least one/))).toBeTruthy()
+  expect(await pane2.find({ type: 'Button', key: 'helper-off:light:kiro-light' } as never)).toBeFalsy()
+  expect(await pane2.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeFalsy()
+  expect(wheres(second.registered.at(-1))).toEqual(['agent', 'here'])
   await pane2.unmount()
 })
 

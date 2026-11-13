@@ -4,7 +4,7 @@
 // Antigravity, Claude extra usage) read every few minutes where their logins exist,
 // and the 5h / 7d limits of other Claude accounts on this machine (each account's
 // sessions write their own readings to ${XDG_CONFIG_HOME:-~/.config}/claude-accounts/<key>.json).
-// Rows: model, context and Claude limits; helper budgets; the rest.
+// Rows: groups (Claude's own state; helper budgets; the session), each wrapping onto as many rows as it needs.
 // Commands: `/status-line` toggles; `on|off`; `auto|one|rows` picks the layout;
 // `quotas on|off` reads the outside budgets or not; `account-label <name>` names this
 // account in the other accounts' status lines; `live on|off` lets it read other accounts' limits
@@ -16,7 +16,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Win } from '../types'
 
-const VERSION = '0.6.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.7.0' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -34,17 +34,15 @@ const CONFIG = {
     switched: '#c026d3', // magenta
   },
   icons: {
-    ok: '🟢', warn: '🟡', high: '🟠', crit: '🔴',
     working: '⏳', idle: '✅',
-    model: '◆', switched: '⇄',
+    switched: '⇄', effort: '·',
     barFull: '▰', barEmpty: '▱',
     reset: '⟳', pace: '⚠', turn: '⏱', files: '✎', compact: '🗜', sep: ' │ ',
   },
   // Used when SESSION_STATUS_ASCII is set (terminals without emoji fonts).
   asciiIcons: {
-    ok: '[ok]', warn: '[50%+]', high: '[75%+]', crit: '[90%+]',
     working: '*', idle: '-',
-    model: '>', switched: '<>',
+    switched: '<>', effort: '/',
     barFull: '#', barEmpty: '.',
     reset: 'reset ', pace: '! ', turn: 'turn ', files: 'files ', compact: 'compacted ', sep: ' | ',
   },
@@ -53,13 +51,20 @@ const CONFIG = {
   barWidth: 6,
   // Default layout; `/status-line auto|one|rows` changes it and is remembered.
   layout: 'auto' as Layout,
-  // Rows when the line does not fit (or `rows` is chosen): Claude's own state, then the
-  // helpers' budgets; every segment not listed goes on a last row. Empty rows are skipped.
-  rows: [
-    ['head', 'ctx', 'ctxTokens', 'hint', 'limit5h', 'reset5h', 'pace5h', 'limit7d', 'reset7d', 'pace7d',
-      'limitOther', 'resetOther', 'paceOther'],
-    ['kiro', 'resetkiro', 'copilot', 'resetcopilot', 'codex', 'resetcodex', 'agy', 'argon', 'resetargon', 'acct', 'resetacct', 'extra'],
+  // Groups, each starting its own rows when the line does not fit (or `rows` is chosen) and
+  // wrapping onto as many rows as it needs. A segment id not listed here is a helper budget,
+  // so a new provider or account needs no change. `label` is shown at the left of the group's
+  // first row (none for Claude's own row, which is the first).
+  groups: [
+    { name: 'claude', label: '', ids: ['head', 'ctx', 'ctxTokens', 'hint', 'limit5h', 'reset5h', 'pace5h', 'limit7d', 'reset7d', 'pace7d',
+      'limitOther', 'resetOther', 'paceOther', 'extra'] },
+    { name: 'helpers', label: 'helpers', ids: [] as string[] },
+    { name: 'session', label: 'session', ids: ['cost', 'lastTurn', 'files', 'compactions', 'session'] },
   ],
+  // Space between two budgets inside a group (between groups on one line: the `sep` icon).
+  gap: '   ',
+  // Helper names are padded to the longest one (at most this many cells) so wrapped rows line up.
+  nameMax: 10,
   // Thinking-effort tags shown after the model name; a numeric budget shows as e.g. (8k).
   effortLabels: { low: 'L', medium: 'M', high: 'H', xhigh: 'XH', max: 'Max' } as Record<string, string>,
   // Rate-limit windows: short label and length (the length drives the pace warning).
@@ -83,9 +88,10 @@ const CONFIG = {
   // runs only when the file's reading is older than `liveAfterMs`, at most every `liveEveryMs` per account.
   accounts: { oldMs: 6 * 3_600_000, liveAfterMs: 10 * 60_000, liveEveryMs: 5 * 60_000, labelMax: 24 },
   // Claude extra usage shows only once credits are spent or a 5h/7d window is full.
-  // Segments dropped first when a line does not fit, in order.
+  // Segments dropped first when a line does not fit, or the rows exceed the band's height, in
+  // order; an id several segments share (`acct`) drops one of them, the last, at a time.
   // Activity, model and the context bar are never dropped. A reset or pace
-  // tag must be listed before its limit, since it is glued to it.
+  // tag is listed before its limit, since it is glued to it.
   dropOrder: [
     'session', 'files', 'lastTurn', 'resetacct', 'resetcodex', 'resetargon', 'resetcopilot', 'resetkiro', 'cost', 'compactions', 'ctxTokens',
     'acct', 'codex', 'agy', 'argon', 'copilot', 'kiro', 'reset7d', 'pace7d', 'limit7d', 'resetOther', 'paceOther', 'limitOther',
@@ -305,14 +311,14 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
   const head: Piece[] = [{ text: isWorking ? ic.working : ic.idle }]
   if (model) {
     head.push({
-      text: ` ${isSwitched ? ic.switched : ic.model} ${model}`,
+      text: ` ${isSwitched ? `${ic.switched} ` : ''}${model}`,
       color: isSwitched ? CONFIG.colors.switched : CONFIG.colors.model,
       bold: isSwitched,
     })
   }
   if (s.effort !== null) {
     const tag = typeof s.effort === 'number' ? fmt(s.effort) : CONFIG.effortLabels[s.effort] ?? s.effort
-    head.push({ text: ` (${tag})`, dim: true })
+    head.push({ text: ` ${ic.effort}${tag}`, dim: true })
   }
   out.push({ id: 'head', pieces: head })
 
@@ -324,7 +330,7 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
     out.push({
       id: 'ctx',
       pieces: [
-        { text: `${ic[lv]} ` },
+        { text: 'ctx ', dim: true },
         { text: ic.barFull.repeat(filled), color: CONFIG.colors[lv] },
         { text: ic.barEmpty.repeat(CONFIG.barWidth - filled), dim: true },
         { text: ` ${pct}%`, color: CONFIG.colors[lv], bold: lv === 'crit' },
@@ -400,30 +406,129 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
   return out
 }
 
-const segWidth = (seg: Segment) =>
-  (seg.glue ? 0 : cells(icons.sep)) + seg.pieces.reduce((w, p) => w + cells(p.text), 0)
-const rowWidth = (segs: Segment[]) => segs.reduce((w, s) => w + segWidth(s), 0) - cells(icons.sep)
+// ─── Layout ───────────────────────────────────────────────────────────────
+// A unit is a segment with the glued segments after it (a budget and its reset): it never splits.
+type Unit = { group: string; segs: Segment[] }
+type Line = Piece[]
 
-/** Drops segments in CONFIG.dropOrder until the row fits `columns`. */
-const fit = (segs: Segment[], columns: number): Segment[] => {
+const groupOf = (id: string) => CONFIG.groups.find(g => g.ids.includes(id))?.name ?? 'helpers'
+const piecesWidth = (ps: Piece[]) => ps.reduce((w, p) => w + cells(p.text), 0)
+const unitPieces = (u: Unit) => u.segs.flatMap(s => s.pieces)
+
+const toUnits = (segs: Segment[]): Unit[] => {
+  const out: Unit[] = []
+  for (const seg of segs) {
+    const last = out[out.length - 1]
+    if (seg.glue && last) last.segs.push(seg)
+    else out.push({ group: groupOf(seg.id), segs: [seg] })
+  }
+  return out
+}
+
+/** Without the last segment of this id (and, if it heads a unit, the segments glued to it). */
+const dropOne = (segs: Segment[], id: string): Segment[] => {
+  const at = segs.map(s => s.id).lastIndexOf(id)
+  if (at < 0) return segs
+  let end = at + 1
+  if (!segs[at].glue) while (end < segs.length && segs[end].glue) end++
+  return [...segs.slice(0, at), ...segs.slice(end)]
+}
+
+/** Everything on one line: budgets apart by `gap`, groups apart by the `sep` icon. */
+const oneLine = (segs: Segment[]): Line => {
+  const line: Line = []
+  let prev: string | undefined
+  for (const u of toUnits(segs)) {
+    if (prev !== undefined) line.push(u.group === prev ? { text: CONFIG.gap } : { text: icons.sep, dim: true })
+    line.push(...unitPieces(u))
+    prev = u.group
+  }
+  return line
+}
+
+/** Drops segments in CONFIG.dropOrder until `ok` holds (or nothing more can go). */
+const dropUntil = (segs: Segment[], ok: (s: Segment[]) => boolean): Segment[] => {
   let kept = segs
   for (const id of CONFIG.dropOrder) {
-    if (rowWidth(kept) <= columns) break
-    kept = kept.filter(s => s.id !== id)
+    while (!ok(kept)) {
+      const next = dropOne(kept, id)
+      if (next === kept) break
+      kept = next
+    }
+    if (ok(kept)) break
   }
   return kept
 }
 
-/** One line when it all fits (or is forced), else the rows of CONFIG.rows plus a row for the rest. */
-const toLines = (segs: Segment[], columns: number, mode: Layout, maxRows: number): Segment[][] => {
-  if (maxRows < 2 || mode === 'one' || (mode === 'auto' && rowWidth(segs) <= columns)) return [fit(segs, columns)]
-  const listed = CONFIG.rows.flat()
-  const rows = [...CONFIG.rows.map(ids => segs.filter(s => ids.includes(s.id))), segs.filter(s => !listed.includes(s.id))]
-  return rows
-    .filter(r => r.length > 0)
-    .slice(0, maxRows)
-    .map(r => fit(r[0]?.glue ? [{ ...r[0], glue: false }, ...r.slice(1)] : r, columns))
-    .filter(line => line.length > 0)
+/** A helper unit with its name padded to `nameW` cells, so the figures after it line up. */
+const padName = (u: Unit, nameW: number): Piece[] => {
+  const ps = unitPieces(u)
+  const name = ps[0]?.text.trimEnd() ?? ''
+  const pad = nameW - cells(name)
+  if (pad <= 0) return ps
+  return [{ ...ps[0], text: ps[0].text.replace(name, name + ' '.repeat(pad)) }, ...ps.slice(1)]
+}
+
+/**
+ * The grouped rows: each group starts a row with its label and wraps onto as many rows as it needs.
+ * On the terminal (a monospaced grid) helper budgets sit in equal columns, so wrapped rows line up.
+ */
+const groupRows = (segs: Segment[], columns: number, grid: boolean): Line[] => {
+  const units = toUnits(segs)
+  const used = CONFIG.groups.filter(g => units.some(u => u.group === g.name))
+  const labelW = Math.max(0, ...used.filter(g => g.label).map(g => cells(g.label) + 2))
+  const lines: Line[] = []
+  for (const g of used) {
+    const mine = units.filter(u => u.group === g.name)
+    const indent = g.label ? labelW : 0
+    const avail = Math.max(10, columns - indent)
+    let cellsOf = mine.map(unitPieces)
+    let colW = 0
+    if (grid && g.name === 'helpers') {
+      const nameW = Math.min(CONFIG.nameMax, Math.max(...mine.map(u => cells(unitPieces(u)[0]?.text.trimEnd() ?? ''))))
+      cellsOf = mine.map(u => padName(u, nameW))
+      colW = Math.max(...cellsOf.map(piecesWidth))
+      if (colW > avail) colW = 0
+    }
+    let row: Line = []
+    let w = 0
+    const flush = () => {
+      const lead = indent ? [{ text: (lines.length === firstOf ? g.label : '').padEnd(indent), dim: true }] : []
+      lines.push([...lead, ...row])
+      row = []
+      w = 0
+    }
+    const firstOf = lines.length
+    for (const c of cellsOf) {
+      const cw = colW || piecesWidth(c)
+      const gap = cells(CONFIG.gap)
+      if (row.length && w + gap + cw > avail) flush()
+      if (row.length) {
+        row.push({ text: CONFIG.gap })
+        w += gap
+      }
+      const padTo = colW - piecesWidth(c)
+      row.push(...c, ...(colW && padTo > 0 ? [{ text: ' '.repeat(padTo) }] : []))
+      w += cw
+    }
+    if (row.length) flush()
+  }
+  // Trailing padding is invisible and would only make lines look wider than they are.
+  return lines.map(l => {
+    const last = l[l.length - 1]
+    return last && !last.text.trim() && l.length > 1 ? l.slice(0, -1) : l
+  })
+}
+
+/** One line when it all fits (or is forced, or the band has one row), else the grouped rows within the band's height. */
+const toLines = (segs: Segment[], columns: number, mode: Layout, maxRows: number, grid: boolean): Line[] => {
+  const one = (x: Segment[]) => piecesWidth(oneLine(x)) <= columns
+  if (maxRows < 2 || mode === 'one' || (mode === 'auto' && one(segs))) return [oneLine(dropUntil(segs, one))]
+  const fits = (x: Segment[]) => {
+    const rows = groupRows(x, columns, grid)
+    return rows.length <= maxRows && rows.every(r => piecesWidth(r) <= columns)
+  }
+  return groupRows(dropUntil(segs, fits), columns, grid).slice(0, maxRows)
 }
 
 /**
@@ -1108,25 +1213,16 @@ export const register: Register = on => {
     await read($, tick) // subscribe so the countdowns redraw each minute
     const now = await $.clock.now()
     const ic = e.surface !== 'terminal' && icons === CONFIG.icons ? { ...icons, ...CONFIG.desktopBar } : icons
-    const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic), Math.max(10, e.props.bodyColumns - 1), mode, e.props.maxRows)
-    lastDraw = { surface: e.surface, bodyColumns: e.props.bodyColumns, maxRows: e.props.maxRows, widths: lines.map(rowWidth) }
+    const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic), Math.max(10, e.props.bodyColumns - 1), mode, e.props.maxRows, e.surface === 'terminal')
+    lastDraw = { surface: e.surface, bodyColumns: e.props.bodyColumns, maxRows: e.props.maxRows, widths: lines.map(piecesWidth) }
     if (lines.length === 0) return next(e)
 
     const { Box, Text } = $.ui.resolve(e)
-    const toPieces = (segs: Segment[]) => {
-      const pieces: Piece[] = []
-      segs.forEach((seg, i) => {
-        if (i > 0 && !seg.glue) pieces.push({ text: icons.sep, dim: true })
-        pieces.push(...seg.pieces)
-      })
-      return pieces
-    }
-
     return (
       <Box flexDirection="column">
         {lines.map((line, l) => (
           <Box key={`l${l}`} flexDirection="row">
-            {toPieces(line).map((p, i) => (
+            {line.map((p, i) => (
               <Text key={`p${l}-${i}`} wrap="truncate" color={noColor ? undefined : p.color} dimColor={p.dim} bold={p.bold}>
                 {p.text}
               </Text>

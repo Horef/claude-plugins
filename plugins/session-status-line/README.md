@@ -3,9 +3,10 @@
 A compact status line above the prompt that shows the state of a session at a glance. Besides what Claude Code exposes to mods, it reads a few outside budgets (Kiro, Copilot, Codex, Antigravity, Claude extra usage) every five minutes where their logins exist, and shows the 5h / 7d limits of your other Claude accounts on the same machine; `/status-line quotas off` stops that.
 
 ```
-✅ ◆ Opus 5.5 (M) │ 🟢 ▰▰▱▱▱▱ 30% 296k/1M │ 5h 21% ⟳4h14m │ 7d 30% ⟳4d16h
-Kiro 42% ⟳18d3h │ Copilot 28% ⟳21d16h │ Codex 5h 4% 7d 1% ⟳4h10m │ agy 5h 0% 7d 1% │ Argon 36% ⟳5d4h │ uni 5h 21% 7d 30% ⟳3d4h
-$35.3 │ ⏱8s │ 🗜1 │ 12 turns · 1h20m
+✅ Opus 5.5 ·M   ctx ▰▰▱▱▱▱ 30% 296k/1M   5h 21% ⟳4h14m   7d 30% ⟳4d16h
+helpers  Kiro    42% ⟳18d3h              Copilot 28% ⟳21d16h           Codex   5h 4% 7d 1% ⟳4h10m
+         agy     5h 0% 7d 1%             Argon   36% ⟳5d4h             uni     5h 21% 7d 30% ⟳3d4h
+session  $35.3   ⏱8s   🗜1   12 turns · 1h20m
 ```
 
 The budgets shown depend on which CLIs and logins exist on the machine; the example has them all.
@@ -15,8 +16,8 @@ The budgets shown depend on which CLIs and logins exist on the machine; the exam
 | Part | Source |
 |---|---|
 | ⏳ working / ✅ idle | the band's own "a turn is running" flag |
-| model and effort `(H)` | `$.session.model()`, re-read each turn, after `/model` and once a minute; the effort each main-loop request actually runs with. A model switch shows `⇄` in magenta for three turns |
-| context bar, %, used/total | `$.session.usage()` and `session.measure`; green under 50%, then yellow, orange, red from 90% with a `/compact` hint |
+| model and effort `·H` | `$.session.model()`, re-read each turn, after `/model` and once a minute; the effort each main-loop request actually runs with. A model switch shows `⇄` in magenta for three turns |
+| `ctx` bar, %, used/total | `$.session.usage()` and `session.measure`; green under 50%, then yellow, orange, red from 90% with a `/compact` hint |
 | `5h` / `7d` limits | the rate-limit windows Claude Code reports (subscription accounts only), with time to reset; `⚠` appears only when the average pace would hit the limit well before the reset |
 | `Kiro` | credits used of the month's limit, `+$` overage charges once past it, time to the monthly reset; `Kiro log in` when its login has gone stale. Read from the API `kiro-cli` uses, with the token `kiro-cli` keeps in `~/Library/Application Support/kiro-cli/data.sqlite3` (macOS) or `${XDG_DATA_HOME:-~/.local/share}/kiro-cli/data.sqlite3` (Linux; that path is the platform convention, not confirmed by Kiro's docs); the access token lasts about an hour, so an expired one is refreshed by running `kiro-cli whoami` first. Only your own overage is visible, not a shared organization budget |
 | `Copilot` | premium credits used of the month's entitlement and time to reset, from `gh api /copilot_internal/user` (an internal GitHub endpoint; needs `gh` logged in) |
@@ -30,7 +31,9 @@ The budgets shown depend on which CLIs and logins exist on the machine; the exam
 | ✎ files | distinct files successfully edited or written this session |
 | turns · age | completed turns and session length |
 
-A part with no data is hidden, so each budget appears only where its CLI and login exist. Readings are shared across chats (`$.store`) and taken at most every five minutes; a failed reading keeps the last one, dimmed after 30 minutes. When the row does not fit, it becomes up to three rows: Claude's own state (model, context, 5h and 7d), the helpers' budgets (Kiro, Copilot, Codex, Antigravity, other accounts, extra usage), then the rest (cost, last turn, files, compactions, session); a row that is still too long drops parts from the least important end (`dropOrder` in `CONFIG`).
+A part with no data is hidden, so each budget appears only where its CLI and login exist. Readings are shared across chats (`$.store`) and taken at most every five minutes; a failed reading keeps the last one, dimmed after 30 minutes.
+
+Layout: when everything fits, one line (budgets three spaces apart, groups split by `│`). Otherwise grouped rows: Claude's own state (model, context, 5h, 7d, extra usage), then `helpers` (Kiro, Copilot, Codex, Antigravity, other accounts), then `session` (cost, last turn, files, compactions, turns and age). Each group wraps onto as many rows as it needs, and a budget never splits from its reset time. In the terminal the helpers sit in equal columns with their names padded, so wrapped rows line up; the desktop app's proportional font gets plain spacing. A new provider or account goes into `helpers` with no code change (`groups` in `CONFIG` lists only the Claude and session ids). When the rows would not fit the band's height or width, parts go in `dropOrder`, resets first, one account at a time.
 
 ## Several Claude accounts
 
@@ -53,7 +56,7 @@ The choices are remembered across chats. `NO_COLOR=1` drops colours; `SESSION_ST
 
 From this marketplace: `/plugin install session-status-line@horef-claude-plugins`. To load it from a folder instead, set `CLAUDE_CODE_PLUGIN_DIRS` to the plugin's path in the `settings.json` of `$CLAUDE_CONFIG_DIR` (default `~/.claude`; an `env` entry) and add `CLAUDE_CODE_PLUGIN_DIR_WATCH=1` to reload it on edits.
 
-Colours, thresholds, icons, widths, drop order and the rows are in the `CONFIG` object at the top of `hooks/register.tsx`.
+Colours, thresholds, icons, widths, drop order and the groups are in the `CONFIG` object at the top of `hooks/register.tsx`.
 
 ## Known limits
 
