@@ -2,6 +2,10 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.11.0 (2026-11-13)
+- Step 5: when the lead's own approvals of helper prompts are refused (auto mode), ask the person and prefer helpers with their own judge (O23)
+- The default Claude account (~/.claude) gets 'env -u CLAUDE_CONFIG_DIR claude ...': setting the variable to ~/.claude made Claude Code read another config file and Keychain entry, so helpers showed first-run dialogs and a login screen; command_of and the orphan check follow the new form (O23)
+
 ## 0.10.0 (2026-11-13)
 - other Claude accounts found automatically (config dirs and readings files); account rm sticks, add overrides
 

@@ -70,6 +70,14 @@ check(code == 0 and "wrote  claudeuni-deep" in out and tpl.exists(), "account ad
 cmd = next(l for l in tpl.read_text().splitlines() if l.startswith("command: "))
 check(cmd == f"command: CLAUDE_CONFIG_DIR={home}/.claude-uni claude --model opus --effort high --permission-mode auto", "account template command", cmd)
 check(helpers.command_of("claudeuni-deep") == "claude", "command_of skips the CLAUDE_CONFIG_DIR assignment")
+_claude_cmd = "CLAUDE_CONFIG_DIR={config_dir} claude --model {model} --effort {effort} --permission-mode auto"
+main_cmd = helpers.command_for("claudemain", {"kind": "claude", "config_dir": "~/.claude", "command": _claude_cmd}, "sonnet", "high")
+check(main_cmd == "env -u CLAUDE_CONFIG_DIR claude --model sonnet --effort high --permission-mode auto",
+      "the default account (~/.claude) runs with CLAUDE_CONFIG_DIR unset, not set to ~/.claude (O23)", main_cmd)
+_tpl = tmp / "cfg" / "herdr-core" / "templates" / "zz-envtest.md"
+_tpl.write_text("---\nname: zz-envtest\ncommand: env -u CLAUDE_CONFIG_DIR claude --model sonnet\n---\n")
+check(helpers.command_of("zz-envtest") == "claude", "command_of skips a leading env -u NAME")
+_tpl.unlink()
 user = json.loads((tmp / "cfg" / "herdr-delegate" / "helpers.json").read_text())
 check(user == {"providers": {"claudeuni": {"config_dir": "~/.claude-uni", "kind": "claude", "label": "uni"}}}, "account add stores kind, config_dir, label only", str(user))
 code, out, err = run("account", "add", "bad-name", "~/.claude-x")
