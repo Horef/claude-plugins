@@ -9,6 +9,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 - O3 2026-10-30 [missing] §6 forgetting: `win` observations are per unit, not tied to the rule they protect, so pruning can't tell which rules earned their place; ACE/ExpeL use per-item helpful/harmful counters - consider rule ids or section anchors in wins (claude-code-web, building 0.1.0)
 - O4 2026-10-30 [wish] §5: an adapter that turns `evals/cases.md` into `claude plugin eval` cases would give Claude Code users the with/without-plugin comparison for free; not built because the layout was read from docs, not tried (claude-code-web, building 0.1.0)
 - O21 2026-11-07 [failure] §11 sync / union merge: a branch that resolved O2 (moved to Resolved) merged with main where O2 was still Open; the union merge kept both, so O2 reappeared as open and loop.py check failed (duplicate id). sync or check could drop an Open line whose id is already Resolved, or say which line to remove. (claude-code, PR #46)
+- O22 2026-11-13 [friction] loop.py bump: --obs takes one comma-separated list; passing --obs twice silently kept only the last (a helper resolved O23 but not O22 and fixed LEARNINGS by hand). Accept repeated --obs (action=append) or fail on the second one. (claude-plugins)
 
 ## Resolved
 - O5 2026-10-30 [wish] §2: the seed observations in the other units came from reading, not use; the first real reflection should check how many of them use confirms, which measures how good "reading" evidence is (claude-code-web, building 0.1.0) → 1.1.0
