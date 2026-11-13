@@ -156,6 +156,27 @@ test('a window past its reset counts as 0%; an unreadable file is skipped', asyn
   expect(Object.keys(m.files)).toContain(`${DIR}/ffff0000.json`)
 })
 
+test('an old reading keeps its warning colour and is marked with ~', async ($, on) => {
+  engine(on, {
+    env: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-uni' },
+    files: { [`${DIR}/abcd1234.json`]: other({ at: '2026-11-11T01:00:00Z', seven_day: { percent: 95, resets_at: '2026-11-14T09:00:00Z' } }) },
+  })
+  await measure($)
+  await $.command.run({ command: 'status-line', args: 'live off' } as any)
+  await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
+  const ui = await $.ui.mount({
+    plugin: 'session-status-line', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 400, scroll: { offset: 0, bodyRows: 9 }, view: {} },
+  })
+  const texts = await ui.findAll({ type: 'Text' })
+  await ui.unmount()
+  const line = texts.map((t: any) => t.text).join('')
+  expect(line).toContain('7d ~95%')
+  const pct = texts.find((t: any) => t.text === '95%') as any
+  expect(pct.props.color).toBe('#dc2626')
+  expect(pct.props.dimColor).toBeFalsy()
+})
+
 test('/status-line account-label names this account in its file', async ($, on) => {
   const m = engine(on, { env: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-uni' } })
   await measure($)
