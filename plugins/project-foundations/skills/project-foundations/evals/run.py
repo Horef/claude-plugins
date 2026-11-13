@@ -572,6 +572,85 @@ def main() -> int:
         expect("no Status line" not in p.stdout and "docs/BRIEF.md" not in p.stdout and "docs/ARCHITECTURE.md" not in p.stdout,
                "docs written from the BRIEF and ARCHITECTURE templates, and plan and review Status lines, pass check", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O22: legacy docs citing another ledger's D ids can be exempted from the dangling-citation check
+        root = Path(tmp)
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        (root / "docs/reports").mkdir(parents=True, exist_ok=True)
+        (root / "docs/reports/old.md").write_text("# Old report\n\nStatus: historical\n\nFollows D57 and D58 of the lab ledger.\n", encoding="utf-8")
+        for a in (("init", "-q"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("docs/reports/old.md: cites D57, which is not in docs/DECISIONS.md" in p.stdout,
+               "check warns when a doc cites a D id that DECISIONS.md does not define", p)
+        (root / "docmap.toml").write_text('id_scan_exempt = ["docs/archive/*"]\nid_cite_exempt = ["D57"]\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("cites D57" in p.stdout, "id_scan_exempt and id_cite_exempt do not silence the not-in-DECISIONS warning (they cover the ambiguity check)", p)
+        (root / "docmap.toml").write_text('id_missing_exempt = ["docs/reports/*"]\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("which is not in" not in p.stdout, "id_missing_exempt silences the warning for the matching files", p)
+        (root / "AGENTS.md").write_text("# Demo - agent instructions\n\nA demo project. See D99.\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("AGENTS.md: cites D99, which is not in docs/DECISIONS.md" in p.stdout and "docs/reports/old.md" not in p.stdout,
+               "files outside the exempt glob are still checked", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O23: a forwarding stub at a moved module's old path: importers follow the move
+        root = Path(tmp)
+        stub = ("\"\"\"Forwarding stub: the module moved to pkg.sub.mod.\"\"\"\nimport importlib, sys\n\n"
+                "if __name__ == '__main__':\n    import runpy; runpy.run_module('pkg.sub.mod', run_name='__main__', alter_sys=True)\n"
+                "else:\n    sys.modules[__name__] = importlib.import_module('pkg.sub.mod')\n")
+        files = {
+            "AGENTS.md": "# Demo - agent instructions\n\nA demo project.\n",
+            "docs/STATUS.md": "# Status\nUpdated 2026-10-30.\n",
+            "pkg/README.md": "# pkg/\n\nThe moved package.\n",
+            "pkg/__init__.py": '"""Package."""\n',
+            "pkg/sub/__init__.py": '"""Sub package."""\n',
+            "pkg/sub/README.md": "# pkg/sub/\n\nWhere the module lives now.\n",
+            "pkg/sub/mod.py": '"""The moved module."""\n\n\ndef work(x):\n    return helper(x)\n\n\ndef helper(x):\n    return x\n',
+            "old.py": stub,
+            "short.py": '"""One-line stub."""\nimport importlib, sys\nsys.modules[__name__] = importlib.import_module("pkg.sub.mod")\n',
+            "dyn.py": '"""Not a stub: the target is computed."""\nimport importlib, sys\nsys.modules[__name__] = importlib.import_module("pkg." + "sub.mod")\n',
+            "user_a.py": '"""Imports through the stub."""\nfrom old import work\n\n\ndef a():\n    return work(1)\n',
+            "user_b.py": '"""Imports the stub as a module."""\nimport old\n\n\ndef b():\n    return old.work(2)\n',
+            "user_c.py": '"""Imports through the one-line stub, inside a function."""\n\n\ndef c():\n    from short import work\n    return work(3)\n',
+            "user_d.py": '"""Imports the real module."""\nfrom pkg.sub.mod import work\n\n\ndef d():\n    return work(4)\n',
+        }
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        for a in (("init", "-q"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        sh(root, "git", "add", "-A")
+        p = docmap(root, "show", "pkg/sub/mod.py")
+        imp = next((ln for ln in p.stdout.splitlines() if ln.startswith("imported by:")), "")
+        expect("user_a.py (via stub old.py)" in imp and "user_b.py (via stub old.py)" in imp and "user_c.py (via stub short.py)" in imp
+               and "user_d.py" in imp and "user_d.py (via" not in imp,
+               "show lists importers of a stub under the real module, naming the stub; a direct importer carries no note", p)
+        expect("old.py, " not in imp.replace("(via stub old.py)", ""), "the stub itself is not listed as an importer", p)
+        p = docmap(root, "show", "old.py")
+        expect("forwarding stub" in p.stdout and "pkg/sub/mod.py" in p.stdout and "imported by: —" in p.stdout,
+               "show on the stub says it forwards to the real file and lists no importers of its own", p)
+        p = docmap(root, "uses", "user_a.py")
+        expect("pkg/sub/mod.py (via stub old.py)" in p.stdout, "uses: a stub import is an import of the target, via the stub", p)
+        p = docmap(root, "where", "work")
+        expect("imported by: user_a.py (via stub old.py)" in p.stdout and "user_d.py" in p.stdout, "where: importers of a symbol follow the stub", p)
+        p = docmap(root, "show", "dyn.py")
+        expect("forwarding stub" not in p.stdout, "a computed import_module argument is not treated as a stub", p)
+        p = docmap(root, "deps")
+        expect("user_a -> pkg.sub.mod" in p.stdout and "user_a -> old" not in p.stdout, "deps: the edge goes to the target module", p)
+        p = docmap(root, "calls", "work")
+        expect("user_a.py:6  in a" in p.stdout and "user_c.py" in p.stdout and "user_d.py" in p.stdout and "by name only" not in p.stdout,
+               "calls: a function called through a stub import is a resolved caller, not 'by name only'", p)
+        docmap(root, "update")
+        readme = (root / "pkg/sub/README.md").read_text(encoding="utf-8")
+        row = next((ln for ln in readme.splitlines() if ln.startswith("| `mod.py`")), "")
+        expect("user_a" in row and "user_d" in row, "folder table: the real module's 'Used by' column has the importers of its stubs", p)
+        rootmap = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect("`pkg.sub.mod` — imported by 4" in rootmap and "`old`" not in rootmap.split("Most imported")[-1],
+               "MAP: 'most imported' counts the real module, not the stub's old name", p)
+
     docmap_version = re.search(r'^DOCMAP_VERSION = "(\d+)\.(\d+)\.(\d+)"', DOCMAP.read_text(encoding="utf-8"), re.M)
     plugin_version = re.search(r'"version":\s*"(\d+)\.(\d+)\.(\d+)"', (SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))
     d, v = tuple(map(int, docmap_version.groups())), tuple(map(int, plugin_version.groups()))

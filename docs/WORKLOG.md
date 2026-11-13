@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-13 - project-foundations 5.12.0: citation exemption, stub modules
+
+- O22, O23: `id_missing_exempt` silences "cites D57, which is not in DECISIONS.md" (the other exempt keys cover only the ambiguity check); Retrofit step 6a: free id prefix via `indexes`. Forwarding stubs (`sys.modules[__name__] = importlib.import_module('<literal>')`) count as imports of their target; "(via stub old.py)".
+- Verified: `loop.py eval project-foundations` exit 0 (14 new cases, 9 fail on main's docmap.py); `loop.py check --base origin/main` 0/0; `docmap.py check` 0 errors; read-only run on the TwinProp fork. Not verified: `update` on a real stub project; Node ports.
+
 ## 2026-11-13 - herdr-delegate 0.11.0: default account without CLAUDE_CONFIG_DIR
 
 - **herdr-delegate 0.11.0** (O23, from simple_complex_v1 on 2026-11-13): the rendered command of the default Claude account (`~/.claude`) is now `env -u CLAUDE_CONFIG_DIR claude ...`. Setting the variable to `~/.claude` made Claude Code read `~/.claude/.claude.json` and another Keychain entry, so the helper showed the theme picker and a login screen. `command_of` skips a leading `env -u NAME`; the orphan check matches both forms. Step 5 of SKILL.md: when an auto-mode lead's own `hc keys` approvals are refused, ask the person and prefer helpers with their own judge.
