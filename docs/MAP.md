@@ -15,6 +15,6 @@ symbols of the repo).
 - `sciencefig.check` — imported by 6
 - `sciencefig.morph` — imported by 5
 - `sciencefig.dynamics` — imported by 5
+- `helpers` — imported by 4
 - `sciencefig.anatomy` — imported by 3
 - `sciencefig` — imported by 3
-- `helpers` — imported by 3

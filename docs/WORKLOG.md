@@ -2,6 +2,15 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-13 - model-router 0.23.0, herdr-delegate 0.10.0, session-status-line 0.7.0: installable on other machines
+
+- Owner report: on another person's Mac the router listed Kiro/Copilot/agy (not installed) and said helpers.py was missing; the status line's helper row was too long for all accounts.
+- model-router: no hard-coded helper fallback; with no helpers.py, no `hc` (checked with `hc --version`) or no helper CLI there are no helper steps (rule, plan schema, cards); the pane says helpers are optional and how to enable them (`/plugin install herdr-delegate@<marketplace>` from installed_plugins.json, hc, a CLI); path box behind "Set path by hand". (Sonnet subagent.)
+- herdr-delegate: other Claude accounts discovered from claude-accounts readings and ~/.claude, ~/.claude-*, ~/.claude_* dirs with config markers, only when two or more exist; `account rm` records an exclusion; manual `add` overrides; templates rendered on pick/status/config. (Sonnet subagent.)
+- session-status-line: grouped rows (Claude, `helpers`, `session`) each wrapping onto as many rows as needed; unlisted ids are helpers, so new providers need no code; terminal aligns helper columns; dropOrder applies to the band's height too; look: no status emoji or ◆, `ctx` label, effort `·H`, gaps instead of │ inside groups (owner chose the "labelled grid" mock-up).
+- Commands: `claude plugin test` model-router 81 pass, session-status-line 16 pass; `loop.py eval` model-router, herdr-delegate, session-status-line exit 0; `loop.py check --base origin/main` 0/0; `docmap.py check` 0 errors.
+- Unverified: layouts in the real terminal and desktop app; a fresh machine without helpers.
+
 ## 2026-11-11 - herdr-delegate 0.9.0, session-status-line 0.6.0, model-router 0.22.0: other Claude accounts and Codex
 
 - Owner request: two Claude accounts on one Mac (personal, university Team plan for scientists; separate `CLAUDE_CONFIG_DIR`) should see each other's limits and use each other as helpers; add Codex; make status line and router general for other users. Shared contract (account key = sha256[:8] of the config dir or `default`; readings in `$XDG_CONFIG_HOME/claude-accounts/<key>.json` written by each account's status line) designed here, implemented by three Copilot helpers in parallel worktrees after a generality audit (Haiku).
