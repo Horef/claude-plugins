@@ -4,6 +4,7 @@ Updated 2026-11-13. Snapshot only - overwrite each session; history is in `docs/
 ## Works (verified)
 | Capability | How verified |
 |---|---|
+| project-foundations 5.12.0: `id_missing_exempt`; Retrofit step 6a; forwarding stubs resolved by docmap | `loop.py eval project-foundations` exit 0; `loop.py check` 0/0; `docmap.py check` 0 errors, 2026-11-13. Branch `pf-docmap-stubs`, unpushed; Node ports not updated |
 | model-router 0.23.0, herdr-delegate 0.10.0, session-status-line 0.7.0 (2026-11-13): helpers only from what is installed (no helpers.py / hc / CLI → none, pane explains how to enable); other Claude accounts found automatically; status line in grouped rows that wrap as needed, aligned helper columns | `claude plugin test` model-router 81 pass, session-status-line 16 pass; `loop.py eval` of the three units exit 0; `loop.py check --base origin/main` 0/0; `account list` here unchanged (personal, uni). Status line and pane layout not seen in a real terminal; not yet tried on a machine without helpers |
 | Marketplace with five plugins, all units adopted (LEARNINGS, CHANGELOG, evals) | `loop.py check --base origin/main` → 0 errors, 1 warning (project-foundations SKILL.md 505/500 lines), 2026-10-30 |
 | `loop.py` note/status/digest/check/eval/bump/absorb/pack/link/sync/hook/new | `loop.py eval strange-loop` → 16 unit tests OK (incl. two clones syncing through one remote, new and --from), 2026-10-30 |

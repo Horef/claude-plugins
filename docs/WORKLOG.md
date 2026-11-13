@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-13 - project-foundations 5.12.0: citation exemption, stub modules
+
+- O22, O23: `id_missing_exempt` silences "cites D57, which is not in DECISIONS.md" (the other exempt keys cover only the ambiguity check); Retrofit step 6a: free id prefix via `indexes`. Forwarding stubs (`sys.modules[__name__] = importlib.import_module('<literal>')`) count as imports of their target; "(via stub old.py)".
+- Verified: `loop.py eval project-foundations` exit 0 (14 new cases, 9 fail on main's docmap.py); `loop.py check --base origin/main` 0/0; `docmap.py check` 0 errors; read-only run on the TwinProp fork. Not verified: `update` on a real stub project; Node ports.
+
 ## 2026-11-13 - session-status-line 0.7.1: easier to read at a glance
 
 - Owner's screenshot of 0.7.0: Kiro 103% +$2.78 drawn plain (an old reading's dim washed out its red), helpers ran together. Owner chose to keep every number, no meters; asked for separators and colour by meaning.
