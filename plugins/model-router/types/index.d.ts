@@ -78,8 +78,8 @@ export type ModelsCache = Record<string, { date?: string; checked?: string; mode
 
 /** What the router has read of helpers.py: where it is, its config, the shipped defaults, the model cache, and the last check's warnings. */
 export type HelperState = {
-  /** 'unknown': not looked for yet; 'missing': no helpers.py found; 'error': it ran and failed; 'ready'. */
-  status: 'unknown' | 'ready' | 'missing' | 'error'
+  /** 'unknown': not looked for yet; 'missing': no helpers.py found; 'nohc': Herdr's hc is not on PATH; 'error': it ran and failed; 'ready'. */
+  status: 'unknown' | 'ready' | 'missing' | 'nohc' | 'error'
   script?: string
   config?: HelperConfig
   defaults?: HelperConfig
@@ -89,6 +89,8 @@ export type HelperState = {
   /** What went wrong, in a line, for the pane. */
   message?: string
   busy?: boolean
+  /** The marketplace this plugin came from, for the install line shown when helpers.py or hc is missing. */
+  marketplace?: string
 }
 
 /** The model and level the router chose for a helper step, with the template to launch. */

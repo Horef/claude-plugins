@@ -71,6 +71,7 @@ import {
   modelOf,
   moveHelper,
   newStep,
+  helpersLive,
   noHelperCli,
   nextRung,
   normKind,
@@ -131,6 +132,7 @@ const lastMain = atom({ plugin: 'model-router', key: 'lastMain' } as const, { co
 const ruleKinds = atom({ plugin: 'model-router', key: 'ruleKinds' } as const, [])
 const genomeNoted = atom({ plugin: 'model-router', key: 'genomeNoted' } as const, [])
 const draft = atom({ plugin: 'model-router', key: 'draft' } as const, {})
+const showHelperPath = atom({ plugin: 'model-router', key: 'showHelperPath' } as const, false)
 const helperCfg = atom({ plugin: 'model-router', key: 'helperCfg' } as const, { status: 'unknown', warnings: [] })
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted' }
@@ -739,12 +741,44 @@ const firstLine = (text: string) =>
     ?.replace(/^error:\s*/i, '')
     .slice(0, 200) ?? ''
 
+/** Claude Code's config directory: $CLAUDE_CONFIG_DIR, else ~/.claude. */
+const claudeDir = async ($: EngineInterface) => {
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? (home ? `${home.replace(/[\\/]+$/, '')}/.claude` : undefined)
+}
+
+/** The marketplace this plugin was installed from (for the install line shown in the pane), read from installed_plugins.json; the author's own when unknown. */
+const OWN_MARKETPLACE = 'horef-claude-plugins'
+async function marketplaceName($: EngineInterface): Promise<string> {
+  try {
+    const claude = await claudeDir($)
+    const text = claude ? await readText($, `${claude.replace(/[\\/]+$/, '')}/plugins/installed_plugins.json`) : undefined
+    const keys = Object.keys((JSON.parse(text ?? '{}') as { plugins?: Record<string, unknown> }).plugins ?? {})
+    const mine = keys.find(k => /^model-router@[\w.-]+$/.test(k))
+
+    return mine ? mine.slice('model-router@'.length) : OWN_MARKETPLACE
+  } catch {
+    return OWN_MARKETPLACE
+  }
+}
+
+/** Whether Herdr's `hc` can be started (helpers run through it). Only a failure to start it, or the shell's "not found", counts as missing. */
+async function hcOnPath($: EngineInterface) {
+  try {
+    const r = await $.process.run(['hc', '--version'], { timeoutMs: 10_000 })
+
+    return r.exitCode !== 127 && r.exitCode !== 126
+  } catch {
+    return false
+  }
+}
+
 /** helpers.py: the path set in Settings, else the newest installed herdr-delegate skill's (under $CLAUDE_CONFIG_DIR, default ~/.claude: plugins/cache/<marketplace>/herdr-delegate/<version>/...). */
 async function findHelpers($: EngineInterface, set: Settings): Promise<string | undefined> {
   if (set.helpers.script) return set.helpers.script
   try {
-    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-    const claude = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? (home ? `${home.replace(/[\\/]+$/, '')}/.claude` : undefined)
+    const claude = await claudeDir($)
     if (!claude) return undefined
     const root = `${claude.replace(/[\\/]+$/, '')}/plugins/cache`
     const found: { path: string; version: string }[] = []
@@ -782,16 +816,30 @@ const modelsPath = async ($: EngineInterface) => {
   return base ? `${base}/herdr-delegate/models.json` : undefined
 }
 
-/** Reads helpers.py's effective config, the shipped defaults beside it and the model cache; run at the start, when Helpers go on, and after a change. */
+/** Reads the helper config, and keeps the plan tool's helper offer in step with whether helpers can run now. */
 async function loadHelperConfig($: EngineInterface) {
+  await readHelperConfig($)
+  await syncPlanTool($)
+}
+
+/** Reads helpers.py's effective config, the shipped defaults beside it and the model cache; run at the start, when Helpers go on, and after a change. */
+async function readHelperConfig($: EngineInterface) {
   const set = await read($, settings)
   if (!set.helpers.enabled) return
   madeTemplates.clear()
   const keep = (await read($, helperCfg)).warnings
   const script = await findHelpers($, set)
+  // No helper can run without herdr-delegate's helpers.py and Herdr's hc: then there are no helpers (no hard-coded ones).
   if (!script) {
     setHelperConfig(undefined)
-    await update($, helperCfg, () => ({ status: 'missing', warnings: [] }))
+    const marketplace = await marketplaceName($)
+    await update($, helperCfg, () => ({ status: 'missing', warnings: [], marketplace }))
+    return
+  }
+  if (!(await hcOnPath($))) {
+    setHelperConfig(undefined)
+    const marketplace = await marketplaceName($)
+    await update($, helperCfg, () => ({ status: 'nohc', script, warnings: [], marketplace }))
     return
   }
   try {
@@ -816,9 +864,6 @@ async function loadHelperConfig($: EngineInterface) {
   }
   await resolveHelperPicks($)
 }
-
-/** The shell line for changing a tier by hand, shown where the router cannot run helpers.py itself. */
-const SET_BY_HAND = 'python3 <path to herdr-delegate>/skills/herdr-delegate/scripts/helpers.py set <provider> <tier> model=<model> effort=<effort>'
 
 /**
  * Changes a provider's tier through `helpers.py set` (which checks the model and level and renders the template), then reads the config again.
@@ -947,16 +992,31 @@ async function applyHelperAdvice($: EngineInterface, a: HelperAdvice) {
 
 // --- The plan tool ---------------------------------------------------------------
 
+/** Whether the plan tool as last registered offers helper steps (undefined: not registered yet this session). */
+let planToolHelpers: boolean | undefined
+
+/** Registers the plan tool again when whether helpers can run has changed since it was registered. */
+async function syncPlanTool($: EngineInterface) {
+  if (planToolHelpers === undefined || planToolHelpers === helpersLive(await read($, settings))) return
+  try {
+    await registerPlanTool($)
+  } catch {
+    // Keep the first registration; see registerPlanTool.
+  }
+}
+
 /**
- * Registers the plan tool. The schema offers where = 'helper' only while Helpers are on,
+ * Registers the plan tool. The schema offers where = 'helper' only while Helpers are on and can run,
  * so with them off it is the 0.9.3 schema exactly. It is registered when the chat starts
  * and again when Helpers are switched in the pane: a name registered again is replaced
  * (the engine's documented behaviour). The tool call also stores 'helper' as 'agent' while off.
  */
 async function registerPlanTool($: EngineInterface) {
   const set = await read($, settings)
-  const wheres = set.helpers.enabled ? ['agent', 'here', 'helper'] : ['agent', 'here']
-  const helpersOn = set.helpers.enabled
+  // Helpers are offered only when they can run: on, with helpers.py, hc and a helper CLI found.
+  const helpersOn = helpersLive(set)
+  planToolHelpers = helpersOn
+  const wheres = helpersOn ? ['agent', 'here', 'helper'] : ['agent', 'here']
   const hereOn = set.hereEffort.enabled
   const id = { type: 'string', description: 'Step id' }
   // Offered only while here-step effort or helpers are on, so with both off the schema is as before.
@@ -1084,7 +1144,7 @@ async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers'
   // says where the orders stand, and none when they are back to what the chat was told.
   const knows = await read($, toldHelpers)
   await update($, notes, n => n.filter(x => !x.startsWith(HELPER_NOTE)))
-  if (after.helpers.enabled && knows && knows !== helperSignature(after)) {
+  if (helpersLive(after) && knows && knows !== helperSignature(after)) {
     const fusion = after.helpers.fusion === 'off' ? '' : ` (Copilot Fusion ${after.helpers.fusion})`
     await update($, notes, n => [...n, `${HELPER_NOTE}${fusion}; use these instead of rule 6's: ${helperSignature(after)}.`])
   }
@@ -1206,14 +1266,14 @@ const policy = (set: Settings, kinds: readonly string[] = []) => {
   const tiers = TIER_ORDER.map(t => `- ${t} (${rungLabel(set.tiers[t])}): ${TIER_USE[t]}`).join('\n')
   const skills = Object.entries(set.skills)
   // With helpers on but no helper CLI installed, the rules do not advertise helpers or their orders.
-  const helpersLive = set.helpers.enabled && !noHelperCli()
+  const live = helpersLive(set)
   const skillRule = skills.length
-    ? `\n${helpersLive ? 7 : 6}. These skills run in a subagent on a tier: ${skills.map(([n, t]) => `${n} (${t})`).join(', ')}. To use one, delegate with the Agent tool, its description starting "[${SKILL_TAG}<name>]", and a brief that tells the subagent to invoke that skill with everything it needs from this conversation.`
+    ? `\n${live ? 7 : 6}. These skills run in a subagent on a tier: ${skills.map(([n, t]) => `${n} (${t})`).join(', ')}. To use one, delegate with the Agent tool, its description starting "[${SKILL_TAG}<name>]", and a brief that tells the subagent to invoke that skill with everything it needs from this conversation.`
     : ''
 
   const h = set.helpers
   const usageCmd = `python3 ${h.script ? h.script : `<the ${h.skill} skill's folder>/scripts/helpers.py`} usage <the helper's name>`
-  const helperRule = helpersLive
+  const helperRule = live
     ? `\n6. where = "helper" runs a step on an agent from another subscription or account, through the ${h.skill} skill. ${
         h.use === 'all'
           ? 'Use it for every self-contained step that would otherwise be "agent".'
@@ -1232,7 +1292,7 @@ The user installed this mod so that each step of a task runs on the cheapest mod
 ${tiers}
 3. where = "here" for steps that need this conversation's accumulated context or back-and-forth with the user, and for small steps (under ~5 tool calls: a subagent costs ~15-40k tokens just to start). where = "agent" for self-contained steps, above all ones that read a lot. A "here" step runs on this chat's own model and thinking level, which no tier can change: still give it the tier its work needs, since that is the default if the user sends it to a subagent, and the router flags a here step rated above this chat's model. Do not mark a step "light" to mean "do it quickly here".
 4. Delegate an "agent" step with the Agent tool, its description starting with "[<step id>]". Do not set model or effort: the router sets them from the plan. Never use subagent_type "fork" for a routed step, since a fork ignores the model. Delegate a part under its own id ("[s3.a]"); with "count": N make N Agent calls with that id, started together, and the part is done when all N finish. Write a self-contained brief: goal, files, what to return. Light-tier briefs ask for a findings list, not fixes; spot-check surprising findings. If a light result is weak, say so: the user can rerun the step one rung higher from the pane.
-5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them. A group is done when all its parts are; naming it in done marks its unfinished parts done. Every delegated step (a subagent${h.enabled ? ' or helper' : ''} step, parts included) needs a verdict once you have checked its result: call ${PLAN_TOOL} with done: [{id, verdict, why}] (a subagent step is marked done when its agent ends; still give it one). The verdict says what happened, not how it felt: "ok" = you used the result as returned or with small edits; "weak" = it needed a rerun, you redid part of it, or review found a substantive error; "overkill" = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier. why: a few words.${helperRule}${skillRule}${
+5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them. A group is done when all its parts are; naming it in done marks its unfinished parts done. Every delegated step (a subagent${live ? ' or helper' : ''} step, parts included) needs a verdict once you have checked its result: call ${PLAN_TOOL} with done: [{id, verdict, why}] (a subagent step is marked done when its agent ends; still give it one). The verdict says what happened, not how it felt: "ok" = you used the result as returned or with small edits; "weak" = it needed a rerun, you redid part of it, or review found a substantive error; "overkill" = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier. why: a few words.${helperRule}${skillRule}${
     set.hereEffort.enabled ? `\n\nHere-step effort (an experiment the user turned on): ${hereEffortRule(set)}` : ''
   }`
 }
@@ -1312,6 +1372,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const past = await read($, history)
   const seen = await read($, seenSkills)
   const isSettingsOpen = await read($, showSettings)
+  const pathOpen = await read($, showHelperPath)
   const known = await read($, told)
 
   // Groups are the sum of their parts: counted once, through the parts.
@@ -1331,6 +1392,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   // Helper models: what helpers.py holds (read at the start and after a change), and the advice the history gives for them.
   const hs = await read($, helperCfg)
   const hcfg = hs.status === 'ready' ? hs.config : undefined
+  // Helpers are on and can run (helpers.py, hc and a helper CLI found): only then are orders and models shown.
+  const helpersOn = helpersLive(set)
   const helperAdvice = set.helpers.enabled ? helperSuggestions(past, set, hcfg, hs.models) : []
   // Auto mode: the rung each kind has learned, for the cards (nothing while it is off).
   const learned = set.autoRoute ? learnedRungs(past, set) : undefined
@@ -1565,7 +1628,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         [
           { value: 'agent', label: 'subagent' },
           { value: 'here', label: 'here' },
-          ...(set.helpers.enabled || s.where === 'helper' ? [{ value: 'helper', label: 'helper' }] : []),
+          ...(helpersLive(set) || s.where === 'helper' ? [{ value: 'helper', label: 'helper' }] : []),
         ],
         v => void paneEdit($, s.id, { where: v as Where }),
       ),
@@ -1939,7 +2002,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {switchRow(
             'auto-route',
             'Auto mode',
-            `A subagent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.${set.helpers.enabled ? ' A helper step gets its model the same way.' : ''}`,
+            `A subagent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.${helpersLive(set) ? ' A helper step gets its model the same way.' : ''}`,
             set.autoRoute,
             () =>
               void (async () => {
@@ -2055,15 +2118,55 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             />
           )}
 
-          {group('Helpers', `Run long self-contained steps on agents from other subscriptions or Claude accounts${hcfg ? ` (${Object.entries(hcfg.providers).map(([n, p]) => p.label ?? n).join(', ')})` : ''}, started by a delegation skill. Needs that skill and herdr-core hc; with none usable, steps run as subagents.`)}
-          {set.helpers.enabled && hs.status === 'ready' && noHelperCli() && (
-            <Text key="helpers-no-cli" color="warning" size="footnote" wrap="wrap">No helper CLI installed: helpers are off for now and the rules do not mention them.</Text>
-          )}
+          {group('Helpers', 'Optional: run long self-contained steps on agents from other subscriptions or Claude accounts, started by herdr-delegate through Herdr. Without them every step runs as a Claude subagent.')}
           {switchRow('helpers', 'Helpers (other subscriptions)', 'Let plans send steps to a helper.', set.helpers.enabled, () =>
             void editHelpers($, { enabled: !set.helpers.enabled }),
             differs.helpers,
           )}
-          {set.helpers.enabled && (
+          {set.helpers.enabled && !helpersOn && (
+            <Box key="helpers-none" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
+              {hs.status === 'unknown' && <Text dimColor size="footnote">Not read yet.</Text>}
+              {hs.status === 'error' && <Text color="warning" size="footnote" wrap="wrap">{hs.message ?? 'helpers.py did not answer.'}</Text>}
+              {hs.status === 'ready' && noHelperCli() && (
+                <Text key="helpers-no-cli" color="warning" size="footnote" wrap="wrap">No helper CLI is installed: install at least one (Kiro, Copilot, Codex, Antigravity, or another Claude account), then look again. Until then helpers are off and the rules do not mention them.</Text>
+              )}
+              {(hs.status === 'missing' || hs.status === 'nohc') && (
+                <Box key="helpers-how" flexDirection="column">
+                  <Text size="footnote" wrap="wrap">
+                    {hs.status === 'nohc'
+                      ? "Helpers run through Herdr's hc, which was not found on your PATH. Model-router works without it: every step runs as a Claude subagent."
+                      : 'Helpers are agents on other subscriptions or accounts. They are optional: model-router works without them, running every step as a Claude subagent.'}
+                  </Text>
+                  <Text dimColor size="footnote" wrap="wrap">To enable them:</Text>
+                  {hs.status === 'missing' && (
+                    <Text dimColor size="footnote" wrap="wrap">{`1. Install herdr-delegate from the same marketplace: /plugin install herdr-delegate@${hs.marketplace ?? 'horef-claude-plugins'}`}</Text>
+                  )}
+                  <Text dimColor size="footnote" wrap="wrap">{`${hs.status === 'missing' ? '2' : '1'}. Install Herdr's hc and put it on your PATH.`}</Text>
+                  <Text dimColor size="footnote" wrap="wrap">{`${hs.status === 'missing' ? '3' : '2'}. Install at least one helper CLI: Kiro, Copilot, Codex, Antigravity, or another Claude account.`}</Text>
+                </Box>
+              )}
+              <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+                <Button key="helpers-reload" plain onPress={() => void loadHelperConfig($)}>
+                  Look again
+                </Button>
+                <Button key="helpers-path-toggle" plain dimColor onPress={() => void update($, showHelperPath, v => !v)}>
+                  {pathOpen ? 'Hide path' : 'Set path by hand'}
+                </Button>
+              </Box>
+              {pathOpen && Input && (
+                <Input
+                  key="helpers-script"
+                  placeholder={`Path to helpers.py (now: ${set.helpers.script || 'the newest installed herdr-delegate'}; empty to look it up)`}
+                  submitLabel="Set"
+                  onSubmit={v => {
+                    const path = asScriptPath(v)
+                    if (path !== undefined || !v.trim()) void editHelpers($, { script: path ?? '' })
+                  }}
+                />
+              )}
+            </Box>
+          )}
+          {helpersOn && (
             <Box key="helpers-detail" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
               <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
                 <Box flexDirection="column" flexShrink={1}>
@@ -2182,20 +2285,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                         {hs.busy ? 'Checking…' : 'Check models'}
                       </Button>
                     )}
-                    {hs.status !== 'ready' && (
-                      <Button key="helpers-reload" plain onPress={() => void loadHelperConfig($)}>
-                        Look again
-                      </Button>
-                    )}
                   </Box>
                 </Box>
-                {hs.status === 'missing' && (
-                  <Text color="warning" size="footnote" wrap="wrap">
-                    {`helpers.py was not found (herdr-delegate 0.6.0 or later, installed from the marketplace, or the path below). Until then the models cannot be changed here; by hand: ${SET_BY_HAND}`}
-                  </Text>
-                )}
-                {hs.status === 'error' && <Text color="warning" size="footnote" wrap="wrap">{hs.message ?? 'helpers.py did not answer.'}</Text>}
-                {hs.status === 'unknown' && <Text dimColor size="footnote">Not read yet.</Text>}
                 {hs.message && hs.status === 'ready' && <Text color="warning" size="footnote" wrap="wrap">{hs.message}</Text>}
                 {hs.warnings.map((w, i) => (
                   <Text key={`helper-warning:${i}`} color="warning" size="footnote" wrap="wrap">{w}</Text>
@@ -2463,6 +2554,7 @@ export const register: Register = on => {
     }
     await $.command.register({ name: 'router', description: 'Show the model-router pane' })
     setHelperConfig(undefined)
+    planToolHelpers = undefined
     await loadHelperConfig($)
     await registerPlanTool($)
     await refreshStatus($)
@@ -2531,7 +2623,7 @@ export const register: Register = on => {
       flat.steps.map(s => {
         const was = isNewPlan ? undefined : old.find(o => o.id === s.id)
         // With Helpers off, a helper step is a normal subagent step.
-        const where: Where = s.where === 'helper' && !set.helpers.enabled ? 'agent' : s.where
+        const where: Where = s.where === 'helper' && !helpersLive(set) ? 'agent' : s.where
         const shape = { parent: s.parent, group: s.group || undefined, count: s.count, kind: s.kind }
 
         return { ...(was ? { ...was, title: s.title, tier: s.tier, where } : newStep(s.id, s.title, s.tier, where)), ...shape }
