@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-13 - herdr-delegate 0.11.0: default account without CLAUDE_CONFIG_DIR
+
+- **herdr-delegate 0.11.0** (O23, from simple_complex_v1 on 2026-11-13): the rendered command of the default Claude account (`~/.claude`) is now `env -u CLAUDE_CONFIG_DIR claude ...`. Setting the variable to `~/.claude` made Claude Code read `~/.claude/.claude.json` and another Keychain entry, so the helper showed the theme picker and a login screen. `command_of` skips a leading `env -u NAME`; the orphan check matches both forms. Step 5 of SKILL.md: when an auto-mode lead's own `hc keys` approvals are refused, ask the person and prefer helpers with their own judge.
+- Verified: `loop.py eval herdr-delegate` 0 failures; the two new `account_cases.py` checks fail on the old `helpers.py` and pass on the new; `loop.py check --base origin/main` 0 errors. The fixed form was also used live (three hand-patched templates, a helper started logged in at once).
+
 ## 2026-11-13 - session-status-line 0.7.1: easier to read at a glance
 
 - Owner's screenshot of 0.7.0: Kiro 103% +$2.78 drawn plain (an old reading's dim washed out its red), helpers ran together. Owner chose to keep every number, no meters; asked for separators and colour by meaning.

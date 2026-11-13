@@ -170,8 +170,13 @@ def command_of(name):
                     words = shlex.split(text)
                 except ValueError:
                     words = text.split()
-                # Skip leading VAR=value assignments (Fusion's feature flags, a Claude account's CLAUDE_CONFIG_DIR).
+                # Skip leading VAR=value assignments (Fusion's feature flags, a Claude account's CLAUDE_CONFIG_DIR) and a
+                # leading `env [-u NAME]...` (the default Claude account unsets CLAUDE_CONFIG_DIR).
                 words = [w for w in words if not re.match(r"[A-Za-z_]\w*=", w)]
+                if words and words[0] == "env":
+                    words = words[1:]
+                    while len(words) >= 2 and words[0] == "-u":
+                        words = words[2:]
                 return words[0] if words else None
     except OSError:
         return None
@@ -326,7 +331,7 @@ def auto_account_templates(cfg):
                 text = path.read_text()
             except OSError:
                 continue
-            if path.stem not in specs and is_generated(text) and "CLAUDE_CONFIG_DIR=" in text:
+            if path.stem not in specs and is_generated(text) and "CLAUDE_CONFIG_DIR" in text:
                 plan.append(("orphan", path.stem))
     if plan:
         apply_plan(cfg, plan)
@@ -738,7 +743,12 @@ def settings_file(pname):
 
 def command_for(pname, prov, model, effort):
     config_dir = shlex.quote(written_dir(prov["config_dir"])) if prov.get("config_dir") else ""
-    return fill(prov["command"], model=model, effort=effort, model_id=full_model_id(prov, model, effort),
+    pattern = prov["command"]
+    if prov.get("config_dir") and account_key(prov["config_dir"]) == "default":
+        # The default account (~/.claude) is the one Claude Code uses with CLAUDE_CONFIG_DIR UNSET: setting it, even to
+        # ~/.claude, makes Claude Code read ~/.claude/.claude.json and another Keychain entry (first-run dialogs, login).
+        pattern = pattern.replace("CLAUDE_CONFIG_DIR={config_dir}", "env -u CLAUDE_CONFIG_DIR")
+    return fill(pattern, model=model, effort=effort, model_id=full_model_id(prov, model, effort),
                 settings=str(settings_file(pname)), config_dir=config_dir)
 
 
