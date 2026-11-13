@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-13 - session-status-line 0.7.1: easier to read at a glance
+
+- Owner's screenshot of 0.7.0: Kiro 103% +$2.78 drawn plain (an old reading's dim washed out its red), helpers ran together. Owner chose to keep every number, no meters; asked for separators and colour by meaning.
+- Dim `│` between budgets (on the terminal they fall on the column boundaries and line up), `┃` between groups on one line; old readings keep their colour with a dim `~` mark; overage bold red; session row dim.
+- Commands: `claude plugin test plugins/session-status-line` 17 pass (new: old reading keeps colour); `loop.py eval session-status-line` exit 0; `loop.py check --base origin/main` 0/0.
+
 ## 2026-11-13 - model-router 0.23.0, herdr-delegate 0.10.0, session-status-line 0.7.0: installable on other machines
 
 - Owner report: on another person's Mac the router listed Kiro/Copilot/agy (not installed) and said helpers.py was missing; the status line's helper row was too long for all accounts.
