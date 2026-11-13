@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.7.0 (2026-11-13)
+- grouped rows that wrap as needed (Claude, helpers, session), aligned helper columns, calmer look
+
 ## 0.6.0 (2026-11-11)
 - Other Claude accounts' 5h/7d limits (readings files, label command, optional live read), Codex budget, Kiro Linux path, agy fallback only if present, per-reader labels
 

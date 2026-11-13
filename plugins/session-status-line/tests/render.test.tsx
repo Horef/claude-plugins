@@ -2,10 +2,10 @@
 // narrow width with seeded figures, and checks segments drop in order.
 import { test, expect, mock } from 'claude-code/testing'
 
-const draw = async ($: any, surface: 'terminal' | 'desktop', bodyColumns: number, isWorking = false) => {
+const draw = async ($: any, surface: 'terminal' | 'desktop', bodyColumns: number, isWorking = false, maxRows = 10) => {
   const ui = await $.ui.mount({
     plugin: 'session-status-line', surface, component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking, maxRows: 10, bodyColumns, scroll: { offset: 0, bodyRows: 9 }, view: {} },
+    props: { hasSurvey: false, isWorking, maxRows, bodyColumns, scroll: { offset: 0, bodyRows: 9 }, view: {} },
   })
   const texts = await ui.findAll({ type: 'Text' })
   await ui.unmount()
@@ -41,7 +41,7 @@ test('renders and drops segments when narrow', async ($, on) => {
   for (const surface of ['terminal', 'desktop'] as const) {
     const wide = await draw($, surface, 200)
     console.log(surface, 'wide  :', wide)
-    expect(wide).toContain('Sonnet 5.5 (H)')
+    expect(wide).toContain('Sonnet 5.5 ·H')
     expect(wide).toContain('5h 24% ⟳2h10m')
     expect(wide).toContain('7d 81% ⟳3d4h ⚠21h')
     expect(wide).toContain('⏱1s')
@@ -160,7 +160,7 @@ test('a rejected Kiro token also asks to log in', async ($, on) => {
   expect(await draw($, 'terminal', 220)).toContain('Kiro log in')
 })
 
-test('Antigravity limits and the three rows', async ($, on) => {
+test('Antigravity limits and the grouped rows', async ($, on) => {
   quotaEngine(on)
   await $.session.measure({ context: { tokens: 296_000, window: 1_000_000, percent: 30 }, rateLimits: [
     { kind: 'five_hour', percentUsed: 21, resetsAt: '2026-10-31T16:14:00Z' },
@@ -171,11 +171,22 @@ test('Antigravity limits and the three rows', async ($, on) => {
   console.log('agy wide:', wide)
   expect(wide).toContain('agy 5h 21% 7d 1%')
   expect(wide).toContain('Argon 36% ⟳5d4h')
-  // Narrow enough to split: Claude's own row, then the helpers, then the rest (rows join without a separator).
+  // Narrow enough to split: Claude's own row, then the helpers wrapping onto as many rows as they need
+  // in aligned columns (names padded to the longest), then the session; rows join without a separator here.
   const split = await draw($, 'terminal', 120)
   console.log('rows:', split)
   const dbg = await $.command.run({ command: 'status-line', args: 'debug' } as any)
-  expect((dbg as any).text).toContain('3 line(s)')
-  expect(split).toContain('7d 30% ⟳3d16hKiro 103%')
-  expect(split).toContain('Argon 36% ⟳5d4h │ extra $12.40/$50$35.3')
+  expect((dbg as any).text).toContain('4 line(s)')
+  expect(split).toContain('7d 30% ⟳3d16h   extra $12.40/$50helpers  Kiro    103% +$2.37 ⟳12h00m   Copilot 100% ⟳12h00m')
+  expect(split).toContain('         Argon   36% ⟳5d4hsession  $35.3')
+  // Every drawn line fits the band.
+  const widths = /of ([\d + ]+) columns/.exec((dbg as any).text)![1].split(' + ').map(Number)
+  expect(Math.max(...widths)).toBeLessThanOrEqual(119)
+  // A band of three rows: the least important parts go first, Claude's own row stays.
+  const short = await draw($, 'terminal', 120, false, 3)
+  console.log('short:', short)
+  const dbg3 = await $.command.run({ command: 'status-line', args: 'debug' } as any)
+  expect((dbg3 as any).text).toMatch(/[123] line\(s\)/)
+  expect(short).toContain('ctx ▰▰▱▱▱▱ 30%')
+  expect(short).toContain('5h 21%')
 })
