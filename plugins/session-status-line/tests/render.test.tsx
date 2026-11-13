@@ -177,7 +177,8 @@ test('Antigravity limits and the grouped rows', async ($, on) => {
   console.log('rows:', split)
   const dbg = await $.command.run({ command: 'status-line', args: 'debug' } as any)
   expect((dbg as any).text).toContain('4 line(s)')
-  expect(split).toContain('7d 30% ⟳3d16h   extra $12.40/$50helpers  Kiro    103% +$2.37 ⟳12h00m   Copilot 100% ⟳12h00m')
+  // Dim separators between budgets fall on the column boundaries, so they line up down the helper rows.
+  expect(split).toContain('7d 30% ⟳3d16h │ extra $12.40/$50helpers  Kiro    103% +$2.37 ⟳12h00m │ Copilot 100% ⟳12h00m        │ agy')
   expect(split).toContain('         Argon   36% ⟳5d4hsession  $35.3')
   // Every drawn line fits the band.
   const widths = /of ([\d + ]+) columns/.exec((dbg as any).text)![1].split(' + ').map(Number)

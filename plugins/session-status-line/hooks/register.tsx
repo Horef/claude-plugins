@@ -16,7 +16,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Win } from '../types'
 
-const VERSION = '0.7.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.7.1' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -37,14 +37,14 @@ const CONFIG = {
     working: '⏳', idle: '✅',
     switched: '⇄', effort: '·',
     barFull: '▰', barEmpty: '▱',
-    reset: '⟳', pace: '⚠', turn: '⏱', files: '✎', compact: '🗜', sep: ' │ ',
+    reset: '⟳', pace: '⚠', turn: '⏱', files: '✎', compact: '🗜', sep: '  ┃  ',
   },
   // Used when SESSION_STATUS_ASCII is set (terminals without emoji fonts).
   asciiIcons: {
     working: '*', idle: '-',
     switched: '<>', effort: '/',
     barFull: '#', barEmpty: '.',
-    reset: 'reset ', pace: '! ', turn: 'turn ', files: 'files ', compact: 'compacted ', sep: ' | ',
+    reset: 'reset ', pace: '! ', turn: 'turn ', files: 'files ', compact: 'compacted ', sep: ' || ',
   },
   // Proportional fonts (the desktop app) draw ▰▱ at uneven sizes; these stay even.
   desktopBar: { barFull: '●', barEmpty: '○' },
@@ -61,8 +61,8 @@ const CONFIG = {
     { name: 'helpers', label: 'helpers', ids: [] as string[] },
     { name: 'session', label: 'session', ids: ['cost', 'lastTurn', 'files', 'compactions', 'session'] },
   ],
-  // Space between two budgets inside a group (between groups on one line: the `sep` icon).
-  gap: '   ',
+  // Dim separator between two budgets inside a group; between groups on one line: the `sep` icon.
+  gap: ' │ ',
   // Helper names are padded to the longest one (at most this many cells) so wrapped rows line up.
   nameMax: 10,
   // Thinking-effort tags shown after the model name; a numeric budget shows as e.g. (8k).
@@ -198,11 +198,14 @@ const fmtMoney = (n: number, currency = 'USD') => {
   return currency === 'USD' ? `$${v}` : `${v} ${currency}`
 }
 
+/** An old reading keeps its colour (dimming would wash out a warning) and gets a dim `~` before it instead. */
+const stale = (old: boolean): Piece[] => (old ? [{ text: '~', dim: true }] : [])
+
 /** ` 5h 21%`: a window's label and share used, colored by fill. */
 const winPieces = (label: string, v: number | undefined, old: boolean): Piece[] => {
   if (v === undefined) return []
   const lv = level(v)
-  return [{ text: ` ${label} `, dim: true }, { text: `${Math.round(v)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit', dim: old }]
+  return [{ text: ` ${label} `, dim: true }, ...stale(old), { text: `${Math.round(v)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit' }]
 }
 
 /** A window whose reset has passed counts as unused. */
@@ -235,9 +238,10 @@ const quotaSegments = (q: Quotas, u: Usage, now: number, ic: Icons): Segment[] =
         id: 'extra',
         pieces: [
           { text: 'extra ', dim: true },
+          ...stale(old),
           {
             text: fmtMoney(item.spent, item.currency) + (item.cap ? `/${fmtMoney(item.cap, item.currency)}` : ''),
-            color: lv === 'ok' ? undefined : CONFIG.colors[lv], dim: old,
+            color: lv === 'ok' ? undefined : CONFIG.colors[lv],
           },
         ],
       }
@@ -258,7 +262,8 @@ const quotaSegments = (q: Quotas, u: Usage, now: number, ic: Icons): Segment[] =
         const lv = level(argon.week)
         out.push({ id: 'argon', pieces: [
           { text: 'Argon ', dim: true },
-          { text: `${Math.round(argon.week)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit', dim: old },
+          ...stale(old),
+          { text: `${Math.round(argon.week)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit' },
         ] })
         const r = argon.weekResetsAt ? Date.parse(argon.weekResetsAt) : NaN
         if (!Number.isNaN(r) && r > now) out.push({ id: 'resetargon', glue: true, pieces: [{ text: ` ${ic.reset}${fmtSpan(r - now)}`, dim: true }] })
@@ -281,9 +286,10 @@ const quotaSegments = (q: Quotas, u: Usage, now: number, ic: Icons): Segment[] =
     const lv = level(item.percent)
     const pieces: Piece[] = [
       { text: `${label} `, dim: true },
-      { text: `${Math.round(item.percent)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit', dim: old },
+      ...stale(old),
+      { text: `${Math.round(item.percent)}%`, color: lv === 'ok' ? undefined : CONFIG.colors[lv], bold: lv === 'crit' },
     ]
-    if (item.spent) pieces.push({ text: ` +${fmtMoney(item.spent, item.currency)}`, color: CONFIG.colors.high, dim: old })
+    if (item.spent) pieces.push({ text: ` +${fmtMoney(item.spent, item.currency)}`, color: CONFIG.colors.crit, bold: true })
     out.push({ id: item.id, pieces })
     const resets = item.resetsAt ? Date.parse(item.resetsAt) : NaN
     if (!Number.isNaN(resets) && resets > now) {
@@ -375,7 +381,7 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
   out.push(...quotaSegments(q, u, now, ic))
 
   if (u.costUsd !== undefined) {
-    out.push({ id: 'cost', pieces: [{ text: `$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}` }] })
+    out.push({ id: 'cost', pieces: [{ text: `$${u.costUsd < 10 ? u.costUsd.toFixed(2) : u.costUsd.toFixed(1)}`, dim: true }] })
   }
 
   // How long the last main-loop turn took.
@@ -392,7 +398,7 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
     id: 'compactions',
     pieces: [{
       text: `${ic.compact}${s.compactions}`,
-      dim: s.compactions === 0,
+      dim: s.compactions < CONFIG.compactWarnAt,
       color: s.compactions >= CONFIG.compactWarnAt ? CONFIG.colors.high : undefined,
     }],
   })
@@ -410,6 +416,9 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
 // A unit is a segment with the glued segments after it (a budget and its reset): it never splits.
 type Unit = { group: string; segs: Segment[] }
 type Line = Piece[]
+
+/** The in-group separator, in ASCII when icons are (SESSION_STATUS_ASCII). */
+const gapText = () => (icons === CONFIG.asciiIcons ? ' | ' : CONFIG.gap)
 
 const groupOf = (id: string) => CONFIG.groups.find(g => g.ids.includes(id))?.name ?? 'helpers'
 const piecesWidth = (ps: Piece[]) => ps.reduce((w, p) => w + cells(p.text), 0)
@@ -439,7 +448,7 @@ const oneLine = (segs: Segment[]): Line => {
   const line: Line = []
   let prev: string | undefined
   for (const u of toUnits(segs)) {
-    if (prev !== undefined) line.push(u.group === prev ? { text: CONFIG.gap } : { text: icons.sep, dim: true })
+    if (prev !== undefined) line.push(u.group === prev ? { text: gapText(), dim: true } : { text: icons.sep, dim: true })
     line.push(...unitPieces(u))
     prev = u.group
   }
@@ -501,10 +510,10 @@ const groupRows = (segs: Segment[], columns: number, grid: boolean): Line[] => {
     const firstOf = lines.length
     for (const c of cellsOf) {
       const cw = colW || piecesWidth(c)
-      const gap = cells(CONFIG.gap)
+      const gap = cells(gapText())
       if (row.length && w + gap + cw > avail) flush()
       if (row.length) {
-        row.push({ text: CONFIG.gap })
+        row.push({ text: gapText(), dim: true })
         w += gap
       }
       const padTo = colW - piecesWidth(c)

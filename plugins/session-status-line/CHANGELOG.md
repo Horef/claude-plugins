@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.7.1 (2026-11-13)
+- separators between budgets, old readings keep their colour (marked ~), overage bold red, session row dim
+
 ## 0.7.0 (2026-11-13)
 - grouped rows that wrap as needed (Claude, helpers, session), aligned helper columns, calmer look
 

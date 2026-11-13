@@ -3,10 +3,10 @@
 A compact status line above the prompt that shows the state of a session at a glance. Besides what Claude Code exposes to mods, it reads a few outside budgets (Kiro, Copilot, Codex, Antigravity, Claude extra usage) every five minutes where their logins exist, and shows the 5h / 7d limits of your other Claude accounts on the same machine; `/status-line quotas off` stops that.
 
 ```
-✅ Opus 5.5 ·M   ctx ▰▰▱▱▱▱ 30% 296k/1M   5h 21% ⟳4h14m   7d 30% ⟳4d16h
-helpers  Kiro    42% ⟳18d3h              Copilot 28% ⟳21d16h           Codex   5h 4% 7d 1% ⟳4h10m
-         agy     5h 0% 7d 1%             Argon   36% ⟳5d4h             uni     5h 21% 7d 30% ⟳3d4h
-session  $35.3   ⏱8s   🗜1   12 turns · 1h20m
+✅ Opus 5.5 ·M │ ctx ▰▰▱▱▱▱ 30% 296k/1M │ 5h 21% ⟳4h14m │ 7d 30% ⟳4d16h
+helpers  Kiro    42% ⟳18d3h         │ Copilot 28% ⟳21d16h      │ Codex   5h 4% 7d 1% ⟳4h10m
+         agy     5h 0% 7d 1%        │ Argon   36% ⟳5d4h        │ uni     5h 21% 7d 30% ⟳3d4h
+session  $35.3 │ ⏱8s │ 🗜1 │ 12 turns · 1h20m
 ```
 
 The budgets shown depend on which CLIs and logins exist on the machine; the example has them all.
@@ -31,9 +31,9 @@ The budgets shown depend on which CLIs and logins exist on the machine; the exam
 | ✎ files | distinct files successfully edited or written this session |
 | turns · age | completed turns and session length |
 
-A part with no data is hidden, so each budget appears only where its CLI and login exist. Readings are shared across chats (`$.store`) and taken at most every five minutes; a failed reading keeps the last one, dimmed after 30 minutes.
+A part with no data is hidden, so each budget appears only where its CLI and login exist. Readings are shared across chats (`$.store`) and taken at most every five minutes; a failed reading keeps the last one, marked with a dim `~` before its number after 30 minutes (other accounts: 6 hours); the number keeps its colour, so a stale warning still shows.
 
-Layout: when everything fits, one line (budgets three spaces apart, groups split by `│`). Otherwise grouped rows: Claude's own state (model, context, 5h, 7d, extra usage), then `helpers` (Kiro, Copilot, Codex, Antigravity, other accounts), then `session` (cost, last turn, files, compactions, turns and age). Each group wraps onto as many rows as it needs, and a budget never splits from its reset time. In the terminal the helpers sit in equal columns with their names padded, so wrapped rows line up; the desktop app's proportional font gets plain spacing. A new provider or account goes into `helpers` with no code change (`groups` in `CONFIG` lists only the Claude and session ids). When the rows would not fit the band's height or width, parts go in `dropOrder`, resets first, one account at a time.
+Colour means fill only: plain under 50%, then gold, orange, and bold red from 90% (overage charges are bold red too); labels, resets and the whole session row are dim. Layout: when everything fits, one line (budgets split by a dim `│`, groups by `┃`). Otherwise grouped rows: Claude's own state (model, context, 5h, 7d, extra usage), then `helpers` (Kiro, Copilot, Codex, Antigravity, other accounts), then `session` (cost, last turn, files, compactions, turns and age). Each group wraps onto as many rows as it needs, and a budget never splits from its reset time. In the terminal the helpers sit in equal columns with their names padded, so wrapped rows line up; the desktop app's proportional font gets plain spacing. A new provider or account goes into `helpers` with no code change (`groups` in `CONFIG` lists only the Claude and session ids). When the rows would not fit the band's height or width, parts go in `dropOrder`, resets first, one account at a time.
 
 ## Several Claude accounts
 
