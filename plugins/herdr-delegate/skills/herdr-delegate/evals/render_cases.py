@@ -130,6 +130,8 @@ check(command_line("copilot-fusion-max").endswith("copilot --no-ask-user --model
       and command_line("copilot-fusion-max").startswith("COPILOT_CLI_ENABLED_FEATURE_FLAGS="), "fusion keeps its fixed command", command_line("copilot-fusion-max"))
 check(all("generated-by: herdr-delegate" in tpl(p.stem) for p in TEMPLATES.glob("*.md")), "every rendered template carries the marker")
 check(tpl("kiro-light").endswith(helpers.body_text()) and "name: kiro-light\n" in tpl("kiro-light"), "template = front matter + shared body")
+# O25: a Claude-account helper with model-router installed must not open its own router plan.
+check("model-router plan" in tpl("kiro-light") and "plan approval" in tpl("kiro-light"), "template body tells a helper not to open a model-router plan or wait for plan approval (O25)")
 code, out, _ = run("render", "--check")
 check(code == 0, "render --check is clean after render", out)
 (TEMPLATES / "kiro-deep.md").write_text(tpl("kiro-deep").replace("--effort high", "--effort max"))

@@ -14,6 +14,7 @@ Every choice between alternatives about the genome itself, and every gap we fill
 | D8 | Plugins are labelled general or personal (2026-10-30; status: accepted) |
 | D9 | Personal choices live in a profile the skill reads (2026-10-30; status: accepted) |
 | D10 | How lessons travel; who merges (2026-10-30; status: accepted) |
+| D11 | The router cluster's shared contracts (2026-11-14; status: accepted) |
 <!-- docmap:end -->
 
 ## D1. This repository is the genome (2026-10-30; status: accepted, confirmed by owner 2026-10-30)
@@ -85,3 +86,25 @@ Every choice between alternatives about the genome itself, and every gap we fill
 - **Alternatives:** a PR for every observation - noise and lost notes; a database or service for observations - not readable by every harness; no auto-sync - notes stay on one machine.
 - **Consequences:** a lesson is lost only when a reply block is never absorbed or a clone never synced; the digest reports uncommitted observations so that is visible.
 - **Evidence / source:** owner's question and permission (2026-10-30); `test_sync_two_machines` (two clones, one bare remote: both notes survive, duplicate id renumbered, unrelated work untouched).
+
+## D11. The router cluster's shared contracts (2026-11-14; status: accepted)
+- **Context:** model-router (mod), model-routing (portable skill), herdr-delegate (skill) and session-status-line (mod) are one system shipped as four plugins (D5). They share formats that no document owned, so a change in one could break another without any check noticing (structure review, 2026-11-14, sections 2 and 3). The four stay separate plugins: a mod, a status band and a portable skill are different install surfaces.
+- **Decision:** each shared format has one owning unit; the owner defines it, and the readers follow. A change to a contract bumps the owner unit and names the readers in the owner's CHANGELOG entry (so a reader can be checked or released with it). The contracts (line numbers at herdr-delegate 0.12.1; re-verify with grep when you change one):
+
+  | Contract | Owner | Readers | Defined at |
+  |---|---|---|---|
+  | `helpers.py config` JSON (providers with `kind`, `config_dir`, `label`, `unit`, `order`, `cli_found`, `self`, `auto`, per-tier `model`/`effort`, plus `default_orders`) | herdr-delegate | model-router | writer `plugins/herdr-delegate/skills/herdr-delegate/scripts/helpers.py:1251` (`config_cmd`, dispatched at `:1450`); reader `plugins/model-router/hooks/logic.ts:894` (`parseHelperConfig`), `plugins/model-router/hooks/register.tsx:847`, type `plugins/model-router/types/index.d.ts:50`; documented in herdr-delegate `SKILL.md:36` |
+  | Template names `<provider>-<tier>` (provider = lowercase letters and digits before the first `-`), plus the Fusion names `copilot-fusion-high` / `-max` | herdr-delegate | model-router (defaults and Fusion pins) | `SKILL.md:14`; rendered by `helpers.py` (`render_text`, from `templates/_body.md`); named in model-router `tiers.ts:17-26` and `:42-47` |
+  | `helpers.py usage <name>` JSON `{"provider", "amount", "unit"}` (prints nothing and exits 1 when the helper shows none; account-wide readings add a stderr note) | herdr-delegate | model-router (the plan tool's `done[].usage`) | writer `helpers.py:653` (`usage_cmd`); reader `plugins/model-router/hooks/register.tsx:1069` (schema text) and `logic.ts:558-562` (parse); documented in herdr-delegate `SKILL.md:80` and model-router `README.md:63` |
+  | `$XDG_CONFIG_HOME/claude-accounts/<key>.json` (`version`, `key`, `config_dir`, `label`, `at`, `five_hour` and `seven_day` as `{percent, resets_at}`; no token, no email; key `default` for `~/.claude`, else 8 hex characters of the SHA-256 of the config dir) | session-status-line | herdr-delegate (account discovery, quota skipping in `pick`) | writer `plugins/session-status-line/hooks/register.tsx:789` (comment), `:866` (`accountsDir`), `:896-899` (body); reader `helpers.py:219` (`accounts_dir`), `:349` (`read_account`, fields at `:356-359`); documented in session-status-line `README.md:40` and herdr-delegate `SKILL.md:30` |
+  | Tier definitions: light / standard / deep, what each is for, the rerun ladder | model-router | model-routing, herdr-delegate, the rules injected into the chat, herdr-delegate's `tier_text` | source `plugins/model-router/hooks/tiers.ts:7-11` (default models), `:49-53` (`TIER_USE`, `TIER_ORDER`), `:62` (`LADDER`); the injected rules are generated from it (`register.tsx:1266`); hand-kept copies: model-routing `SKILL.md:12-16` (table) and `:35` (ladder), herdr-delegate `SKILL.md:41`, `helpers.default.json:2-7` (`tier_text`, read at `helpers.py:776`) |
+  | The router's default helper order and skill name (`skill: 'herdr-delegate'`, `kiro-light,copilot-light,agy-light` and the standard and deep equivalents) | model-router (the defaults) | herdr-delegate (must keep those template names rendered) | `plugins/model-router/hooks/tiers.ts:17-26`; template names are herdr-delegate's (row 2) |
+
+  The copies of the tier definitions are not yet checked by a script; until one exists, a change to `TIER_USE` or `LADDER` in `tiers.ts` means editing the copies in the same change and saying so in the CHANGELOG (model-routing's ladder already ends at "Opus xhigh", the mod's at "Fable").
+- **Open, owner decides by (date left blank):** unverified experiments in the cluster, each to be either tried in a real session or removed.
+  - Here-step effort (`tiers.ts:29`, `hereEffort`): never tried in a real chat; cache cost unmeasured (STATUS, since 2026-11-05). Open, owner decides by ____.
+  - Copilot Fusion (`helpers.default.json` `fusion-high` / `fusion-max`, `tiers.ts:42-47`): rests on an unofficial feature flag; quality below Max unmeasured. Open, owner decides by ____.
+  - Auto mode (`tiers.ts:31-34`: `autoRoute`, `autoMinRuns`, `autoOkPercent`), with verdicts, per-kind advice and nested parts (model-router 0.16-0.18): not yet seen in a real session. Open, owner decides by ____.
+- **Alternatives:** merge the four plugins into one - different install surfaces (mod, band, portable skill), and model-routing must work without the mod; leave the contracts implicit - what happened until now, and herdr-delegate O25 sat in the gap between two of them; generate the copies from `tiers.ts` - sensible but a larger change, left until a copy next drifts.
+- **Consequences:** a contract change is visible in the owner's CHANGELOG with its readers named; the unverified features have a decision to make instead of staying indefinitely.
+- **Evidence / source:** structure review of 2026-11-14 (sections 2, 3 and 6 item 3), approved by the owner the same day; each location above was found with grep on the worktree.

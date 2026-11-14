@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.12.1 (2026-11-14)
+- Helper template body: a helper works to a brief and must not open a model-router plan or wait for plan approval; scripted check in render_cases.py (O25)
+
 ## 0.12.0 (2026-11-14)
 - helpers.py usage: account-wide readings (Claude accounts, Codex, agy) now say so on stderr, and step 8 says to report the largest figure once for parallel helpers on one account, never the sum (O24)
 
