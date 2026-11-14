@@ -125,7 +125,7 @@ Signals rank: tests and deterministic checks > a rubric judged blind by a fresh 
 
 Always-loaded text costs every session and dilutes attention, so growth must be paid for. Defaults (`loop.py check` warns):
 
-- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure).
+- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ 25,000 bytes (about 500 typical lines; lines run up to 1.5 KB, so bytes measure the real cost) and ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure).
 - Project `AGENTS.md` ≤ ~120 lines (project-foundations).
 - `LEARNINGS.md` open list ≤ ~15 entries; beyond that, a reflection pass is overdue.
 

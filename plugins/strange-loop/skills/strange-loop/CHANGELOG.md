@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.4.0 (2026-11-14)
+- SKILL.md budget in bytes: loop.py check warns above 25,000 bytes (about 500 typical lines) as well as above 500 lines, status shows KB; section 6 and AGENTS.md say so; unit test with a 100-line, 30 KB skill. Evidence: project-foundations is 36.7 KB at 241 lines (structure review 2026-11-14 #4, owner approval 2026-11-14, kernel rule 7 budget).
+
 ## 1.3.0 (2026-11-14)
 - Judged evals scoped to what will be run: a blind judged run is required only for restructure-class changes and description changes; fix and learn changes rely on scripted checks, and judged cases stay as regression material (sections 4 step 6 and 5). Procedure change, structure review 2026-11-14 #5, owner approval 2026-11-14.
 
