@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-14 - CI runs every unit's evals; judged evals scoped; SKILL.md budget in bytes
+
+- Owner-approved changes from the structure review (#4, #5), three commits on a worktree branch. (1) `ci: run every unit's scripted evals`: one new step loops over `loop.py where`, skipping the three units with their own steps. (2) strange-loop 1.3.0: blind judged run required only for restructure-class and description changes (sections 4 step 6 and 5, README). (3) strange-loop 1.4.0: SKILL.md budget 25,000 bytes next to the 500-line one (`SKILL_MAX_BYTES`, a `check` warning, KB in `status`; section 6, AGENTS.md).
+- Verified: the loop step run locally (bash -e -o pipefail) on all 11 units, exit 0; with a stub `loop.py` returning 0/2/1 it prints pass / not run / error and exits 1; workflow YAML parsed with PyYAML. Budget test `test_skill_size_budget_is_in_bytes_and_only_warns` failed (no `SKILL_MAX_BYTES`) before the change, passes after; `loop.py eval strange-loop` exit 0 (27 tests); `check --base` 0 errors, 3 warnings (project-foundations 36.7 KB, scientific-figures 29.3 KB, strange-loop 27.4 KB).
+- Unverified: the new CI step on GitHub. project-foundations' own `evals/run.py` still checks the 500-line limit only (existing eval case, own commit).
+
 ## 2026-11-14 - Genome pass with Fable helpers: reflection, audit, judged evals (partial)
 
 - Fable 5.2 (personal account) helpers at low/medium/high (`helpers.py custom`); six in parallel hit the Pro 5h limit in ~10 min (7d 13% -> 27%). Owner: Fable only for forward-looking work; the rest moved to Copilot Sonnet, Codex, agy Gemini 4 Hydrogen high (owner rates ~Sonnet high; now the agy-standard model in the owner's config, O27).
