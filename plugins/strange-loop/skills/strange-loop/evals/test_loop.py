@@ -325,5 +325,95 @@ class LoopTest(unittest.TestCase):
         self.assertIn("still version 1.0.0", out)
 
 
+# Real herdr-delegate observations: O10, O16, O19 and O26 are one lesson, filed as four lines (structure review 2026-11-14).
+HERDR = {
+    "O10": "- O10 2026-11-06 [friction] Step 4 / helpers.py prompt: Copilot's 'Allow path access' dialog (reading a brief file outside the cwd) blocked the helper, hc wait reported status blocked, but 'helpers.py prompt' printed 'no prompt'; the detector should match that dialog too, and briefs in a scratchpad outside --cwd will always trigger it (put briefs inside the cwd or inline) (claude-code, genome reflection 2026-11-06)",
+    "O12": "- O12 2026-11-07 [friction] Brief: a Kiro helper testing a config CLI ran it against the real ~/.config because an exported XDG_CONFIG_HOME did not persist between its shell calls; it reported it honestly and could not delete the files (Kiro blocked rm). Briefs for code that writes user config should say: set the override inline in every command (VAR=... cmd), never rely on export (claude-code, herdr-delegate 0.6.0 build)",
+    "O14": "- O14 2026-11-07 [friction] Step 5 Judge: an agy helper (--mode auto) on a 19-row quote-check brief raised about 10 permission prompts (every shell command, each read outside the workspace, its own /tmp cleanup); option 2 (always allow) only covers the exact command prefix, so each new LIT=... script asked again. A brief note to put all quote checks in one script file, or agy's non-workspace 'always allow' up front, would cut the round trips. (claude-code, simple_complex_v1)",
+    "O16": "- O16 2026-11-08 [friction] Step 4 Copilot prompts: helpers.py prompt <name> exited non-zero while Copilot showed an 'Allow path access' dialog (shell path outside the session's allowed paths: the project's conda python); the lead's 8-minute wait loop missed it and the helper sat blocked ~6 min. Would help: prompt detection that also matches Copilot's 'Allow path access' / 'Do you want to allow this?' box. (simple_complex_v1)",
+    "O19": "- O19 2026-11-09 [missing] helpers.py prompt: Copilot 1.0.107's 'Allow path access' dialog (shell path outside the session's allowed paths, e.g. the conda interpreter) is not detected; prompt printed 'no prompt' while hc said blocked. Would help: match 'Allow path access' / 'Do you want to allow this?' too (simple_complex_v1)",
+}
+NEW26 = ("Step 4 (helpers.py prompt): Copilot 1.0.11x path-permission dialog ('Permission is checked against the resolved target ... "
+         "Do you want to allow this? 1. Yes 2. Yes, and remember these paths for this session') was not detected: prompt printed "
+         "'no prompt' while hc showed evalb blocked (permission).")
+
+
+class RecurrenceTest(unittest.TestCase):
+    """`note` offers close open observations (any kind) as recurrences instead of filing the same lesson again."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.g = make_genome(Path(self.tmp.name) / "genome")
+        self.cfg = Path(self.tmp.name) / "config"
+        loop.CONFIG, loop.INBOX = self.cfg, self.cfg / "inbox.md"
+        self.learn = self.g / "plugins/demo/skills/demo/LEARNINGS.md"
+        self.learn.write_text("# Learnings: demo\n\n## Open\n" + "\n".join(HERDR[k] for k in ("O10", "O12", "O14", "O16", "O19")) + "\n\n## Resolved\n")
+        self.note = lambda *a: run("--genome", str(self.g), "note", "demo", *a)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def line(self, oid):
+        return next(l for l in self.learn.read_text().splitlines() if l.startswith(f"- {oid} "))
+
+    def test_same_lesson_in_another_kind_is_not_written_silently(self):
+        before = self.learn.read_text()
+        code, out = self.note("failure", NEW26, "--harness", "claude-code")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(self.learn.read_text(), before)
+        for oid in ("O10", "O16", "O19"):
+            self.assertIn(oid, out)
+        self.assertNotIn("O12", out)
+        self.assertNotIn("O14", out)
+        self.assertIn("--same", out)
+        self.assertIn("--new", out)
+
+    def test_same_adds_count_date_and_detail_to_that_line(self):
+        code, out = self.note("failure", NEW26, "--same", "O10")
+        self.assertEqual(code, 0)
+        o10 = self.line("O10")
+        self.assertTrue(o10.startswith(HERDR["O10"]))
+        self.assertRegex(o10, r"\[\+\d{4}-\d{2}-\d{2} Step 4 helpers\.py prompt[^\]]*\] ×2$")
+        self.assertEqual(sum(l.startswith("- O") for l in self.learn.read_text().splitlines()), 5)   # no new line
+        self.assertEqual(loop.OBS.match(o10).group(5), "2")
+        self.note("failure", NEW26 + " again", "--same", "O10")
+        self.assertEqual(loop.OBS.match(self.line("O10")).group(5), "3")
+
+    def test_new_files_a_separate_line(self):
+        code, out = self.note("failure", NEW26, "--new")
+        self.assertEqual(code, 0)
+        text = self.learn.read_text()
+        self.assertIn("- O20 ", text)
+        self.assertNotIn("×", text)
+
+    def test_unrelated_note_is_written_as_before(self):
+        code, out = self.note("missing", "SKILL.md step 3: an example of a two-panel figure with shared axes would help")
+        self.assertEqual(code, 0)
+        self.assertIn("O20 recorded", out)
+
+    def test_same_and_new_exclude_each_other_and_same_needs_an_open_id(self):
+        before = self.learn.read_text()
+        self.assertNotEqual(self.note("failure", NEW26, "--same", "O10", "--new")[0], 0)
+        self.assertNotEqual(self.note("failure", NEW26, "--same", "O99")[0], 0)
+        self.assertEqual(self.learn.read_text(), before)
+
+    def test_recurrences_make_the_lesson_ripe(self):
+        self.assertFalse(loop.is_ripe(loop.OBS.match(self.line("O10"))))
+        self.note("failure", NEW26, "--same", "O10")
+        self.assertTrue(loop.is_ripe(loop.OBS.match(self.line("O10"))))
+
+    def test_closeness_ranks_the_one_lesson_above_unrelated_lines(self):
+        body = {k: loop.OBS.match(v).group(4) for k, v in HERDR.items()}
+        body["O26"] = NEW26
+        lesson = ["O10", "O16", "O19", "O26"]
+        for a in lesson:
+            for b in lesson:
+                if a < b:
+                    self.assertGreaterEqual(loop.closeness(body[a], body[b]), loop.CLOSE_MIN, (a, b))
+            for b in ("O12", "O14"):
+                self.assertLess(loop.closeness(body[a], body[b]), loop.CLOSE_MIN, (a, b))
+        self.assertLess(loop.closeness(body["O12"], body["O14"]), loop.CLOSE_MIN)
+
+
 if __name__ == "__main__":
     unittest.main()

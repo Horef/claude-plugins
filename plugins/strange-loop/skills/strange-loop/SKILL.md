@@ -58,7 +58,7 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 ```
 
 - Say the section, what happened, and **what would have helped**. Concrete beats general: the next agent must be able to act on it without your context.
-- Before adding, read the open list: if it is the same lesson, append ` ×N` (or increment it) instead of a new line. Recurrence is the main evidence the loop has.
+- Before adding, read the open list: if it is the same lesson, append ` ×N` (or increment it) instead of a new line. Recurrence is the main evidence the loop has. The note command enforces this: when open observations of the unit (any kind) are close to your text it lists them and writes nothing; rerun with `--same O<n>` (the same lesson: adds ×N, today's date and a short detail to that line) or `--new` (a different one).
 - A warning from a check that your change did not cause (a budget, a stale doc, a slow command) is an observation too: note it with the warning's text, so drift that no single session feels gets counted.
 - A note written from **reading** a skill (adopting or reviewing it), not from using it, says so in its context (`--context "reading"`, or `adopting`): it is a logic check, weaker than use (section 6).
 - Never paste secrets, private data or long logs; link or summarise.
@@ -215,4 +215,4 @@ This skill observes itself like any other unit. When a step of a reflection was 
 python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note strange-loop <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
 ```
 
-or, without a clone or a shell and when the person takes part (section 2), in an `Observations for strange-loop` block at the end of your reply. Changes to section 7 (Kernel), section 3 (change classes) and the ripeness thresholds in `loop.py` need the owner's approval.
+If it lists close open observations instead of writing, rerun with `--same O<n>` (same lesson again) or `--new` (section 2). Without a clone or a shell, and when the person takes part (section 2), use an `Observations for strange-loop` block at the end of your reply. Changes to section 7 (Kernel), section 3 (change classes) and the ripeness thresholds in `loop.py` need the owner's approval.

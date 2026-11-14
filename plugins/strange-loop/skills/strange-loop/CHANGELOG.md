@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.2.0 (2026-11-14)
+- learn: loop.py note makes recurrence real. Before writing it lists the 2-3 closest open observations of the unit (any kind; content-word Dice similarity, threshold 0.30) and exits 1 unless rerun with --same O<n> (adds ×N plus today's date and a short detail to that line) or --new; --same with an unknown or non-open id is now an error instead of a silent new line. Near-identical same-kind restatements still merge automatically. Evidence: structure review 2026-11-14 (no ×N mark in 143 observations; herdr-delegate O10/O16/O19/O26 filed as four lines). Owner-approved 2026-11-14 as a learn change; thresholds and ripeness rules unchanged.
+
 ## 1.1.1 (2026-11-14)
 - sync's renumber drops an open line that is the same observation as its resolved copy (a merge that kept both) instead of renumbering it into a new open one; check names the id and the fix. (O21) (O21)
 

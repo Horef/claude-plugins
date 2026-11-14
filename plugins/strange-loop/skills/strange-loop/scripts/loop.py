@@ -6,8 +6,10 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
 .claude-plugin/plugin.json above it, its history in CHANGELOG.md beside LEARNINGS.md.
 
   python loop.py where                       which genome (source checkout) this resolves to, and why
-  python loop.py note UNIT KIND "TEXT" [--where SECTION] [--harness H] [--context C] [--same O3]
-                                             record an observation; a near-duplicate of an open one bumps its ×count
+  python loop.py note UNIT KIND "TEXT" [--where SECTION] [--harness H] [--context C] [--same O3 | --new]
+                                             record an observation; a near-identical open one of the same kind bumps its
+                                             ×count; if other open ones (any kind) are close, lists them and exits 1:
+                                             rerun with --same O3 (recurrence: ×N and a dated detail) or --new
   python loop.py status [UNIT]               open observations per unit, which are ripe, budget use
   python loop.py digest                      at most a few lines for a session-start hook; silent when nothing is ripe
   python loop.py check [--base REF]          CI gate: manifests, versions, changelogs, learnings format, budgets;
@@ -50,6 +52,9 @@ KINDS = ("failure", "friction", "misled", "missing", "workaround", "win", "wish"
 RIPE_KINDS = {"failure", "misled"}       # one is enough to deserve a reflection
 RIPE_COUNT = 2                           # or any observation seen this many times
 RIPE_OPEN = 5                            # or this many open observations in one unit
+CLOSE_MIN = 0.30                        # `note`: an open observation at least this close (see closeness) is offered as a recurrence
+CLOSE_SHOW = 3                           # how many of the closest are listed
+DETAIL_MAX = 100                         # characters of a recurrence's detail kept on the line
 READING_AFTER = 3                        # later use-based notes after which an unconfirmed reading note is offered
 READING = re.compile(r"\b(from reading|reading|adopting|adoption)\b", re.I)
 STALE_DAYS = 180                         # an open observation older than this is confirmed or rejected
@@ -246,12 +251,26 @@ class Learnings:
         ids = [int(m.group(1)[1:]) for t in ("open", "resolved") for _, m in self.entries(t)]
         return f"O{max(ids, default=0) + 1}"
 
-    def add(self, kind: str, text: str, same: str | None = None) -> tuple[str, int]:
-        """Append an observation, or bump the count of `same` / a near-duplicate open one. Returns (id, count)."""
+    def close(self, text: str, limit: int = CLOSE_SHOW, threshold: float = CLOSE_MIN) -> list[tuple[float, re.Match]]:
+        """The open observations (any kind) closest to `text`, best first, at or above `threshold`."""
+        scored = sorted(((closeness(m.group(4), text), m) for _, m in self.entries("open")), key=lambda t: -t[0])
+        return [(sc, m) for sc, m in scored[:limit] if sc >= threshold]
+
+    def duplicate(self, kind: str, text: str) -> str | None:
+        """Id of an open observation of the same kind that is a near-identical restatement of `text`."""
+        return next((m.group(1) for _, m in self.entries("open") if m.group(3) == kind and similar(m.group(4), text)), None)
+
+    def add(self, kind: str, text: str, same: str | None = None, new: bool = False) -> tuple[str, int]:
+        """Append an observation, or bump the count of `same` / a near-identical open one (unless `new`).
+
+        Returns (id, count). With `same`, the new date and a short detail are appended to that line before ×N."""
         for i, m in self.entries("open"):
+            if new:
+                break
             if m.group(1) == same or (same is None and m.group(3) == kind and similar(m.group(4), text)):
                 n = int(m.group(5) or 1) + 1
-                self.lines[i] = f"- {m.group(1)} {m.group(2)} [{m.group(3)}] {m.group(4)} ×{n}"
+                body = m.group(4) + (f" [+{TODAY} {detail(text)}]" if same else "")
+                self.lines[i] = f"- {m.group(1)} {m.group(2)} [{m.group(3)}] {body} ×{n}"
                 self.save()
                 return m.group(1), n
         oid = self.next_id()
@@ -318,6 +337,51 @@ def similar(a: str, b: str, threshold: float = 0.6) -> bool:
     return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= threshold
 
 
+STOPWORDS = frozenset("""the and for with that this was were been are its into than then when what which who how can will would
+could should have has had does did done also only just more most some any all each other such over after before about while
+there their they them these those very not but from you your our out one two get got let use used using here step steps""".split())
+
+
+def content_words(s: str) -> set[str]:
+    """Lower-case content words of an observation, lightly stemmed; the trailing (harness, context) and recurrence
+    details are not part of the lesson."""
+    s = re.sub(r"\s\[\+\d{4}-\d{2}-\d{2}[^\]]*\]", " ", re.sub(r"\([^()]*\)\s*$", "", s))
+    out = set()
+    for w in re.findall(r"[a-z0-9]+", s.lower()):
+        if len(w) < 3 or w in STOPWORDS:
+            continue
+        for suf in ("ing", "ed", "es", "s"):
+            if len(w) > len(suf) + 3 and w.endswith(suf):
+                w = w[:-len(suf)]
+                break
+        out.add(w)
+    return out
+
+
+def closeness(a: str, b: str) -> float:
+    """0..1: Dice overlap of the content words of two observations. Long, differently worded reports of one lesson
+    still share its key terms; a short new note is matched against a long line by its share of its own words
+    (weighted down, and only from four words up, so tiny notes do not match everything)."""
+    wa, wb = content_words(a), content_words(b)
+    if not wa or not wb:
+        return 0.0
+    common = len(wa & wb)
+    if common < 3:                      # two shared words are a topic, not a lesson
+        return 0.0
+    score = 2 * common / (len(wa) + len(wb))
+    if min(len(wa), len(wb)) >= 4:
+        score = max(score, 0.75 * common / min(len(wa), len(wb)))
+    return score
+
+
+def detail(text: str) -> str:
+    """A short single-line detail for a recurrence mark: no brackets, cut at a word boundary."""
+    t = " ".join(re.sub(r"[\[\]()]", "", text).split())
+    if len(t) <= DETAIL_MAX:
+        return t
+    return t[:DETAIL_MAX].rsplit(" ", 1)[0] + "..."
+
+
 def from_reading(m: re.Match) -> bool:
     """A note written from reading a skill (adopting, reviewing), not from using it."""
     tail = re.search(r"\(([^()]*)\)\s*$", m.group(4))
@@ -373,7 +437,20 @@ def cmd_note(args):
     g, _ = find_genome(args.genome)
     if g and g.is_dir() and args.unit in units(g):
         d = units(g)[args.unit]
-        oid, n = Learnings(d / "LEARNINGS.md", args.unit).add(args.kind, text, args.same)
+        learn = Learnings(d / "LEARNINGS.md", args.unit)
+        if args.same and args.new:
+            sys.exit("strange-loop: --same and --new exclude each other")
+        if args.same and args.same not in [m.group(1) for _, m in learn.entries("open")]:
+            sys.exit(f"strange-loop: --same {args.same}: no such open observation in {args.unit}")
+        if not (args.same or args.new or learn.duplicate(args.kind, text)):
+            near = learn.close(text)
+            if near:
+                print(f"strange-loop: not written; {args.unit} already has close open observation(s):")
+                for sc, m in near:
+                    print(f"  {m.group(1)} [{m.group(3)}]{' ×' + m.group(5) if m.group(5) else ''} (closeness {sc:.2f}) {m.group(4)[:140]}")
+                sys.exit("Same lesson again: rerun with --same O<n> (adds ×N and today's date and detail to that line, "
+                         "the evidence the loop acts on). A different lesson: rerun with --new.")
+        oid, n = learn.add(args.kind, text, args.same, args.new)
         print(f"{args.unit} {oid}" + (f" seen again (×{n})" if n > 1 else " recorded") + f" in {d / 'LEARNINGS.md'}")
         return
     INBOX.parent.mkdir(parents=True, exist_ok=True)
@@ -857,6 +934,7 @@ def main(argv: list[str]) -> None:
     p = sub.add_parser("note")
     p.add_argument("unit"); p.add_argument("kind"); p.add_argument("text")
     p.add_argument("--where"); p.add_argument("--harness"); p.add_argument("--context"); p.add_argument("--same")
+    p.add_argument("--new", action="store_true")
     p = sub.add_parser("status"); p.add_argument("unit", nargs="?")
     sub.add_parser("digest")
     p = sub.add_parser("check"); p.add_argument("--base")
