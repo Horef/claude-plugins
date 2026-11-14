@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-14 - Genome pass with Fable helpers: reflection, audit, judged evals (partial)
+
+- Fable 5.2 (personal account) helpers at low/medium/high (`helpers.py custom`); six in parallel hit the Pro 5h limit in ~10 min (7d 13% -> 27%). Owner: Fable only for forward-looking work; the rest moved to Copilot Sonnet, Codex, agy Gemini 4 Hydrogen high (owner rates ~Sonnet high; now the agy-standard model in the owner's config, O27).
+- Reflection pass, PR #66 merged: herdr-delegate 0.12.0 (O24), literature-research 0.2.1 (O1), paper-premark 1.3.0 (O6), research-assistant 0.3.1 (O10), strange-loop 1.1.1 (O21). Commands: `loop.py eval` x5 exit 0; `loop.py check --base origin/main` 0/0; `docmap.py check` 0 errors; CI green. Plugins updated in both accounts.
+- Audit: drift scan (13), Codex bloat (74), Hydrogen bloat (81), merged into 17 items (work folder `audit/merged.md`).
+- Judged evals: 67/81 outputs, not graded. Observations: herdr-delegate O25 (helpers stop at their own router plan approval), O26 (`helpers.py prompt` misses Copilot path dialogs), strange-loop O23.
+- Unverified / open: grading; structure review (Fable, paused).
+
 ## 2026-11-13 - project-foundations 5.12.0: citation exemption, stub modules
 
 - O22, O23: `id_missing_exempt` silences "cites D57, which is not in DECISIONS.md" (the other exempt keys cover only the ambiguity check); Retrofit step 6a: free id prefix via `indexes`. Forwarding stubs (`sys.modules[__name__] = importlib.import_module('<literal>')`) count as imports of their target; "(via stub old.py)".

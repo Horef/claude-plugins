@@ -1,12 +1,13 @@
 # Status
-Updated 2026-11-13. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
+Updated 2026-11-14. Snapshot only - overwrite each session; history is in `docs/WORKLOG.md`.
 
 ## Works (verified)
 | Capability | How verified |
 |---|---|
-| project-foundations 5.12.0: `id_missing_exempt`; Retrofit step 6a; forwarding stubs resolved by docmap | `loop.py eval project-foundations` exit 0; `loop.py check` 0/0; `docmap.py check` 0 errors, 2026-11-13. Branch `pf-docmap-stubs`, unpushed; Node ports not updated |
+| Reflection pass 2026-11-14 (PR #66, merged): herdr-delegate 0.12.0 (O24), literature-research 0.2.1 (O1), paper-premark 1.3.0 (O6), research-assistant 0.3.1 (O10, Python 3.12+), strange-loop 1.1.1 (O21: sync drops the open copy of a resolved observation) | each unit's `loop.py eval` exit 0; `loop.py check --base origin/main` 0/0; CI green; O21 fix used live on the merge of the branch itself (O24 duplicate dropped); installed in both accounts |
+| project-foundations 5.12.0: `id_missing_exempt`; Retrofit step 6a; forwarding stubs resolved by docmap | `loop.py eval project-foundations` exit 0; `loop.py check` 0/0; `docmap.py check` 0 errors, 2026-11-13. merged (PR 65); Node ports not updated |
 | model-router 0.23.0, herdr-delegate 0.11.0 (default account runs without CLAUDE_CONFIG_DIR, O23), session-status-line 0.7.0 (2026-11-13): helpers only from what is installed (no helpers.py / hc / CLI → none, pane explains how to enable); other Claude accounts found automatically; status line in grouped rows that wrap as needed, aligned helper columns | `claude plugin test` model-router 81 pass, session-status-line 16 pass; `loop.py eval` of the three units exit 0; `loop.py check --base origin/main` 0/0; `account list` here unchanged (personal, uni). Status line and pane layout not seen in a real terminal; not yet tried on a machine without helpers |
-| Marketplace with five plugins, all units adopted (LEARNINGS, CHANGELOG, evals) | `loop.py check --base origin/main` → 0 errors, 1 warning (project-foundations SKILL.md 505/500 lines), 2026-10-30 |
+| Marketplace (14 plugins today), all units adopted (LEARNINGS, CHANGELOG, evals) | `loop.py check --base origin/main` → 0 errors, 1 warning (project-foundations SKILL.md 505/500 lines), 2026-10-30 |
 | `loop.py` note/status/digest/check/eval/bump/absorb/pack/link/sync/hook/new | `loop.py eval strange-loop` → 16 unit tests OK (incl. two clones syncing through one remote, new and --from), 2026-10-30 |
 | Adding a skill end to end (sandbox) | `loop.py new` → check flags placeholders → written → check and `claude plugin validate` pass → pushed → `claude plugin install` → note command from its own SKILL.md recorded O1, 2026-10-30 |
 | The whole round trip on a sandboxed Mac setup (fake home, local stand-in for GitHub, the real `claude` CLI) | install from the marketplace → session-start hook → notes from another project → auto-sync push → a second machine's note pulled → reply block absorbed → skills linked for a local agent → version bump reaches the installed plugin (0.7.0 → 0.7.1), 2026-10-30 |
@@ -44,6 +45,10 @@ Updated 2026-11-13. Snapshot only - overwrite each session; history is in `docs/
 - Anki pipeline (owner's repo, 3 commits 2026-11-06, not pushed): in-deck duplicates skipped, figures and images on cards; 132 tests pass, never run against real Anki/Gemini. First real run: check images on cards (blocks with figures).
 
 ## Next actions
+0. Fable/genome pass 2026-11-14, unfinished (all material in `~/Programming/claude-plugins-work/2026-11-14/`, outside the repo):
+   - Judged evals: 67 of 81 case outputs written (`evals/out/`, list in `evals/done-cases.txt`); missing cases in research-writing, research-assistant, literature-research, paper-premark, course-lecture-notes. Then blind grading (brief to write; Opus or Hydrogen) and observations.
+   - Audit: `audit/merged.md` (drift + two bloat audits, 17 items): section A fixes can be done without asking; B needs the owner's answer (3-D/pie charts; DEVONthink osascript fallback); C restructures need approval.
+   - Structure review: Fable helper `structure` (hc) paused by the 5h limit, resumes by itself; output to the scratchpad `review/structure-review.md` (copy it into the work folder when done).
 1. Owner: on the Mac, `git pull` in the clone and `echo on > ~/.config/strange-loop/auto_sync` (D10); add the marketplace in claude.ai with Sync automatically, then remove the hand-uploaded skills; install strange-loop locally in Claude Code; run `loop.py eval scientific-figures` on the Mac, then retire `~/Scripts/ScientificFigures`.
 1a. Owner: save the figure profile to `~/.config/scientific-figures/profile.md` (sent in chat) and add one line to claude.ai's standing instructions so chats without Mac access know it (D9).
 2. Use the skills normally; real observations are what the loop needs.
