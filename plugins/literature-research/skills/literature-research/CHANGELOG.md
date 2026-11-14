@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.2.1 (2026-11-14)
+- lit.py text/quote: the cache file name is cut to the 255-byte file-name limit (hash keeps it unique), and a too-long name beside the PDF falls back to the cache folder; a DEVONthink PDF named after a 250-character sentence no longer fails (O1)
+
 ## 0.2.0 (2026-11-08)
 - Semantic Scholar key also from the macOS Keychain; calls paced to 1 per 1.1 s across all lit.py processes (keyed limit 1/s); keyed relevance search retries and falls back to bulk on 429 (owner's request 2026-11-08)
 

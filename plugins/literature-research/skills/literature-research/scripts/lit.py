@@ -1254,14 +1254,19 @@ def need_pdftotext():
 MARK = re.compile(r"^=== (?:page (\d+)|section: (.+?)) ===$", re.M)
 
 
+NAME_MAX = 255  # bytes in one file name (APFS, ext4)
+
+
 def cache_path(pdf, raw):
     pdf = Path(pdf).resolve()
     suffix = ".raw.txt" if raw else ".txt"
     local = pdf.with_suffix(suffix)
-    if ".dtBase2" not in str(pdf) and os.access(pdf.parent, os.W_OK):
+    if ".dtBase2" not in str(pdf) and os.access(pdf.parent, os.W_OK) and len(local.name.encode()) <= NAME_MAX:
         return local
     h = hashlib.sha1(str(pdf).encode()).hexdigest()[:12]
-    return Path.home() / ".cache" / "literature-research" / f"{h}-{pdf.stem}{suffix}"
+    # DEVONthink names some PDFs after a whole sentence: cut the stem so the name fits (the hash keeps it unique).
+    stem = pdf.stem.encode()[:NAME_MAX - len(h) - 1 - len(suffix)].decode(errors="ignore")
+    return Path.home() / ".cache" / "literature-research" / f"{h}-{stem}{suffix}"
 
 
 def split_marked(text):
