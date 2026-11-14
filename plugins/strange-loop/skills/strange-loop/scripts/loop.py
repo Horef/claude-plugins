@@ -59,6 +59,7 @@ READING_AFTER = 3                        # later use-based notes after which an 
 READING = re.compile(r"\b(from reading|reading|adopting|adoption)\b", re.I)
 STALE_DAYS = 180                         # an open observation older than this is confirmed or rejected
 SKILL_MAX_LINES = 500                    # Agent Skills guidance: keep SKILL.md under ~500 lines
+SKILL_MAX_BYTES = 25_000                 # ... and under ~25 KB: lines can be 1.5 KB long, so bytes measure the real cost
 DESCRIPTION_MAX = 1024                   # Agent Skills spec limit for the description field
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -467,8 +468,9 @@ def unit_report(genome: Path, name: str, d: Path) -> tuple[list[re.Match], list[
     notes = []
     skill = d / "SKILL.md"
     if skill.exists():
-        n = len(skill.read_text(encoding="utf-8").splitlines())
-        notes.append(f"SKILL.md {n}/{SKILL_MAX_LINES} lines")
+        raw = skill.read_bytes()
+        n = len(raw.decode("utf-8").splitlines())
+        notes.append(f"SKILL.md {n}/{SKILL_MAX_LINES} lines, {len(raw) / 1000:.1f}/{SKILL_MAX_BYTES / 1000:.1f} KB")
     offer = reading_to_offer(opened, [m for _, m in learn.entries("resolved")] if learn else [])
     if offer:
         notes.append(f"reading notes unconfirmed by use, offer to the owner as restructures: {', '.join(m.group(1) for m in offer)}")
@@ -585,6 +587,9 @@ def cmd_check(args):
             n = len(skill.read_text(encoding="utf-8").splitlines())
             if n > SKILL_MAX_LINES:
                 warnings.append(f"{rel}/SKILL.md: {n} lines (> {SKILL_MAX_LINES}); move detail into referenced files")
+            nbytes = skill.stat().st_size
+            if nbytes > SKILL_MAX_BYTES:
+                warnings.append(f"{rel}/SKILL.md: {nbytes} bytes (> {SKILL_MAX_BYTES}); move detail into referenced files")
             body = skill.read_text(encoding="utf-8")
             if "## Learning loop" not in body:
                 warnings.append(f"{rel}/SKILL.md: no '## Learning loop' section, so users of the skill won't record lessons")

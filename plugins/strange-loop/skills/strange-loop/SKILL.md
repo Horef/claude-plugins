@@ -101,7 +101,7 @@ Do one unit per pass. Work on the genome checkout, on a branch if the repository
    - *reject*: wrong, already covered, or conflicts with an owner preference - resolve it with the reason.
 4. **Change by deltas.** Edit the smallest span that carries the lesson. Keep wording that works; never rewrite a whole skill from memory in one go (summarising rewrites lose hard-won specifics: "context collapse"). New detail goes into a referenced file when the main file is near its budget.
 5. **Pay for growth.** Check the budgets (section 6). If the unit grew, find what to shrink: detail that can move to `references/`, prose a check now enforces, rules every model already follows (test by removing them on an eval case), duplicates.
-6. **Verify.** Run the evals again. For judged cases, compare old and new outputs blind: give a fresh subagent (or a second session) the case, the rubric and outputs A and B in random order, without saying which is new. Ship only when the new version is at least as good on every case and better on the cases its observations came from - per case, not on average, so a fix for one kind of task cannot quietly break another. If you cannot run a check here, say so and mark the change provisional in the CHANGELOG.
+6. **Verify.** Run the evals again. A blind judged run is required only for restructure-class changes and description changes; fix and learn changes rely on the scripted checks, and the judged cases stay as regression material (owner, 2026-11-14). For those judged cases, compare old and new outputs blind: give a fresh subagent (or a second session) the case, the rubric and outputs A and B in random order, without saying which is new. Ship only when the new version is at least as good on every case and better on the cases its observations came from - per case, not on average, so a fix for one kind of task cannot quietly break another. If you cannot run a check here, say so and mark the change provisional in the CHANGELOG.
 7. **Record.** `loop.py bump <unit> minor "<what changed and why>" --obs O3,O7` (`--obs last` = the newest open observation) (moves the observations to Resolved, prepends the CHANGELOG entry, bumps `plugin.json`). Reject or move entries by editing them into Resolved with `→ rejected: <reason>` or `→ moved: <where>`. Then `loop.py check`, commit, push or open a PR as the repository's rules say. If the harness refuses the merge of your own PR (Claude Code's auto mode does, even with the owner's standing permission), leave the PR open with green checks and tell the owner; do not work around the refusal.
 8. **Turn the loop on itself.** If the pass was awkward (a step here was unclear, the script lacked a command, the triage felt wrong), record that in this skill's own `LEARNINGS.md`.
 
@@ -110,7 +110,7 @@ Do one unit per pass. Work on the genome checkout, on a branch if the repository
 Each unit has `evals/`:
 
 - `evals/run.py` (optional): scripted checks that exit non-zero on failure - lints, a fixture project, a render that must succeed, unit tests of the helper library. Cheap, run every pass.
-- `evals/cases.md`: judged cases, one `## <case name>` each, with **Task** (what a user asks, with any inputs), **Good looks like** (the rubric: 3-6 observable criteria) and **Origin** (the observation or failure it came from).
+- `evals/cases.md`: judged cases (graded blind only for restructures and description changes, section 4 step 6), one `## <case name>` each, with **Task** (what a user asks, with any inputs), **Good looks like** (the rubric: 3-6 observable criteria) and **Origin** (the observation or failure it came from).
 
 Good cases come from real use: every `failure` becomes a case, so the suite grows from the places where the skill actually broke. Keep cases small enough to run in one subagent turn. Never delete or weaken a case to make a change pass; retire a case only with a CHANGELOG line saying why it no longer applies.
 
@@ -125,7 +125,7 @@ Signals rank: tests and deterministic checks > a rubric judged blind by a fresh 
 
 Always-loaded text costs every session and dilutes attention, so growth must be paid for. Defaults (`loop.py check` warns):
 
-- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure).
+- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ 25,000 bytes (about 500 typical lines; lines run up to 1.5 KB, so bytes measure the real cost) and ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure).
 - Project `AGENTS.md` ≤ ~120 lines (project-foundations).
 - `LEARNINGS.md` open list ≤ ~15 entries; beyond that, a reflection pass is overdue.
 
