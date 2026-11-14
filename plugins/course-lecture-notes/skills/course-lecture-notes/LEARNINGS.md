@@ -7,6 +7,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 ## Open
 - O5 2026-11-06 [friction] Workflow 7: anki_blocks.py stopped 3 times on Gemini MAX_TOKENS (blocks 1.6, 5.5, 8.7, all >2.2k chars, after a rejected first attempt); rerun always succeeded. An automatic retry on MAX_TOKENS, or splitting long blocks, would let the batch finish unattended. (claude-code, 76901 Lecture 4)
 - O6 2026-11-08 [friction] Workflow 6: a transcript-only session (no slides PDF) has no PDF to annotate, and step 1 assumes slides exist; say what to do when only a transcript is given (link the book section instead, record 'none' in SOURCES) (claude-code, 769001)
+- O7 2026-11-14 [friction] Check for an existing study guide sits in step 6 (SKILL.md:80), after the writing; should be step 1 (eval grading 2026-11-14)
 
 ## Resolved
 - O1 2026-10-30 [wish] Goals 2 / Math: evals: Goals 2 and the Math rules are checkable by script (no 'see block'/'as above'/'in the figure', no Unicode math symbols, no single-backslash \[, a 'where:' after each display equation, '---' between blocks); a small lint over the generated Markdown would catch breaks before the owner pastes blocks into Anki. From reading, not use (claude-code-web, adopting into the genome) → 1.6.0

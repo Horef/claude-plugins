@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O9 2026-11-09 [friction] status, rounds: after ra.py close, adding round-2 proposed analyses makes status read '5 run' although nothing new is approved; plan.md has no notion of a round (round 2 added as a free '# Round 2' heading with its own stop rules and cost table). Would help: status 'round 2: 4 (plan, gate 3 next)' when a closed question gains proposed analyses, and an 'ra.py round DIR' that writes the round heading (simple_complex_v1 NB round 2)
+- O11 2026-11-14 [failure] ra.py audit_status (ra.py:570) reads the template's '<pass | disagreement>' as 'pass', so stage() says ready for hand-over with a blank audit and cmd_handover proceeds; reproduced on eval sandbox (eval grading 2026-11-14)
 
 ## Resolved
 

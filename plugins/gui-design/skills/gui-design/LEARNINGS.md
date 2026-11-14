@@ -6,6 +6,8 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O3 2026-11-01 [wish] 6 Surfaces: Claude Code mod panes (terminal, desktop) cannot be rendered by the agent; a text dump of the drawn pane from the mod test harness would close the look loop for mods. (claude-code, first release; model-router 0.8-0.11 reworks)
+- O15 2026-11-14 [failure] browser.py:451-458 launches Chrome without --allow-file-access-from-files, so lint skips local iframes (lint_frames.js:35) and reports host-page counts only (eval grading 2026-11-14)
+- O16 2026-11-14 [missing] SKILL.md:87 data-built picker labels: no generic fallback for unseen fields or test with a second kind of set; SKILL.md:18 no offer to write a profile; :76 warm-over-cool rule undefined on blue-red bases (eval grading 2026-11-14)
 
 ## Resolved
 - O14 2026-11-04 [win] 8 Rework: the Replay page improved in five small rounds of owner feedback (fill the window; one Make button; inhibition shown; colours and zoom; full descriptions), each one commit with lint and shots. Three of the later rounds are what a 'what will the next experiment need?' pass in section 1 would have caught up front. (claude-code, simple_complex_v1) → 0.4.0

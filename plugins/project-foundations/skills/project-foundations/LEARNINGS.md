@@ -7,6 +7,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 ## Open
 - O6 2026-10-30 [wish] Step 6 Audit: nothing measures whether AGENTS.md helps; research (Gloaguen et al. 2026, "Evaluating AGENTS.md") found LLM-written context files can lower success and raise cost. An audit step that tries one task with and without a doubtful rule would ground pruning in evidence (claude-code-web, research for strange-loop)
 - O21 2026-11-11 [friction] docmap check worktree warning: a freshly created worktree branch with no commits yet is reported as 'merged into main, remove it' while a helper is actively working in it; skip branches whose tip equals their fork point (or that were created recently) (claude-code, simple_complex_v1)
+- O24 2026-11-14 [failure] docmap build_map (docmap.py:408-418) omits code files at the repo root from MAP.md; no check flags a STATUS 'works' claim about deleted code (eval grading 2026-11-14)
 
 ## Resolved
 - O22 2026-11-11 [friction] docmap check 'cites Dn, which is not in DECISIONS.md' has no exemption key (id_scan_exempt only covers the ambiguity check): a retrofit of a repo whose legacy reports cite another ledger's D ids got 100+ warnings; fixed by a TD prefix via indexes. An exempt glob for that check, or a Retrofit note to pick a free prefix when the repo already uses bare D ids, would help. (TwinProp-fork) → 5.12.0
