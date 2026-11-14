@@ -24,7 +24,7 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
   python loop.py absorb [FILE|-]             move inbox lines, or "Observations for <unit>" blocks pasted from a chat
                                              reply (FILE, or - for stdin), into the genome's LEARNINGS files
   python loop.py sync [--no-push]            close the loop on this machine: absorb the inbox, commit observation-only
-                                             changes, pull (LEARNINGS merge as a union), renumber duplicate ids, push
+                                             changes, pull (LEARNINGS merge as a union), renumber duplicate ids (drop open copies of resolved ones), push
   python loop.py hook                        session start: `sync` first if ~/.config/strange-loop/auto_sync says on,
                                              then `digest`; never fails
   python loop.py pack UNIT [--out DIR]       zip a skill folder for upload (claude.ai), as dist/<unit>-<version>.zip
@@ -278,13 +278,20 @@ class Learnings:
         return [l.split()[1] for l in moved]
 
     def renumber(self) -> list[str]:
-        """Give later duplicates of an id (two machines both wrote O12) the next free ids. Returns 'old->new'."""
-        seen, changes = set(), []
+        """Give later duplicates of an id (two machines both wrote O12) the next free ids. Returns 'old->new'.
+
+        An open line that is the same observation as the resolved one with its id (a merge brought back the open
+        copy of an observation a branch resolved) is dropped: the resolved entry keeps the record."""
+        seen, changes, drop = set(), [], []
+        resolved = {m.group(1): m.group(1, 2, 3, 4) for _, m in self.entries("resolved")}
         nxt = int(self.next_id()[1:])
         for title in ("resolved", "open"):           # resolved ids are cited in CHANGELOGs: they keep theirs
             for i, m in self.entries(title):
                 oid = m.group(1)
-                if oid in seen:
+                if title == "open" and resolved.get(oid) == m.group(1, 2, 3, 4):
+                    drop.append(i)
+                    changes.append(f"{oid} dropped (already resolved)")
+                elif oid in seen:
                     new = f"O{nxt}"
                     nxt += 1
                     self.lines[i] = self.lines[i].replace(f"- {oid} ", f"- {new} ", 1)
@@ -292,6 +299,8 @@ class Learnings:
                     seen.add(new)
                 else:
                     seen.add(oid)
+        for i in sorted(drop, reverse=True):
+            del self.lines[i]
         if changes:
             self.save()
         return changes
@@ -518,6 +527,10 @@ def cmd_check(args):
             dup = {i for i in ids if ids.count(i) > 1}
             if dup:
                 errors.append(f"{rel}/LEARNINGS.md: duplicate ids {', '.join(sorted(dup))}")
+            both = sorted({m.group(1) for _, m in L.entries("open")} & {m.group(1) for _, m in L.entries("resolved")})
+            if both:
+                errors.append(f"{rel}/LEARNINGS.md: {', '.join(both)} is both open and resolved (a merge kept both): "
+                              "remove the open line, or run `loop.py sync`")
             vers = set(changelog_versions(cp))
             for _, m in L.entries("resolved"):
                 if not m.group(6):
@@ -796,9 +809,9 @@ def cmd_sync(args) -> int:
         if (d / "LEARNINGS.md").exists():
             renamed += [f"{name} {c}" for c in Learnings(d / "LEARNINGS.md", name).renumber()]
     if renamed:
-        run_git(g, "commit", "-q", "-m", "observations: renumber ids that two machines both used", "--",
+        run_git(g, "commit", "-q", "-m", "observations: renumber ids that two machines both used, drop resolved copies", "--",
                 *[str(d / "LEARNINGS.md") for d in units(g).values() if (d / "LEARNINGS.md").exists()])
-        say(f"renumbered duplicate ids: {', '.join(renamed)}")
+        say(f"renumbered or dropped duplicate ids: {', '.join(renamed)}")
     ahead = run_git(g, "rev-list", "--count", "@{u}..HEAD").stdout.strip()
     unit_work = [f for f in run_git(g, "log", "@{u}..HEAD", "--name-only", "--format=").stdout.split()
                  if not f.endswith("LEARNINGS.md")]
