@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.3.1 (2026-11-14)
+- A later gate-3 approval opens a new audit round: ra.py audit logs its audit, stage/check/handover/close need a passing audit written after the last approval (unlogged older audits by their verified date); SKILL.md says Python 3.12+. (O10) (O10)
+
 ## 0.3.0 (2026-11-09)
 - Pilot gaps (owner request 2026-11-09): audit status read by its first word and checked to be pass or disagreement (O4); ra.py close and a 'closed' stage (O5); ra.py handover prints draft ledger rows with confirmatory/exploratory, condition, evidence and the disclosure counts (O6); 'kind: exploratory' analyses with an 'exploratory' verdict, and a rule for side literature questions and extras after gate 3 (O7). O8 (win: gates, verbatim rules, cross-family audit) kept as is. (O4, O5, O6, O7, O8)
 

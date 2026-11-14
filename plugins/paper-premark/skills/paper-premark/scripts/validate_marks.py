@@ -19,7 +19,8 @@ contains a soft hyphen (U+00AD) or `***` (DEVONthink's redaction of URLs and e-m
 occur, occurs more than once, or sits on a page whose text shows every line twice (phantom text layer).
 Warnings (no effect on the exit code): more than 8 red marks, blue without comment, unknown colour.
 
-Prints one row per mark and a summary. Exit 0 when every mark would match, 1 when any would fail,
+Prints one row per mark and a summary; when every mark would match, also the apply plan (one
+mark_record_text call per colour, one at a time). Exit 0 when every mark would match, 1 when any would fail,
 2 on unreadable input.
 """
 from __future__ import annotations
@@ -154,6 +155,10 @@ def main(argv: list[str] | None = None) -> int:
     for w in warnings:
         print(f"warning: {w}")
     print(f"{len(rows) - len(failed)}/{len(rows)} marks would match; {len(failed)} would fail; {len(pages)} pages in the extract")
+    if rows and not failed:
+        per = Counter(colour for _, _, colour, _, _ in rows)
+        print(f"apply: {len(per)} mark_record_text calls ({', '.join(f'{"no colour" if c == "-" else c} {n}' for c, n in per.items())}), one at a time: "
+              "wait for each result before the next (parallel calls on one PDF fail with 'saving failed')")
     return 1 if failed else 0
 
 

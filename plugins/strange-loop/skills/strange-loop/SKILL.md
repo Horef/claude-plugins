@@ -199,7 +199,7 @@ Occasionally (or when asked "how is the system doing?"): `loop.py status` across
 The genome is the GitHub repository; every other copy is either a clone that can write back or an installed copy that only receives.
 
 **Upward, from use to the genome.**
-- Local agents (Claude Code, Kiro, Copilot, Codex on a machine with a clone): `loop.py note` writes into the clone; `loop.py sync` commits observation-only changes, pulls (LEARNINGS files merge as a union through `.gitattributes`, so two machines never conflict; ids both machines used are renumbered) and pushes. With `~/.config/strange-loop/auto_sync` set to `on`, Claude Code's session-start hook does this by itself.
+- Local agents (Claude Code, Kiro, Copilot, Codex on a machine with a clone): `loop.py note` writes into the clone; `loop.py sync` commits observation-only changes, pulls (LEARNINGS files merge as a union through `.gitattributes`, so two machines never conflict; ids both machines used are renumbered, and an open line whose resolved copy exists is dropped) and pushes. With `~/.config/strange-loop/auto_sync` set to `on`, Claude Code's session-start hook does this by itself.
 - claude.ai with the computer connected: the agent runs the note command on that computer through the connector; the next sync there shares it.
 - Chat-only and cloud sessions without the genome: the `Observations for <unit>` block at the end of the reply; `loop.py absorb` brings it in from any session that has the genome.
 

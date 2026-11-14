@@ -259,6 +259,20 @@ class LoopTest(unittest.TestCase):
         self.assertIn("not pushed", out)
         self.assertNotIn("unfinished skill change", git(remote, "log", "--oneline", "main").stdout)
 
+    def test_renumber_drops_the_open_copy_of_a_resolved_observation(self):
+        """O21: a branch resolved O1, main still had it open; the union merge keeps both lines."""
+        line = "- O1 2026-01-01 [friction] the render step needs a browser path"
+        self.learn.write_text(f"# Learnings: demo\n\n## Open\n{line} ×2\n\n## Resolved\n{line} → 1.0.0\n")
+        code, out = run("--genome", str(self.g), "check")
+        self.assertIn("O1 is both open and resolved", out)
+        self.assertEqual(loop.Learnings(self.learn, "demo").renumber(), ["O1 dropped (already resolved)"])
+        L = loop.Learnings(self.learn, "demo")
+        self.assertEqual([m.group(1) for _, m in L.entries("open")], [])
+        self.assertEqual([m.group(1) for _, m in L.entries("resolved")], ["O1"])
+        # the same id on a different observation is still renumbered, not dropped
+        self.learn.write_text(self.learn.read_text().replace("## Open\n", "## Open\n- O1 2026-01-02 [wish] something else\n", 1))
+        self.assertEqual(loop.Learnings(self.learn, "demo").renumber(), ["O1->O2"])
+
     def test_inbox_when_no_genome_then_absorb(self):
         os.environ.pop("STRANGE_LOOP_GENOME", None)
         cwd, real_file = os.getcwd(), loop.__file__

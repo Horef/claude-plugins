@@ -459,6 +459,31 @@ def text_and_quote_on_pdf():
 
 
 @test
+def cache_name_fits_the_file_name_limit():
+    """O1: a DEVONthink PDF named after a 250-character sentence gave a cache name over 255 bytes."""
+    long_stem = ("Simple and complex cells in the primary visual cortex é " * 6)[:250]
+    for stem in (long_stem, "é" * 120):
+        for raw in (False, True):
+            a = lit.cache_path(f"/x/Lib.dtBase2/Files.noindex/pdf/a/{stem}.pdf", raw)
+            b = lit.cache_path(f"/x/Lib.dtBase2/Files.noindex/pdf/b/{stem}.pdf", raw)
+            check(len(a.name.encode()) <= 255, (len(a.name.encode()), a.name))
+            check(a != b and a.name.endswith(".raw.txt" if raw else ".txt"), (a.name, b.name))
+    short = lit.cache_path("/x/Lib.dtBase2/Files.noindex/pdf/a/hull2009.pdf", False)
+    check(short.name.endswith("-hull2009.txt"), short.name)
+    if not shutil.which("pdftotext"):
+        raise Skip("pdftotext not installed (name checks passed)")
+    d, home, old = tmpdir(), tmpdir(), os.environ.get("HOME")
+    pdf = d / ("Simple and complex cells " * 11)[:251].replace(" ", "_").__add__(".pdf")  # 255 bytes with .pdf: the .raw.txt beside it would be 259
+    pdf.write_bytes(make_pdf(PDF_PAGES))
+    os.environ["HOME"] = str(home)
+    try:
+        cache, pages = lit.extract_pdf(pdf, raw=True)
+    finally:
+        os.environ["HOME"] = old
+    check(cache.exists() and home in cache.parents and len(pages) == 2, cache)
+
+
+@test
 def missing_pdftotext_exits_2():
     d = tmpdir()
     pdf = d / "paper.pdf"

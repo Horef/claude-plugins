@@ -125,6 +125,16 @@ readings(key, 10.0, 30.0)
 run("pick", "claudeuni-light")
 readings(key, 12.0, 31.5)
 check(helpers.quota_usage("claudeuni", prov) == {"provider": "claudeuni", "amount": 1.5, "unit": "% of 7d"}, "usage is the 7d rise since pick", str(helpers.quota_usage("claudeuni", prov)))
+# O24: the figure is the account's, not the helper's: `usage` says so on stderr, stdout stays the JSON alone.
+import types  # noqa: E402
+_real_run = helpers.subprocess.run
+helpers.subprocess.run = lambda cmd, **kw: types.SimpleNamespace(returncode=0, stdout=json.dumps({"template": "claudeuni-light"}), stderr="")
+_out, _err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_err):
+    _code = helpers.usage_cmd("some-helper")
+helpers.subprocess.run = _real_run
+check(_code == 0 and json.loads(_out.getvalue()) == {"provider": "claudeuni", "amount": 1.5, "unit": "% of 7d"}, "usage of an account helper: stdout is the JSON alone", _out.getvalue())
+check("largest" in _err.getvalue() and "sum" in _err.getvalue(), "usage of an account helper warns that the reading is account-wide (largest, not the sum)", _err.getvalue())
 readings(key, 12.0, 30.0)
 check(helpers.quota_usage("claudeuni", prov) is None, "no rise: nothing printed")
 readings(key, 12.0, 20.0)

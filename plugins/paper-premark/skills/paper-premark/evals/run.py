@@ -68,6 +68,13 @@ def main() -> int:
         p = run(tmp, [{"page": 1, "string": "Unique closing remark.", "colour": "red"}] * 9, "red")
         expect("9 red marks" in p.stdout, "warns above 8 red marks")
 
+        # O6: parallel mark_record_text calls on one PDF -> 'saving failed'; a passing run says how to apply.
+        p = run(tmp, good, "good_apply")
+        last = p.stdout.strip().splitlines()[-1]
+        expect(last.startswith("apply: 4 mark_record_text calls") and "one at a time" in last, "passing spec ends with the apply plan (calls one at a time)", p)
+        p = run(tmp, [good[2], {"page": 0, "string": "Nothing like this"}], "bad_apply")
+        expect("apply:" not in p.stdout, "failing spec prints no apply plan", p)
+
         (tmp / "bad.json").write_text("{not json", encoding="utf-8")
         p = subprocess.run([sys.executable, str(SCRIPT), str(tmp / "bad.json"), str(tmp / "good.json")], capture_output=True, text=True)
         expect(p.returncode == 2, "unreadable input exits 2", p)

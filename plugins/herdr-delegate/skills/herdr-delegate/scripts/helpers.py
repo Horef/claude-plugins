@@ -544,6 +544,8 @@ def prompts(names):
 # (measured 2026-11-09). Two agy helpers running at once share a group, so their figures overlap.
 # quota-delta (kind "claude" accounts, Codex): the rise of the provider's 7d percent since the
 # snapshot `pick` saved.
+# Both differences are the account's, not the helper's: anything else running on the account in that
+# time is in them, and `usage` says so on stderr (O24).
 def usage_of(provider, screen):
     """{provider, amount, unit} from the last usage line on a helper's screen, or None (none shown, or 0)."""
     known = effective_config().get("providers", {}).get(provider, {}).get("usage_screen")
@@ -663,6 +665,10 @@ def usage_cmd(name):
         if not used:
             return 1
         print(json.dumps(used))
+        # O24: three parallel helpers on one account each printed the shared rise; summed, 52 % for a real 19 %.
+        print(f"note: this is {provider}'s whole change since the last pick, not this helper's alone: other sessions "
+              "and parallel helpers on it are included. For helpers that ran in parallel, report the largest figure "
+              "once, not the sum.", file=sys.stderr)
         return 0
     screen = subprocess.run(["hc", "read", name], capture_output=True, text=True)
     if screen.returncode != 0:

@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.1.1 (2026-11-14)
+- sync's renumber drops an open line that is the same observation as its resolved copy (a merge that kept both) instead of renumbering it into a new open one; check names the id and the fix. (O21) (O21)
+
 ## 1.1.0 (2026-11-06)
 - reading notes unconfirmed after three later use notes are offered to the owner as restructures (owner's request 2026-11-06) (O5)
 
