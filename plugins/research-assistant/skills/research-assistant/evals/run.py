@@ -148,9 +148,61 @@ def tagged_checks() -> None:
              "deviation NB-A1 NB-A1=" in (d / "log.md").read_text(), "bare id at a tagged deviation")
 
 
+def round_checks() -> None:
+    """0.3.1 (O10): a later gate-3 approval opens a new round; round 1's passing audit does not cover round 2."""
+    pass_audit = ("# Audit {n}\n\n- checker: Gemini 4 Argon (agy)\n- inputs: plan.md, verdict.md\n- numbers: all match\n"
+                  "- rules: follow\n- deviations: none\n- substitutions: none\n- selection: none\n- status: pass\n")
+    with tempfile.TemporaryDirectory() as t:
+        root, d = project(t)
+        run("init", d, "--entry", "project", "--question", "Is TC NMDA enough?")
+        (d / "question.md").write_text(QUESTION.replace("<docs/literature/<topic>/ once stage 2 runs>",
+                                                        "docs/literature/nmda/"))
+        (d / "hypotheses.md").write_text(HYP)
+        run("gate", d, "G1", "yes")
+        run("gate", d, "G2", "go", "--select", "H1,H2", "--drop", "H3")
+        a1 = A1.replace("status: proposed", "status: approved").replace("<run ids, once run>", "`mel_nmda_sweep_a`") \
+               .replace("<RESULTS section, once run>", "RESULTS §55")
+        (d / "plan.md").write_text((d / "plan.md").read_text() + "\n" + a1)
+        run("gate", d, "G3", "run A1", "--approve", "A1")
+        (d / "plan.md").write_text((d / "plan.md").read_text().replace("status: approved", "status: done"))
+        (d / "verdict.md").write_text(GOOD)
+        run("audit", d)
+        (d / "verify" / "audit-1.md").write_text(pass_audit.format(n=1))
+        want("7 write-up" in run("status", d).stdout, "round 1 with a passing audit is not stage 7")
+
+        # round 2: an extra analysis approved after the audit, run and given a verdict
+        a2 = a1.replace("## A1:", "## A2:").replace("status: done", "status: approved").replace(
+            "- hypotheses: H1, H2", "- hypotheses: H2")
+        (d / "plan.md").write_text((d / "plan.md").read_text() + "\n" + a2)
+        run("gate", d, "G3", "also A2", "--approve", "A2")
+        (d / "plan.md").write_text((d / "plan.md").read_text().replace("status: approved", "status: done"))
+        (d / "verdict.md").write_text(GOOD + "\n" + GOOD.split("# Verdicts\n\n")[1].replace("## A1:", "## A2:"))
+        st = run("status", d).stdout
+        want("6 audit" in st and "7 write-up" not in st, "round 1's audit covers round 2 (O10):\n" + st)
+        want("no audit since the last gate-3 approval" in run("check", d).stdout, "check misses the stale audit (O10)")
+        want(run("close", d, "x").returncode == 1 and run("handover", d).returncode == 1,
+             "hand-over or close allowed on a stale audit (O10)")
+        run("audit", d)
+        want((d / "verify" / "audit-2.md").exists(), "second audit not written")
+        (d / "verify" / "audit-2.md").write_text(pass_audit.format(n=2))
+        want("7 write-up" in run("status", d).stdout, "a new passing audit does not reach stage 7 (O10)")
+
+        # an audit made before the O10 fix has no log line: it counts only if not older than the last approval
+        legacy = Path(t) / "legacy"
+        import shutil
+        shutil.copytree(d, legacy)
+        log = [l for l in (legacy / "log.md").read_text().splitlines() if " audit " not in l]
+        (legacy / "log.md").write_text("\n".join(log) + "\n")
+        (legacy / "verify" / "audit-2.md").unlink()
+        a = legacy / "verify" / "audit-1.md"
+        a.write_text("Status: current (verified 2020-01-01). Audit 1\n\n" + a.read_text())
+        want("6 audit" in run("status", legacy).stdout, "an old unlogged audit covers a later round (O10)")
+
+
 def main() -> int:
     unit_checks()
     tagged_checks()
+    round_checks()
     with tempfile.TemporaryDirectory() as t:
         root, d = project(t)
         r = run("init", d, "--entry", "project", "--question", "Is TC NMDA enough?")

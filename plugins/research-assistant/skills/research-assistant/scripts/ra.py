@@ -529,6 +529,7 @@ def cmd_audit(a) -> int:
                  if (m := re.match(r"audit-(\d+)\.md", p.name))], default=0)
     path = d / "verify" / f"audit-{n}.md"
     path.write_text(AUDIT.replace("{date}", today()).replace("{n}", str(n)))
+    append_log(d, f"- {today()} audit {n}: written for the fresh checker")
     print(f"wrote {path}: give it to the fresh checker with the plan, the log, the verdicts and the runs")
     return 0
 
@@ -536,6 +537,32 @@ def cmd_audit(a) -> int:
 # ------------------------------------------------------------------ status
 def audits(d: Path) -> list[dict[str, str]]:
     return [fields_of(p) for p in sorted((d / "verify").glob("audit-*.md"))] if (d / "verify").exists() else []
+
+
+def current_audits(d: Path) -> list[tuple[int, dict[str, str]]]:
+    """The audits that cover the latest round: written (logged) after the last gate-3 approval. An audit with no log
+    line (made before audits were logged) counts unless its 'verified' date is older than that approval."""
+    lines = log_lines(d)
+    last, when = -1, ""
+    logged: dict[int, int] = {}
+    for i, line in enumerate(lines):
+        m = GATE_LINE.match(line)
+        if m and m.group(2) == "G3" and _listed(line, "approve"):
+            last, when = i, m.group(1)
+        if m := re.match(r"- \S+ audit (\d+)\b", line):
+            logged[int(m.group(1))] = i
+    found = [(int(m.group(1)), p) for p in (d / "verify").glob("audit-*.md")
+             if (m := re.match(r"audit-(\d+)\.md", p.name))] if (d / "verify").exists() else []
+    out = []
+    for n, p in sorted(found):
+        if n in logged:
+            fresh = logged[n] > last
+        else:
+            v = re.search(r"verified (\d{4}-\d{2}-\d{2})", p.read_text())
+            fresh = last < 0 or not v or v.group(1) >= when
+        if fresh:
+            out.append((n, fields_of(p)))
+    return out
 
 
 def audit_status(f: dict[str, str]) -> str:
@@ -572,7 +599,7 @@ def stage(d: Path) -> str:
             ver = sections(d / "verdict.md", pre(d, "A"))
             if any(k not in ver for k in live):
                 return "6 verdicts"
-            if not any(audit_status(x) == "pass" for x in audits(d)):
+            if not any(audit_status(x) == "pass" for _, x in current_audits(d)):
                 return "6 audit (ra.py audit, then a fresh checker)"
             where = closed(d)
             if where:
@@ -748,21 +775,21 @@ def check(d: Path) -> list[str]:
                              "them; take each from a run output or a RESULTS section (E2)")
     live = [k for k, p in plan.items() if p["fields"].get("status") != "dropped"]
     if live and all(plan[k]["fields"].get("status") in ("done", "failed") and k in ver for k in live):
-        au = audits(d)
+        au = current_audits(d)
         if not au:
-            probs.append("all analyses have verdicts but there is no audit: ra.py audit, then a fresh checker fills "
-                         "verify/audit-N.md before any write-up")
+            probs.append("all analyses have verdicts but there is no audit since the last gate-3 approval: ra.py "
+                         "audit, then a fresh checker fills verify/audit-N.md before any write-up")
         else:
-            last = au[-1]
+            num, last = au[-1]
             for k in ("checker", "inputs", "numbers", "rules", "deviations", "substitutions", "selection", "status"):
                 if empty(last.get(k)):
-                    probs.append(f"verify/audit-{len(au)}.md: '{k}' is not filled")
+                    probs.append(f"verify/audit-{num}.md: '{k}' is not filled")
             st = audit_status(last)
             if not empty(last.get("status")) and st not in ("pass", "disagreement"):
-                probs.append(f"verify/audit-{len(au)}.md: status must start with 'pass' or 'disagreement' "
+                probs.append(f"verify/audit-{num}.md: status must start with 'pass' or 'disagreement' "
                              f"(found '{last.get('status', '')[:40]}')")
             if st == "disagreement":
-                probs.append(f"verify/audit-{len(au)}.md: disagreement; take it to the person (decisions.md), fix, "
+                probs.append(f"verify/audit-{num}.md: disagreement; take it to the person (decisions.md), fix, "
                              "and audit again")
     dec = sections(d / "decisions.md", pre(d, "Q"))
     for qid, q_ in dec.items():
