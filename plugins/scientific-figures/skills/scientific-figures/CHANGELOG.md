@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.5.1 (2026-11-15)
+- Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
+
 ## 7.5.0 (2026-11-15)
 - P.lint and Canvas.lint check what SKILL.md only stated (audit 2026-11-14 item 16, R8): ALL CAPS text, bars on an axis cut above 0, rainbow colormaps, rotated text other than a y-axis title, lines that differ only in hue (unless labelled in that hue); lint_cases.py cases added first; mutual_inhibition example gets a dotted decaying eigenline (second channel); the list of lint reports moves to lib/README.md 'What the linter checks'
 

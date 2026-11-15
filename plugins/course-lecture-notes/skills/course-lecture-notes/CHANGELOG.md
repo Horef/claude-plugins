@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.8.1 (2026-11-15)
+- Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
+
 ## 1.8.0 (2026-11-15)
 - restructure R6, owner-approved 2026-11-15: step 5 keeps only the figure rules the notes need on their own (one model module, message first, simulate, consistent colours, one-line rgb() SVG, prose describes the figure; scientific-figures optional); library setup, tool choice and house conventions moved to references/figures.md; step 7 keeps the run procedure, flags and anki_blocks.py internals moved to references/anki.md; the harness file-transfer table moved to references/devonthink.md (audit C13). No rule removed; SKILL.md 18772 -> 16282 bytes
 

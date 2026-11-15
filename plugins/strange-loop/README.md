@@ -96,16 +96,16 @@ mkdir -p ~/.config/strange-loop && echo ~/code/claude-plugins > ~/.config/strang
 echo on > ~/.config/strange-loop/auto_sync
 ```
 
-Sessions without the clone (claude.ai without the computer connected, cloud sessions on other repositories) end their reply with an "Observations for <name>" block; paste it into `loop.py absorb -` from any session that has the clone. Section 11 of the skill describes the whole round trip.
+Sessions without the clone (claude.ai without the computer connected, cloud sessions on other repositories, a skill installed on its own) of a person who takes part end their reply with an "Observations for <name>" block; paste it into `loop.py absorb -` from any session that has the clone. Section 11 of the skill describes the whole round trip.
 
 Claude Code updates an installed plugin only when its `plugin.json` `version` changes (the docs do not say whether claude.ai's sync also needs that), which is one reason every change to a plugin bumps it (`loop.py bump`, enforced by `loop.py check --base`). Remove older copies of the same skills (folders in `~/.claude/skills/`, zips uploaded to claude.ai by hand) once the synced ones work, or agents see two versions and may load the stale one. `loop.py pack <name>` still builds an upload zip for a harness that cannot add a marketplace.
 
 ## With only some of the skills
 
-Every skill works on its own; strange-loop is what lets it learn. A skill's Learning loop section calls the note command, which needs a clone of the genome and `~/.config/strange-loop/genome`, not the strange-loop plugin itself. So:
+Every skill works on its own; strange-loop is what lets it learn. A skill's Learning loop footer is short and self-contained: it runs the note command when `~/.config/strange-loop/genome` exists (a clone of the genome, not the strange-loop plugin itself) and otherwise, when the person takes part, asks for an `Observations for <name>` block. `loop.py check` warns when a skill's footer differs from the template. So:
 
 - **Clone and config, strange-loop not installed:** lessons are still recorded in the clone, but nothing syncs them automatically and no digest appears; run `loop.py sync` yourself, and ask for a reflection when you want one (the strange-loop skill is in the clone).
-- **Neither (someone who installed one skill from this marketplace):** nothing extra happens. The skill works, the note command fails quietly, and no observation blocks appear unless the person's standing instructions say they take part in improving their skills. The version check in project-foundations' `docmap.py` stays silent too.
+- **Neither (someone who installed one skill from this marketplace):** the skill works, and nothing is added to replies (beyond one line when the skill clearly failed) unless the person's standing instructions say they take part in improving their skills; then lessons come as an `Observations for <name>` block. The version check in project-foundations' `docmap.py` stays silent.
 - **To take part:** fork this repository, clone the fork, point `~/.config/strange-loop/genome` at it and install strange-loop: the fork becomes your own genome, evolving with your use. Lessons worth sharing upstream go back as pull requests or issues (an "Observations for <name>" block pastes straight into an issue).
 
 ## Commands

@@ -1,5 +1,5 @@
 """Scripted eval for model-routing: the skill's tier table and rerun ladder must match the model-router mod's
-defaults (plugins/model-router/hooks/tiers.ts), and its Learning loop block must keep the template's wording.
+defaults (plugins/model-router/hooks/tiers.ts).
 Exit 2 when the mod's tiers.ts is not next to the skill (a copy outside the genome)."""
 import re
 import sys
@@ -31,13 +31,7 @@ have_ladder = [tuple(p.lower().split()) for p in chain.group(0).split(" → ")] 
 if not want_ladder or want_ladder != have_ladder:
     failures.append(f"rerun ladder differs from tiers.ts: skill {have_ladder}, tiers.ts {want_ladder}")
 
-# Learning loop block: the template's fallback condition and the note command's shape
-loop = skill.split("## Learning loop", 1)[-1]
-for needle in ("and the person takes part in improving their skills (their standing instructions say so)",
-               "otherwise add nothing about it, except one line when the skill clearly failed",
-               'note model-routing <failure|friction|misled|missing|workaround|win|wish> "<section>:'):
-    if needle not in loop:
-        failures.append(f"Learning loop block lacks the template's wording: {needle!r}")
+# The Learning loop footer is graded by `loop.py check` (template comparison, R2), not here.
 
 for f in failures:
     print("FAIL:", f)

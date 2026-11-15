@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.5.1 (2026-11-15)
+- Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
+
 ## 1.5.0 (2026-11-15)
 - validate_marks.py checks what SKILL.md only stated (audit 2026-11-14 item 16, R8): a string starting or ending mid-word and more than 8 red marks fail; a back-reference start without [Context], a comment tag that does not match the colour and a 0-based skim-safe page warn; SKILL.md points at the script; eval checks added
 

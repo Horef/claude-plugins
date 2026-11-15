@@ -83,13 +83,11 @@ NOTE_CMD = 'python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/s
 CATEGORIES = ("general", "personal")
 LOOP_SECTION = """## Learning loop
 
-This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line with the note command (in claude.ai, run it on the connected computer):
+This skill improves itself from use. When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line (`<kind>`: failure, friction, misled, missing, workaround, win or wish):
 
-```bash
-{cmd} {name} <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
-```
-
-It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell) and the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for {name}` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; otherwise add nothing about it, except one line when the skill clearly failed. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
+- If `~/.config/strange-loop/genome` exists, run this (in claude.ai, on the connected computer):
+  `{cmd} {name} <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"`
+- Otherwise, only if the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for {name}` holding the line `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; if not, add nothing about it, except one line when the skill clearly failed.
 """
 SKILL_TEMPLATE = """---
 name: {name}
@@ -239,6 +237,16 @@ def frontmatter(p: Path) -> dict[str, str]:
         if m:
             fm[m.group(1)] = m.group(2).strip().strip('"').strip("'")
     return fm
+
+
+def learning_footer(body: str) -> str | None:
+    """The `## Learning loop` section up to the skill's own `###` sub-sections (or the next `##`), stripped."""
+    m = re.search(r"^## Learning loop[ \t]*$", body, re.M)
+    if not m:
+        return None
+    rest = body[m.start():]
+    stop = re.search(r"^#{2,3} (?!Learning loop)", rest[3:], re.M)
+    return (rest[: stop.start() + 3] if stop else rest).strip()
 
 
 # ---------------------------------------------------------------- LEARNINGS.md
@@ -527,6 +535,8 @@ def unit_report(genome: Path, name: str, d: Path) -> tuple[list[re.Match], list[
         raw = skill.read_bytes()
         n = len(raw.decode("utf-8").splitlines())
         notes.append(f"SKILL.md {n}/{SKILL_MAX_LINES} lines, {len(raw) / 1000:.1f}/{SKILL_MAX_BYTES / 1000:.1f} KB")
+        if reason := frontmatter(skill).get("size-exception"):
+            notes.append(f"size-exception: {reason}")
     return opened, ripe, notes
 
 
@@ -728,17 +738,21 @@ def cmd_check(args):
                 warnings.append(f"{rel}/SKILL.md: the description has no 'Use when ...' clause; say when to use the skill "
                                 "(section 6), and add should-fire/should-not-fire trigger cases")
             n = len(skill.read_text(encoding="utf-8").splitlines())
-            if n > SKILL_MAX_LINES:
-                warnings.append(f"{rel}/SKILL.md: {n} lines (> {SKILL_MAX_LINES}); move detail into referenced files")
             nbytes = skill.stat().st_size
-            if nbytes > SKILL_MAX_BYTES:
-                warnings.append(f"{rel}/SKILL.md: {nbytes} bytes (> {SKILL_MAX_BYTES}); move detail into referenced files")
+            if not fm.get("size-exception"):   # a stated reason (front matter) excuses the size; `status` shows it
+                if n > SKILL_MAX_LINES:
+                    warnings.append(f"{rel}/SKILL.md: {n} lines (> {SKILL_MAX_LINES}); move detail into referenced files")
+                if nbytes > SKILL_MAX_BYTES:
+                    warnings.append(f"{rel}/SKILL.md: {nbytes} bytes (> {SKILL_MAX_BYTES}); move detail into referenced files")
             body = skill.read_text(encoding="utf-8")
             if "## Learning loop" not in body:
                 warnings.append(f"{rel}/SKILL.md: no '## Learning loop' section, so users of the skill won't record lessons")
             elif NOTE_CMD not in body:
                 warnings.append(f"{rel}/SKILL.md: the Learning loop section lacks the note command (template: `loop.py new`, "
                                 "strange-loop section 8); without it notes land in installed copies and are lost")
+            elif learning_footer(body) != LOOP_SECTION.format(cmd=NOTE_CMD, name=d.name).strip():
+                warnings.append(f"{rel}/SKILL.md: the Learning loop footer differs from the template "
+                                "(references/learning-loop-template.md); skill-specific hints go under '### Observations'")
         warnings += python_floor_warnings(g, d)
         for f in [d / "SKILL.md", d / "evals" / "cases.md"]:
             if f.exists() and "TODO(new):" in f.read_text(encoding="utf-8"):   # the placeholders, not prose about them

@@ -561,6 +561,47 @@ class PassTest(unittest.TestCase):
         (self.unit / "SKILL.md").write_text(SKILL.replace("strange-loop tests.", "strange-loop tests. Use when testing the loop."))
         self.assertNotIn("Use when", self.g_run("check")[1])
 
+    # R2 (owner-approved 2026-11-15): the Learning loop footer is the template, with the skill's name substituted
+    def footer(self, name="demo"):
+        return loop.LOOP_SECTION.format(cmd=loop.NOTE_CMD, name=name)
+
+    def test_check_warns_when_the_footer_differs_from_the_template(self):
+        self.g_run("note", "demo", "win", "fine")
+        (self.unit / "SKILL.md").write_text(SKILL.split("## Learning loop")[0] + self.footer())
+        code, out = self.g_run("check")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("footer", out)                                  # the template itself, name substituted: no warning
+        (self.unit / "SKILL.md").write_text(SKILL.split("## Learning loop")[0] + self.footer("other-name"))
+        self.assertRegex(self.g_run("check")[1], r"warning: .*demo/SKILL\.md: .*Learning loop.*differs from the template")
+        edited = self.footer().replace("clearly pays off", "pays off nicely")
+        (self.unit / "SKILL.md").write_text(SKILL.split("## Learning loop")[0] + edited)
+        code, out = self.g_run("check")
+        self.assertEqual(code, 0, out)                                   # a warning, never an error
+        self.assertRegex(out, r"differs from the template")
+        hints = "\n### Observations\n\nSkill-specific hint: a gate the person had to ask for is the best evidence.\n"
+        (self.unit / "SKILL.md").write_text(SKILL.split("## Learning loop")[0] + self.footer() + hints)
+        self.assertNotIn("differs from the template", self.g_run("check")[1])   # the skill's own ### Observations is not part of the footer
+
+    def test_new_skill_footer_is_the_template(self):
+        self.g_run("new", "paper-reading", "--description", "Read a paper. Use when reading.", "--category", "general")
+        self.assertNotIn("differs from the template", self.g_run("check")[1])
+
+    # R2: a SKILL.md may exceed the size budget when its front matter gives a reason
+    def test_size_exception_silences_the_size_warning_and_status_shows_the_reason(self):
+        self.g_run("note", "demo", "win", "fine")
+        skill = self.unit / "SKILL.md"
+        wide = "\n".join("word " * 60 for _ in range(100))
+        base = SKILL.split("## Learning loop")[0] + wide + "\n\n" + self.footer()
+        skill.write_text(base)
+        self.assertRegex(self.g_run("check")[1], r"bytes \(> %d\)" % loop.SKILL_MAX_BYTES)
+        skill.write_text(base.replace('description:', 'size-exception: one worked example per rule would be lost\ndescription:', 1))
+        code, out = self.g_run("check")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("bytes (>", out)
+        self.assertRegex(self.g_run("status", "demo")[1], r"size-exception: one worked example per rule would be lost")
+        skill.write_text(base.replace('description:', 'size-exception:\ndescription:', 1))
+        self.assertRegex(self.g_run("check")[1], r"bytes \(> %d\)" % loop.SKILL_MAX_BYTES)   # no reason, no exception
+
     # O3: wins are counted per section, so pruning can see which rules earned their place
     def test_status_counts_wins_by_section(self):
         self.g_run("note", "demo", "win", "§5 lint: caught a clipped label")

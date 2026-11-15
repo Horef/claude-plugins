@@ -67,9 +67,9 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 **Where to write** (first that works):
 1. **The note command**, the same in every skill, project and harness (in claude.ai, run it on the connected computer): `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note <unit> <kind> "<section>: <text>" --harness <name> --context "<project>"`. It writes into the person's clone of the genome (`$STRANGE_LOOP_GENOME`, then a marketplace above the current directory, win over the config file, so a fixture genome never writes into the real one; write commands print the absolute path), deduplicates, and falls back to `~/.config/strange-loop/inbox.md` when no clone is found.
 2. Inside the genome clone itself, or with file access but no shell: edit the genome's `LEARNINGS.md` directly in the format above.
-3. With neither (a chat-only harness, a cloud session on another repository, a read-only uploaded skill), and only when the person takes part in improving their skills (a genome clone on their machine, or their standing instructions say so): end your reply with a block headed `Observations for <unit>` and the lines in the format above, one block per unit. `loop.py absorb <file>` (or `-` for pasted text) adds such blocks to the genome later, so the person can paste a reply into any session that has the genome.
+3. With neither (a chat-only harness, a cloud session on another repository, a read-only uploaded skill, a skill installed on its own), and only when the person takes part in improving their skills (their standing instructions say so): end your reply with a block headed `Observations for <unit>` and the lines in the format above, one block per unit. `loop.py absorb <file>` (or `-` for pasted text) adds such blocks to the genome later, so the person can paste a reply into any session that has the genome.
 
-Installed and synced copies (`~/.claude/plugins/…`, skills synced from claude.ai, uploaded zips) are replaced on update: never write there, even though the files are writable.
+Installed and synced copies (`~/.claude/plugins/…`, skills synced from claude.ai, uploaded zips) are replaced on update: never write there, even though the files are writable. Fix only verified plain errors on the spot; the rest waits for a reflection pass.
 
 A note in a clone is local until it is shared: `loop.py sync` commits observation-only changes, pulls everyone else's and pushes (section 11). If you wrote notes into a clone and auto-sync is off, run it at the end of the session.
 
@@ -125,7 +125,7 @@ Signals rank: tests and deterministic checks > a rubric judged blind by a fresh 
 
 Always-loaded text costs every session and dilutes attention, so growth must be paid for. Defaults (`loop.py check` warns):
 
-- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ 25,000 bytes (about 500 typical lines; lines run up to 1.5 KB, so bytes measure the real cost) and ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure).
+- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ 25,000 bytes (about 500 typical lines; lines run up to 1.5 KB, so bytes measure the real cost) and ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure). If cutting would hurt, front matter `size-exception: <reason>` stops the warning; `status` shows it (owner, 2026-11-15).
 - Project `AGENTS.md` ≤ ~120 lines (project-foundations).
 - `LEARNINGS.md` open list ≤ ~15 entries; beyond that, a reflection pass is overdue.
 
@@ -157,13 +157,13 @@ Forgetting is part of learning: a rule with no recorded `win` (`loop.py status <
 
 1. **Take only the genome, not its expressions.** Go through the file list `new --dry-run` printed and sort every file: the instructions, tools and libraries, reusable material (with licences) and worked examples that are general come in; outputs of tasks done with the skill stay out - work made for a particular project, before/after renders, reports about past runs, scripts named or framed after one course or client, anything that writes to a task's output location. A task output that shows something no example covers is distilled into a general example named after what it shows, and verified to produce the same result.
 2. Replace the placeholder eval cases with real ones; a skill with scripts gets an `evals/run.py`.
-3. Adapt the Learning loop section's triggers to the skill (the command stays verbatim).
+3. Keep the footer as the template has it (`check` warns); skill hints go under `### Observations`.
 4. If the skill installs lasting artifacts into projects (files, templates, tools), give each a provenance line and the note command, as section 1 says (project-foundations' AGENTS.md template and `docmap.py` show how).
 5. Seed `LEARNINGS.md` with what you noticed while adopting it - as notes, not as edits; the next pass fixes the problems among them like any other (section 6).
 6. `loop.py check`.
 7. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
-The skill's own Learning loop section: `loop.py new` writes it; read `references/learning-loop-template.md` when you add or repair one by hand (replace `<name>`, add the skill's own triggers).
+The Learning loop footer: `loop.py new` writes it; see `references/learning-loop-template.md` to repair one.
 
 ## 9. Growing a new capability
 
@@ -179,10 +179,12 @@ Read `references/harnesses.md` when setting up a machine or a harness, or when a
 
 ## Learning loop
 
-This skill observes itself like any other unit. When a step of a reflection was unclear, the script lacked something, or a lesson got lost on its way, record it with the note command (section 2):
+This skill improves itself from use. When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line (`<kind>`: failure, friction, misled, missing, workaround, win or wish):
 
-```bash
-python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note strange-loop <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
-```
+- If `~/.config/strange-loop/genome` exists, run this (in claude.ai, on the connected computer):
+  `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note strange-loop <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"`
+- Otherwise, only if the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for strange-loop` holding the line `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; if not, add nothing about it, except one line when the skill clearly failed.
 
-If it lists close open observations instead of writing, rerun with `--same O<n>` (same lesson again) or `--new` (section 2). Without a clone or a shell, and when the person takes part (section 2), use an `Observations for strange-loop` block at the end of your reply. Changes to section 7 (Kernel), section 3 (change classes) and the ripeness thresholds in `loop.py` need the owner's approval.
+### Observations
+
+Note an unclear reflection step, a missing script feature, a lost lesson. If the note lists close observations, rerun with `--same O<n>` or `--new`. Sections 3, 7 and the ripeness thresholds need the owner's approval.
