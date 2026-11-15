@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.4.0 (2026-11-15)
+- ra.py: a blank audit verdict is no pass (handover refuses); gate --dry-run writes nothing; ra.py round DIR opens a plan round (status shows the round and its next gate); status shows open decisions and a short title; literature-folder check only after gate 2; SKILL: dry-run, append-only gate log, no verdict while an escalation is open, RESULTS heading form (O9, O11)
+
 ## 0.3.1 (2026-11-14)
 - A later gate-3 approval opens a new audit round: ra.py audit logs its audit, stage/check/handover/close need a passing audit written after the last approval (unlogged older audits by their verified date); SKILL.md says Python 3.12+. (O10) (O10)
 
