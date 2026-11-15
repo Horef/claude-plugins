@@ -173,10 +173,12 @@ Run Step 5 and `python tools/docmap.py docs` (the audit queue: oldest verificati
 
 ## Learning loop
 
-This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or `docmap.py` gets something wrong (a check that is noisy, a lookup that costs too much), record one line with the note command (in claude.ai, run it on the connected computer):
+This skill improves itself from use. When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line (`<kind>`: failure, friction, misled, missing, workaround, win or wish):
 
-```bash
-python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note project-foundations <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
-```
+- If `~/.config/strange-loop/genome` exists, run this (in claude.ai, on the connected computer):
+  `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note project-foundations <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"`
+- Otherwise, only if the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for project-foundations` holding the line `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; if not, add nothing about it, except one line when the skill clearly failed.
 
-It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell) and the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for project-foundations` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; otherwise add nothing about it, except one line when the skill clearly failed. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
+### Observations
+
+Note too when `docmap.py` gets something wrong (a check that is noisy, a lookup that costs too much).

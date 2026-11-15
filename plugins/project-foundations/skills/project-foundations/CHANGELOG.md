@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.14.1 (2026-11-15)
+- Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
+
 ## 5.14.0 (2026-11-15)
 - Restructure R3, owner-approved 2026-11-15 (audit C12): SKILL.md 37.4 KB -> 24.6 KB, under the 25 KB budget. Moved verbatim to references/: the module catalogue table (modules.md; Step 3 now lists the templates by module), the guiding principles (principles.md; a one-line list stays), the Retrofit procedure (retrofit.md) and the Upgrade procedure with its 5.x per-version list, step 6b (upgrade.md); the check fail/warn list moved to references/docmap-config.md, 'What check reports'. Removed as an exact duplicate: the Step 4.2 toml example (every line is in docmap-config.md). The documents table lost its column padding only. Headings stay with read-when cues; a fallback URL covers harnesses that show only SKILL.md. scripts/docmap.py unchanged (DOCMAP_VERSION stays 5.13.0).
 

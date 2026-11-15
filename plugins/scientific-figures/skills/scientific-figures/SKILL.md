@@ -165,10 +165,12 @@ Read `lib/README.md` before the first figure of a chat and whenever you need a c
 
 ## Learning loop
 
-This skill and its `sciencefig` library improve themselves from use (strange-loop). When a step here misleads you, the library lacks a helper you had to hand-write, the linter misses something you only saw on the render, or a rule clearly paid off, record one line with the note command (in claude.ai, run it on the connected computer):
+This skill improves itself from use. When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line (`<kind>`: failure, friction, misled, missing, workaround, win or wish):
 
-```bash
-python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note scientific-figures <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
-```
+- If `~/.config/strange-loop/genome` exists, run this (in claude.ai, on the connected computer):
+  `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note scientific-figures <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"`
+- Otherwise, only if the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for scientific-figures` holding the line `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; if not, add nothing about it, except one line when the skill clearly failed.
 
-It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell) and the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for scientific-figures` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; otherwise add nothing about it, except one line when the skill clearly failed. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. A figure you had to fix by hand is the best evidence there is: say what the linter should have caught. Library fixes you verified go to the genome as in setup step 4. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
+### Observations
+
+This skill and its `sciencefig` library improve themselves from use. Note when the library lacks a helper you had to hand-write, or the linter misses something you only saw on the render. A figure you had to fix by hand is the best evidence there is: say what the linter should have caught. Library fixes you verified go to the genome as in setup step 4.

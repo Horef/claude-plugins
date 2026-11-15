@@ -94,10 +94,12 @@ Tiers: **light** is mechanical work with a clear rule (a small, cheap model), **
 
 ## Learning loop
 
-This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line with the note command (in claude.ai, run it on the connected computer):
+This skill improves itself from use. When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line (`<kind>`: failure, friction, misled, missing, workaround, win or wish):
 
-```bash
-python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note research-assistant <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
-```
+- If `~/.config/strange-loop/genome` exists, run this (in claude.ai, on the connected computer):
+  `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note research-assistant <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"`
+- Otherwise, only if the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for research-assistant` holding the line `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; if not, add nothing about it, except one line when the skill clearly failed.
 
-It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell) and the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for research-assistant` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; otherwise add nothing about it, except one line when the skill clearly failed. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass. A gate where the person had to ask for something the artifacts should have shown, or an audit finding the procedure should have prevented, is the best evidence there is.
+### Observations
+
+A gate where the person had to ask for something the artifacts should have shown, or an audit finding the procedure should have prevented, is the best evidence there is.
