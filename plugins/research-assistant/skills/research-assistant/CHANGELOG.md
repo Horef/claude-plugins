@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.5.3 (2026-11-15)
+- research-rules-sources.md follows the 2026-11-15 fresh check of the evidence ledger: RR-E3's 80% is 8 of 10 manually checked tasks (ledger L6 corrected); Nos and Sche read in full text; 'not checked' notes replaced
+
 ## 0.5.2 (2026-11-15)
 - restructure R7, owner-approved 2026-11-15: the step-tier table is preceded by a one-line, standalone definition of light, standard and deep (no model-router dependence, D12)
 
