@@ -25,7 +25,7 @@ Design and rationale: `plugins/strange-loop/README.md`; research behind it: `doc
 - Change classes (fix, learn, restructure, kernel) and the kernel rules are in the strange-loop SKILL.md, sections 3 and 7. Kernel changes need the owner's approval.
 - Never edit or delete an existing eval case in the same commit as the change it grades; adding cases is fine.
 - Owner preferences in a skill (marked or obvious from context, e.g. house style) change only when the owner says so.
-- Keep each SKILL.md under ~500 lines and its description under 1024 characters; move detail into files the skill references.
+- Keep each SKILL.md under 25,000 bytes (and ~500 lines; `loop.py check` warns above either) and its description under 1024 characters; move detail into files the skill references.
 - Machine paths never go into tracked files: libraries that live elsewhere are found through environment variables or `~/.config/...` files, as `scientific-figures/evals/run.py` shows.
 
 ## Keeping the project maintained

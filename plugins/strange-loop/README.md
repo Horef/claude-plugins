@@ -20,7 +20,7 @@ Most agent scaffolding is static: someone finds a process that works, packages i
 
 - **Notice** (seconds, during any task): when a skill misleads, lacks something, needs a workaround, or clearly pays off, the agent adds one line to that skill's `LEARNINGS.md`. A repeat of the same lesson increments its count instead of adding a line: recurrence is the evidence.
 - **Fix** (minutes): plain errors that the agent has just verified (a wrong command, a renamed function) are fixed on the spot with a patch version.
-- **Reflect** (one session, when lessons are ripe): one unit at a time, the agent triages every open lesson into code, a rule, an eval case, a move to another layer, a wait or a rejection. It edits in small deltas, pays for any growth by pruning, verifies against the unit's evals (blind A/B for judged cases), and records a new version.
+- **Reflect** (one session, when lessons are ripe): one unit at a time, the agent triages every open lesson into code, a rule, an eval case, a move to another layer, a wait or a rejection. It edits in small deltas, pays for any growth by pruning, verifies against the unit's evals (scripted checks always; a blind A/B on the judged cases for restructures and description changes), and records a new version.
 
 Lessons also travel through a hierarchy (kernel → person → skill → project → folder): **up when they generalise** (a project lesson seen in a second project is a skill lesson), **down when they specialise**.
 
@@ -41,7 +41,7 @@ The same research names the failure modes, and the design answers each one:
 | Lessons go stale or get applied in the wrong domain (Ouroboros) | Staleness warning after 180 days; the layer table decides where a lesson belongs |
 | Greedy acceptance on average score (GEPA, HGM) | Accept per case, not on average; git keeps every ancestor |
 
-What it cannot do: verify itself completely. A system that grades its own homework drifts. So the loop is anchored to things outside it: deterministic checks, judged evals run blind by a fresh agent, git history, and you, who hold the kernel. This is not a weakness to be engineered away. It is the shape every working self-improving system has had.
+What it cannot do: verify itself completely. A system that grades its own homework drifts. So the loop is anchored to things outside it: deterministic checks, judged evals run blind by a fresh agent (for restructures and description changes), git history, and you, who hold the kernel. This is not a weakness to be engineered away. It is the shape every working self-improving system has had.
 
 ## Why "strange loop"
 

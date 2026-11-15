@@ -111,6 +111,21 @@ class LoopTest(unittest.TestCase):
         code, out = run("--genome", str(self.g), "check")
         self.assertEqual(code, 0, out)
 
+    def test_skill_size_budget_is_in_bytes_and_only_warns(self):
+        skill = self.g / "plugins/demo/skills/demo/SKILL.md"
+        run("--genome", str(self.g), "note", "demo", "win", "the checklist caught a clipped label")
+        code, out = run("--genome", str(self.g), "check")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("bytes", out)                                  # a small skill: no size warning
+        wide = "\n".join("word " * 60 for _ in range(100))             # 100 lines, about 30 KB: fits the line budget, not the byte budget
+        skill.write_text(SKILL + wide + "\n")
+        self.assertLess(len(skill.read_text().splitlines()), loop.SKILL_MAX_LINES)
+        code, out = run("--genome", str(self.g), "check")
+        self.assertEqual(code, 0, out)                                  # a warning, never an error
+        self.assertRegex(out, r"warning: .*demo/SKILL\.md: \d+ bytes \(> %d\)" % loop.SKILL_MAX_BYTES)
+        code, out = run("--genome", str(self.g), "status", "demo")
+        self.assertRegex(out, r"SKILL\.md \d+/\d+ lines, \d+\.\d/\d+\.\d KB")
+
     def test_rejected_and_moved_resolutions(self):
         run("--genome", str(self.g), "note", "demo", "win", "x works")
         base = self.learn.read_text()
