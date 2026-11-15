@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.5.0 (2026-11-15)
+- P.lint and Canvas.lint check what SKILL.md only stated (audit 2026-11-14 item 16, R8): ALL CAPS text, bars on an axis cut above 0, rainbow colormaps, rotated text other than a y-axis title, lines that differ only in hue (unless labelled in that hue); lint_cases.py cases added first; mutual_inhibition example gets a dotted decaying eigenline (second channel); the list of lint reports moves to lib/README.md 'What the linter checks'
+
 ## 7.4.0 (2026-11-15)
 - Restructure R3, owner-approved 2026-11-15 (audit C9): SKILL.md 29.9 KB -> 24.6 KB, under the 25 KB budget. Section 7's quick-reference code block and the worked examples by kind moved verbatim into lib/README.md ('Quick reference', 'Examples'); its 'examples are general' rule merged into the README's identical rule (adds 'keep it free of output paths'); setup step 2's Playwright/Chrome lookup order merged into the README's Setup and Chrome fallback, which already held it. Section 7 keeps a read-when cue. No house style or preference changed.
 

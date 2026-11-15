@@ -17,7 +17,11 @@ Each mark is checked as DEVONthink will match it: NBSP is normalised to a space 
 text.count(string) must be exactly 1 on its page and on the whole document. FAIL when the string is empty,
 contains a soft hyphen (U+00AD) or `***` (DEVONthink's redaction of URLs and e-mail addresses), does not
 occur, occurs more than once, or sits on a page whose text shows every line twice (phantom text layer).
-Warnings (no effect on the exit code): more than 8 red marks, blue without comment, unknown colour.
+Also FAIL: a string that starts or ends in the middle of a word (the highlight would cut it), and more than 8 red marks
+(the one hard limit). Warnings (no effect on the exit code): blue without comment, unknown colour, a mark that starts
+with a back-reference ("Thus", "These", "We find that", ...) and has no `[Context]` comment, a comment whose tag does
+not match the colour ([RED ...], [GREEN ...], [BLUE ...], [YELLOW ...], [REF] ..., [SKIM-SAFE ...]), a skim-safe
+comment whose `(p.N)` is not a 1-based page at or after the mark's own page.
 
 Prints one row per mark and a summary; when every mark would match, also the apply plan (one
 mark_record_text call per colour, one at a time). Exit 0 when every mark would match, 1 when any would fail,
@@ -36,6 +40,9 @@ NBSP = "\u00a0"
 SHY = "\u00ad"
 COLOURS = {"red", "green", "yellow", "blue", "ref", "skim"}
 RED_LIMIT = 8
+TAGS = {"red": "[RED", "green": "[GREEN", "yellow": "[YELLOW", "blue": "[BLUE", "ref": "[REF]", "skim": "[SKIM-SAFE"}
+BACKREF = re.compile(r"(we (find|found|show|see|observe)|thus|these|this|those|such|hence|therefore|they|in all cases)\b", re.I)
+SKIM_PAGE = re.compile(r"\(p\.(\d+)\)")
 
 
 def load_pages(path: Path) -> dict[int, str]:
@@ -83,6 +90,37 @@ def phantom_pages(pages: dict[int, str]) -> set[int]:
     return bad
 
 
+def word_cut(text: str, s: str) -> str:
+    """'starts mid-word' / 'ends mid-word' when the single occurrence of s in text touches a letter on that side."""
+    i = text.find(s)
+    if i < 0:
+        return ""
+    cuts = []
+    if s[0].isalpha() and i > 0 and text[i - 1].isalpha():
+        cuts.append("starts mid-word")
+    j = i + len(s)
+    if s[-1].isalpha() and j < len(text) and text[j].isalpha():
+        cuts.append("ends mid-word")
+    return " and ".join(cuts)
+
+
+def comment_warnings(i: int, m: dict, colour: str, s: str) -> list[str]:
+    comment = str(m.get("comment") or "").strip()
+    page = m.get("page")
+    out = []
+    if colour in {"red", "green", "yellow", "blue"} and BACKREF.match(s.strip()) and not comment.startswith("[Context]"):
+        out.append(f"mark {i}: starts with a back-reference ({s.strip().split(chr(10))[0][:24]!r}); mark its referent too "
+                   "or start the comment with [Context] and restate it")
+    if comment and colour in TAGS and not comment.upper().startswith(TAGS[colour]):
+        out.append(f"mark {i}: {colour} comment should start with {TAGS[colour]}{'' if colour == 'ref' else ' ...'}")
+    if colour == "skim" and page is not None:
+        for n in map(int, SKIM_PAGE.findall(comment)):
+            if n < page + 1:
+                out.append(f"mark {i}: comment says p.{n} but the mark is on page index {page} = PDF page {page + 1} "
+                           "(comment pages are 1-based)")
+    return out
+
+
 def check(pages: dict[int, str], marks: list[dict]) -> tuple[list[tuple], list[str]]:
     phantom = phantom_pages(pages)
     rows, warnings = [], []
@@ -104,6 +142,7 @@ def check(pages: dict[int, str], marks: list[dict]) -> tuple[list[tuple], list[s
             problems.append("soft hyphen (split around it)")
         if "***" in s:
             problems.append("*** redaction (end before it or start after it)")
+        warnings.extend(comment_warnings(i, m, colour, s))
         if not problems:
             if page is not None and page not in pages:
                 problems.append(f"page {page} not in the extract")
@@ -121,11 +160,15 @@ def check(pages: dict[int, str], marks: list[dict]) -> tuple[list[tuple], list[s
                     problems.append(f"occurs {on_page}x on the page")
                 elif total > 1:
                     problems.append(f"occurs {total}x in the document (also page {', '.join(map(str, elsewhere))})")
+                else:
+                    cut = word_cut(next(pages[p] for p in scope if s in pages[p]), s)
+                    if cut:
+                        problems.append(cut + " (extend or trim to whole words)")
                 if page is not None and page in phantom:
                     problems.append("phantom text layer on this page (every line twice)")
         rows.append((i, "-" if page is None else page, colour or "-", "; ".join(problems), s))
     if reds > RED_LIMIT:
-        warnings.append(f"{reds} red marks (limit {RED_LIMIT})")
+        warnings.append(f"{reds} red marks (limit {RED_LIMIT}, the one hard limit: this fails)")
     return rows, warnings
 
 
@@ -148,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     rows, warnings = check(pages, marks)
     failed = [r for r in rows if r[3]]
+    over_red = sum(1 for r in rows if r[2] == "red") > RED_LIMIT
     print(f"{'#':>3} {'page':>4} {'colour':<7} {'result':<6} string")
     for i, page, colour, problem, s in rows:
         if problem or not args.quiet:
@@ -155,11 +199,11 @@ def main(argv: list[str] | None = None) -> int:
     for w in warnings:
         print(f"warning: {w}")
     print(f"{len(rows) - len(failed)}/{len(rows)} marks would match; {len(failed)} would fail; {len(pages)} pages in the extract")
-    if rows and not failed:
+    if rows and not failed and not over_red:
         per = Counter(colour for _, _, colour, _, _ in rows)
         print(f"apply: {len(per)} mark_record_text calls ({', '.join(f'{"no colour" if c == "-" else c} {n}' for c, n in per.items())}), one at a time: "
               "wait for each result before the next (parallel calls on one PDF fail with 'saving failed')")
-    return 1 if failed else 0
+    return 1 if failed or over_red else 0
 
 
 if __name__ == "__main__":

@@ -155,6 +155,15 @@ def _norm_hex(color):
     return to_hex(color).lower()
 
 
+def shouting(text):
+    """True for an ALL CAPS label (six or more letters, none lower-case): house style is sentence case.
+    Short abbreviations (ROC, LGN, EPSP) pass; maths markup ($...$) is not judged."""
+    if "$" in text:
+        return False
+    letters = [ch for ch in text if ch.isalpha()]
+    return len(letters) >= 6 and all(ch.isupper() for ch in letters)
+
+
 def name_of(color):
     """Plain name of a house colour (hex, rgb(...) or matplotlib colour), e.g.
     name_of(S.GREEN) -> 'bluish green'. Raises KeyError for a colour that has

@@ -2,7 +2,7 @@
 /* In-page checks for lint_ui.py. A function expression: lint_ui.py calls it as (<this file>)(options) through
    Runtime.evaluate and reads the returned {problems, notes, density}. It only reads the page, never changes it.
    Problem kinds: page-hscroll, text-overflow, text-clipped, small-text, low-contrast, no-accessible-name,
-   small-target, overlap. Density counts are for the first screen (scroll position 0, viewport height; inside an
+   small-target, overlap, nested-disclosure, duplicate-text. Density counts are for the first screen (scroll position 0, viewport height; inside an
    iframe, the part of it that shows in the top viewport). */
 (function (opts) {
   var TOL = 2;                                  // px of slack for sub-pixel layout
@@ -288,6 +288,25 @@
       add('overlap', ea, '"' + snippet(ea) + '" overlaps ' + sel(eb) + ' "' + snippet(eb) + '" by ' + Math.round(w2) + 'x' + Math.round(h2) + 'px');
     }
   }
+
+  // ---------- nested disclosure ----------
+  Array.prototype.forEach.call(body.querySelectorAll('details details, [data-testid=stExpander] [data-testid=stExpander]'), function (inner) {
+    var outer = inner.parentElement.closest(inner.matches('details') ? 'details' : '[data-testid=stExpander]');
+    add('nested-disclosure', inner, 'an expander inside another expander' + (outer ? ' (' + sel(outer) + ')' : '') + ': two levels at most');
+  });
+
+  // ---------- the same fact twice on the first screen ----------
+  // Compares the text a (non-control) element holds itself; 3 or more words and 16 or more characters, so labels and
+  // buttons that legitimately repeat (a Reset per group) are not reported.
+  var factSeen = {};
+  textEls.forEach(function (t) {
+    if (t.el.closest(INTERACTIVE) || t.el.closest('nav, [role=navigation], [data-testid=stSidebar]')) return;
+    if (!t.nodes.some(function (ni) { return ni.rects.some(inFirstScreen); })) return;
+    var own = t.nodes.map(function (ni) { return ni.node.nodeValue; }).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (own.length < 16 || own.split(' ').length < 3) return;
+    if (factSeen[own]) add('duplicate-text', t.el, '"' + snippet(t.el) + '" is also shown at ' + sel(factSeen[own]) + ': say each fact once');
+    else factSeen[own] = t.el;
+  });
 
   // ---------- density (first screen) ----------
   // Navigation (nav, role=navigation, a Streamlit sidebar) is counted apart, so --max-controls judges the page itself.

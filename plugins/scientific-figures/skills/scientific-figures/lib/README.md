@@ -109,6 +109,17 @@ C.render([svg], "/home/claude/work/check.png", cvd=True)   # 3 render
 md = D.md_figure(svg, "Caption ...")              # 5 into the note
 ```
 
+## What the linter checks
+
+`Canvas.lint()` and `P.lint(fig)` (also via `P.finish`) return `[]` when clean. Each problem line starts with its kind.
+
+| Kind | Both | Canvas only | matplotlib only |
+|---|---|---|---|
+| Layout | text outside the figure; text overlapping text; lines and shape outlines crossing text; filled shapes (boxes, bars, bands) drawn after text and at least ~35% opaque (`PATCH COVERS TEXT`); fonts below the floor (11 px; 7 pt with `paper=True`); `&` | text in a keep-out; geometry running off the canvas (clipped) | streamlines, nullcline contours and scatter markers under text |
+| Style rules from SKILL.md (R8) | `ALL CAPS` (six or more letters, none lower-case; maths markup is not judged) | | `BAR BASELINE` (bars on an axis that starts above 0, above 1 on a log axis); `RAINBOW COLORMAP` (jet, rainbow, hsv, gist_rainbow, nipy_spectral, gist_ncar, turbo, and their `_r`); `VERTICAL TEXT` (any rotated text except a y-axis title); `COLOUR ALONE` (two lines of different hue share one line style and marker, unless a text in that hue is on the axes naming them directly) |
+
+Not linted, so check by eye: raw SVG added with `c.raw`, images, scientific correctness, and the rules that need judgement (message, audience, one hue one meaning). `P.nolint(*artists)` exempts lines, markers, patches, texts or images from the checks that can be intentional; `lint=False` does the same for Canvas items.
+
 ## Examples
 
 `examples/` holds general worked examples to copy from, one figure type each; `python examples/build_all.py [names] [--out DIR] [--render sheet.png]` builds, lints and renders them, and is also the skill's scripted eval. Each module exposes `draw()` (one figure) or `build()` (several, as `{name: (svg, problems)}`) and writes nothing. By kind:

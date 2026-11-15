@@ -3,7 +3,7 @@
     python lint_ui.py PAGE [--widths 390,800,1280] [--themes light,dark] [--height 900] [--json]
                            [--wait-for CSS] [--settle MS] [--max-controls N] [--max-words N]
                            [--max-boxes N] [--max-notices N] [--max-sizes N] [--max-colors N]
-                           [--max-weights N]
+                           [--max-weights N] [--type-scale 12,14,16,...]
 
 PAGE is an HTML file or a URL (a Streamlit app on http://localhost:8501 works: it waits until the DOM is
 stable). Every width x theme is loaded fresh (dark = emulated prefers-color-scheme) and checked in-page
@@ -21,12 +21,15 @@ is NOT checked, so lint its own URL. Console errors and exceptions of frames are
 Kinds: page-hscroll, text-overflow (text runs out of its box), text-clipped (cut off by overflow/ellipsis/
 line-clamp), small-text (< 12px), low-contrast (< 4.5:1, or < 3:1 for >= 24px or >= 18.66px bold; text over
 an image or gradient is only a `contrast-unknown` note), no-accessible-name, small-target (< 24x24),
-console-error, exception, overlap (text boxes overlapping), density (a --max-* limit exceeded).
+console-error, exception, overlap (text boxes overlapping), nested-disclosure (an expander inside an expander: <details>
+or Streamlit st.expander), duplicate-text (the same sentence of 3+ words shown twice on the first screen; buttons and links
+are not compared), off-scale-text (only with --type-scale: a first-screen text size not in the list), density (a --max-*
+limit exceeded).
 
 DENSITY is also printed for the first screen (scroll 0, --height tall): visible controls (navigation - nav,
 role=navigation, a Streamlit sidebar - counted apart and not judged by --max-controls), words, distinct
 bordered/filled boxes, notice/alert-like elements, distinct text sizes, font weights and text colours. These are a
-report (with calm-screen notes above 11 boxes, 4 text sizes or 2 weights), not problems, unless you pass
+report (with calm-screen notes above 11 boxes, 4 text sizes, 3 text colours or 2 weights), not problems, unless you pass
 --max-controls / --max-words / --max-boxes / --max-notices / --max-sizes / --max-colors / --max-weights (no defaults).
 
 Exit codes: 0 clean, 1 at least one problem, 2 not run (no browser, or the page cannot be loaded).
@@ -46,7 +49,7 @@ FRAMES_JS = (Path(__file__).resolve().parent / "lint_frames.js").read_text()
 MAX_PER_KIND = 15
 
 
-def lint(page_arg, widths, themes, height=900, wait_for=None, settle=800, timeout=15, limits=None):
+def lint(page_arg, widths, themes, height=900, wait_for=None, settle=800, timeout=15, limits=None, type_scale=None):
     """Run every width x theme. Returns (problems, notes, density, warnings); each problem is a dict with
     width, theme, kind, selector, detail."""
     limits = limits or {}
@@ -95,9 +98,15 @@ def lint(page_arg, widths, themes, height=900, wait_for=None, settle=800, timeou
                             extra = " (" + ", ".join(d["noticeSelectors"]) + ")"
                         problems.append(dict(tag, kind="density", frame=frame, selector="first screen",
                                              detail="%d %s on the first screen, limit %d%s" % (val, label, lim, extra)))
+                if type_scale:
+                    for size in d["textSizes"]:
+                        if size not in type_scale:
+                            problems.append(dict(tag, kind="off-scale-text", frame=frame, selector="first screen",
+                                                 detail="%dpx text is not on the type scale %s" % (size, ",".join(map(str, type_scale)))))
                 for key, label, val, lim in (
                     ("boxes", "bordered/filled boxes", d["boxes"], 11),
                     ("sizes", "distinct text sizes", len(d["textSizes"]), 4),
+                    ("colors", "distinct text colours", len(d["textColors"]), 3),
                     ("weights", "distinct font weights", len(d.get("textWeights", [])), 2),
                 ):
                     if limits.get(key) is None and val > lim:
@@ -181,17 +190,23 @@ def main(argv=None):
     ap.add_argument("--max-sizes", type=int, help="problem if more distinct text sizes on the first screen")
     ap.add_argument("--max-colors", type=int, help="problem if more distinct text colours on the first screen")
     ap.add_argument("--max-weights", type=int, help="problem if more distinct font weights on the first screen")
+    ap.add_argument("--type-scale", metavar="LIST", help="comma-separated allowed text sizes in px (e.g. 12,14,16,18,20,24,30); "
+                    "other first-screen sizes are off-scale-text problems")
     a = ap.parse_args(argv)
 
     widths = [int(x) for x in a.widths.split(",") if x.strip()]
     themes = [x.strip() for x in a.themes.split(",") if x.strip()]
     if not widths or not themes or any(t not in ("light", "dark") for t in themes):
         ap.error("--widths needs numbers and --themes light and/or dark")
+    try:
+        type_scale = [int(x) for x in a.type_scale.split(",") if x.strip()] if a.type_scale else None
+    except ValueError:
+        ap.error("--type-scale needs whole numbers, e.g. 12,14,16,18,20,24,30")
     limits = {"controls": a.max_controls, "words": a.max_words, "boxes": a.max_boxes, "notices": a.max_notices,
               "sizes": a.max_sizes, "colors": a.max_colors, "weights": a.max_weights}
     try:
         problems, notes, density, warnings = lint(a.page, widths, themes, a.height, a.wait_for, a.settle,
-                                                  a.timeout, limits)
+                                                  a.timeout, limits, type_scale)
     except (BrowserUnavailable, LoadError) as e:
         print("lint_ui.py: NOT RUN - %s" % e, file=sys.stderr)
         return 2

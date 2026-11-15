@@ -2,7 +2,9 @@
 
 Checks that a good spec passes, and that each failure the skill warns about is caught: a string occurring
 twice, a missing string, a soft hyphen, a `***` redaction, a string on the wrong page, a phantom (doubled) page,
-and that NBSP in the text is normalised. Run: python evals/run.py (exit 1 on any failure).
+and that NBSP in the text is normalised. R8: strings that start or end mid-word and more than 8 red marks fail;
+back-references at the start of a mark, comment tags that do not match the colour and skim-safe page numbers that
+look 0-based warn. Run: python evals/run.py (exit 1 on any failure).
 """
 from __future__ import annotations
 
@@ -60,6 +62,8 @@ def main() -> int:
             "page missing from extract": ({"page": 9, "string": "Unique closing remark."}, "not in the extract"),
             "phantom page": ({"page": 2, "string": "Line 3 of the duplicated page text\nLine 3 of the duplicated page text"}, "phantom"),
             "empty string": ({"page": 0, "string": ""}, "empty string"),
+            "string starting mid-word": ({"page": 0, "string": "ecorded\nin visual cortex"}, "starts mid-word"),
+            "string ending mid-word": ({"page": 1, "string": "Unique closing rem"}, "ends mid-word"),
         }
         for name, (mark, needle) in cases.items():
             p = run(tmp, [good[2], mark], name.replace(" ", "_"))
@@ -67,6 +71,18 @@ def main() -> int:
 
         p = run(tmp, [{"page": 1, "string": "Unique closing remark.", "colour": "red"}] * 9, "red")
         expect("9 red marks" in p.stdout, "warns above 8 red marks")
+        expect(p.returncode == 1 and "limit 8" in p.stdout, "more than 8 red marks fail (the hard limit)", p)
+
+        # R8: rules the script can see the data for. Judgement rules warn and leave the exit code alone.
+        back = {"page": 1, "string": "We found that gain\nincreased in all cells.", "colour": "green"}
+        p = run(tmp, [back], "backref")
+        expect(p.returncode == 0 and "back-reference" in p.stdout, "warns on a mark starting with a back-reference", p)
+        p = run(tmp, [{**back, "comment": "[Context] Gain was raised in cells. [GREEN]"}], "backref_ctx")
+        expect(p.returncode == 0 and "back-reference" not in p.stdout, "a [Context] comment silences the back-reference warning", p)
+        p = run(tmp, [{"page": 1, "string": "Unique closing remark.", "colour": "red", "comment": "[GREEN · definition] x"}], "prefix")
+        expect(p.returncode == 0 and "should start with [RED" in p.stdout, "warns when the comment tag does not match the colour", p)
+        p = run(tmp, [{"page": 1, "string": "Unique closing remark.", "colour": "skim", "comment": "[SKIM-SAFE → until 'x' (p.1)] gist"}], "skimpage")
+        expect(p.returncode == 0 and "1-based" in p.stdout, "warns when a skim-safe page number looks 0-based", p)
 
         # O6: parallel mark_record_text calls on one PDF -> 'saving failed'; a passing run says how to apply.
         p = run(tmp, good, "good_apply")

@@ -48,6 +48,72 @@ def mpl_case(box_first, kind="rect", alpha=None, far=False):
     return P.lint(fig)
 
 
+def rule_cases(bad):
+    """SKILL.md rules the linter now checks (R8): bar baseline, rainbow colormaps, ALL CAPS, vertical text, colour alone."""
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    def case(name, probs, prefix, flagged):
+        hit = any(p.startswith(prefix) for p in probs)
+        ok = hit == flagged
+        print(f"{'ok  ' if ok else 'FAIL'} {name}: {'flagged' if flagged else 'clean'} expected, got {probs or 'clean'}")
+        if not ok:
+            bad.append(name)
+
+    def bars(ylim=None, horizontal=False, stacked=False):
+        fig, ax = P.figure(300, 200, name="bars")
+        draw = ax.barh if horizontal else ax.bar
+        draw([0, 1], [50, 60], color=S.BLUE)
+        if stacked:
+            draw([0, 1], [20, 10], bottom=[50, 60], color=S.MUTED)
+        if ylim:
+            (ax.set_xlim if horizontal else ax.set_ylim)(*ylim)
+        return P.lint(fig)
+
+    case("bars on an axis cut at 40", bars((40, 80)), "BAR BASELINE", True)
+    case("horizontal bars on an axis cut at 40", bars((40, 80), horizontal=True), "BAR BASELINE", True)
+    case("bars from 0", bars((0, 80)), "BAR BASELINE", False)
+    case("stacked bars from 0", bars((0, 100), stacked=True), "BAR BASELINE", False)
+
+    for cmap, flagged in (("jet", True), ("rainbow_r", True), ("viridis", False), ("RdBu_r", False)):
+        fig, ax = P.figure(200, 200, name="cm")
+        ax.imshow(np.arange(16.0).reshape(4, 4), cmap=cmap)
+        case(f"colormap {cmap}", P.lint(fig), "RAINBOW COLORMAP", flagged)
+
+    for text, flagged in (("RETINAL LAYERS", True), ("Retinal layers", False), ("ROC", False), ("LGN input", False)):
+        fig, ax = P.figure(300, 160, name="caps")
+        ax.text(0.2, 0.5, text, transform=ax.transAxes)
+        case(f"matplotlib text {text!r}", P.lint(fig), "ALL CAPS", flagged)
+        c = Canvas(300, 100, "caps")
+        c.text(20, 50, text)
+        case(f"canvas text {text!r}", c.lint(), "ALL CAPS", flagged)
+
+    fig, ax = P.figure(300, 200, name="rot")
+    ax.set_ylabel("Firing rate (Hz)")
+    ax.set_xlabel("Time (ms)")
+    ax.text(0.5, 0.5, "slanted label", rotation=90, transform=ax.transAxes)
+    probs = P.lint(fig)
+    case("rotated free text", probs, "VERTICAL TEXT", True)
+    case("y-axis title may be rotated", [p for p in probs if "Firing rate" in p], "VERTICAL TEXT", False)
+
+    def two_lines(second_style="-", second=S.VERMILION, first_style="-", direct=False):
+        fig, ax = P.figure(300, 200, name="chan")
+        ax.plot([0, 1], [0, 1], color=S.BLUE, ls=first_style, label="E")
+        ax.plot([0, 1], [1, 0], color=second, ls=second_style, label="I")
+        if direct:
+            P.end_label(ax, 1, 1, "E cells", S.BLUE, dx=-30, dy=8)
+            P.end_label(ax, 1, 0, "I cells", second, dx=-30, dy=-8)
+        probs = P.lint(fig)
+        plt.close(fig)
+        return probs
+
+    case("two hues, one line style", two_lines(), "COLOUR ALONE", True)
+    case("two hues, second dashed", two_lines("--"), "COLOUR ALONE", False)
+    case("hue plus muted gray", two_lines(second=S.MUTED), "COLOUR ALONE", False)
+    case("custom dash patterns that differ", two_lines((0, (1, 2.2)), first_style=(0, (6, 3))), "COLOUR ALONE", False)
+    case("two hues, one style, each named by a label in its hue", two_lines(direct=True), "COLOUR ALONE", False)
+
+
 def main():
     bad = []
 
@@ -128,6 +194,8 @@ def main():
     print(f"{'ok  ' if ok_cpap else 'FAIL'} canvas lint min_size=7 allows 8pt")
     if not ok_cpap:
         bad.append("canvas lint min_size=7 allows 8pt")
+
+    rule_cases(bad)
 
     print(f"lint_cases: {'FAIL ' + ', '.join(bad) if bad else 'pass'}")
     return 1 if bad else 0

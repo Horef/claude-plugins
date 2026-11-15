@@ -14,10 +14,10 @@ Use when he asks to pre-mark, pre-read, highlight or "map" a paper. It works in 
 ## Colour scheme (his iPhone palette; match the colours already used in the PDF if they differ)
 | Layer | Markup | Hex | Limit |
 |---|---|---|---|
-| Red: must understand | highlight | #FC8C8C | at most 8 per paper |
+| Red: must understand | highlight | #FC8C8C | at most 8 per paper (`validate_marks.py` fails above 8) |
 | Green: needed to follow the argument | highlight | #99FC8C | follows the units |
 | Yellow (lowest): supporting / caveat / speculation | highlight | #FEE832 | follows the units |
-| Blue: future directions / project | highlight | #8CB9FC | every one needs a "what to do" comment |
+| Blue: future directions / project | highlight | #8CB9FC | every one needs a "what to do" comment (`validate_marks.py` warns) |
 | Reference values (numbers, parameters, protocols) | underline | #808080 | never highlight these |
 | Skim-safe | highlight on the first line | #D3D3D3 | comment = "until <phrase/page>" + one-line gist |
 
@@ -25,7 +25,7 @@ Mac palette, if his marks use it: yellow #FFFF0A, green #6CC056, red #F64376, bl
 
 ## Marking rules
 1. **Mark the logical unit, not the sentence.** A unit = condition/manipulation → finding → the authors' conclusion ("These results indicate…"). Use one colour across 2–4 sentences.
-2. **Never start a mark on a back-reference** ("We find that", "Thus", "These", "in all cases", "this result") unless its referent is marked too. If the referent is more than a paragraph away, the comment starts with `[Context] …` and restates it.
+2. **Never start a mark on a back-reference** ("We find that", "Thus", "These", "in all cases", "this result") unless its referent is marked too. If the referent is more than a paragraph away, the comment starts with `[Context] …` and restates it. `validate_marks.py` warns on such a start.
 3. **Definitions in green where first introduced:** named metrics, protocols and categories that later results depend on.
 4. Red marks a claim once, at its strongest evidence statement. Red also covers the paper's key *assumption* (e.g. "tuning is imposed on the inputs"). In model/resource papers, most reds are usually key assumptions and method conventions (e.g. how an index is computed), not results.
 5. Interpretation and speculation get at least yellow, and the comment labels them as hypothesis, not result.
@@ -33,7 +33,7 @@ Mac palette, if his marks use it: yellow #FFFF0A, green #6CC056, red #F64376, bl
 7. Skim-safe sections: put a numbered yellow mark on each step ("evidence 1/4 … 4/4") and red on the conclusion, so skipping loses nothing. Non-paper pages (cover sheets, the tail of another article in the same PDF) also get a skim-safe marker.
 8. He prefers over-coverage ("better to read more than to miss"). Only red has a hard limit.
 9. Never touch his marks. Add to them only.
-10. Comment format: `[RED · result 2] …`, `[GREEN · definition] …`, `[BLUE · project] …`, `[REF] …`, `[SKIM-SAFE → until '…' (p.N)] …`. Page numbers in comments are 1-based PDF pages (= the 0-based index + 1). Double-check them.
+10. Comment format: `[RED · result 2] …`, `[GREEN · definition] …`, `[BLUE · project] …`, `[REF] …`, `[SKIM-SAFE → until '…' (p.N)] …`. Page numbers in comments are 1-based PDF pages (= the 0-based index + 1). Double-check them; `validate_marks.py` warns on a wrong tag for the colour and on a skim-safe page that looks 0-based.
 
 ## Workflow
 0. **Check DEVONthink's MCP tools first** (`mcp__devonthink__*` in Claude Code, the DEVONthink connector in claude.ai). DEVONthink is used only through them: no AppleScript, no other route. If they are not reachable in this session (e.g. a cloud session without his Mac), say so ("DEVONthink's MCP tools are not available in this session") and stop; do not work around it.
@@ -51,7 +51,7 @@ Mac palette, if his marks use it: yellow #FFFF0A, green #6CC056, red #F64376, bl
    - Export (for PyMuPDF only): see the harness table in step 0. If PyMuPDF is not installed, run Python with `uv run --with pymupdf …` or in a scratch venv under the temporary folder (`python3 -m venv /tmp/<paper>/venv`), never in the project's environment.
 3. **Read the whole paper**, including Methods, Extended Data captions and any supplementary pages appended to the PDF.
 4. **Write a mark spec** (list of {colour, type, string, comment}). Strings are copied from the PDFKit text, with `\n` exactly at line breaks. Default: split a unit at a page break and put the comment on the first part. `mark_record_text`'s schema says a multi-line occurrence yields one annotation per page, so a string spanning pages may work (untested on a PDF; `validate_marks.py` checks one page at a time): only when a split would cut a unit in two, try one spanning string, compare `markups_added`, and record the result with the note command. A string cut from `extract.json` between start and end anchors (e.g. before glued line numbers) matched 93 of 93 on its first run. Check where a line starts: Methods text often breaks at a different word than you expect (e.g. "We\nused …").
-5. **Validate** that each string occurs exactly once in the PDFKit text. Save the mark spec as JSON (a list of `{page, string, colour, comment}`, page 0-based) and run `python scripts/validate_marks.py <extract.json> <marks.json>` (path relative to this skill). It parses the extract per page, normalises NBSP, and exits non-zero listing every string that is missing, duplicated, contains a soft hyphen or `***`, or sits on a phantom page. Fix and rerun until it exits 0. Rules behind its checks and what it cannot see:
+5. **Validate** that each string occurs exactly once in the PDFKit text. Save the mark spec as JSON (a list of `{page, string, colour, comment}`, page 0-based) and run `python scripts/validate_marks.py <extract.json> <marks.json>` (path relative to this skill). It parses the extract per page, normalises NBSP, and exits non-zero listing every string that is missing, duplicated, contains a soft hyphen or `***`, sits on a phantom page, starts or ends in the middle of a word, or the spec has more than 8 red marks. Fix and rerun until it exits 0. Rules behind its checks and what it cannot see:
    - Soft hyphens (U+00AD) never match: split around them. Plain end-of-line hyphens ("pro-\nduced") do match.
    - Watch for figure text that PDFKit inserts into the flow, and split units there.
    - **DEVONthink's tool output redacts URLs, e-mail addresses and some tokens as `***`** (e.g. `neuromorpho.org` → `***`, `www.sciencemag.org` → `***`). The real PDF text differs there, so never put `***` or the redacted span into a string. End the string before it or start after it.

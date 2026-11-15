@@ -124,6 +124,23 @@ def main():
     code, out, _ = run("lint_ui.py", bad, "--widths", "390", "--themes", "light")
     check("390 light: page-hscroll: div.wide:" in out, "text output uses `width theme: kind: selector: detail`", out[:300])
 
+    print("lint rules.html (rules SKILL.md states)")
+    rules = str(FIX / "rules.html")
+    code, data, err = lint_json(rules, "--widths", "800", "--themes", "light", "--type-scale", "12,14,16,18,20,24,30")
+    got = {(p["kind"], p["selector"]) for p in data["problems"]}
+    check(any(k == "nested-disclosure" and "details" in s for k, s in got), "rules.html: details inside details is a nested-disclosure problem", str(sorted(got)))
+    dup = [p for p in data["problems"] if p["kind"] == "duplicate-text"]
+    check(len(dup) == 1 and "Verified against" in dup[0]["detail"], "rules.html: a fact shown twice on the first screen is one duplicate-text problem (repeated buttons are not)", str(dup))
+    off = [p for p in data["problems"] if p["kind"] == "off-scale-text"]
+    check(len(off) == 1 and "17" in off[0]["detail"], "rules.html: --type-scale reports the 17px text as off-scale-text", str(off))
+    code, data, err = lint_json(rules, "--widths", "800", "--themes", "light")
+    check(not [p for p in data["problems"] if p["kind"] == "off-scale-text"], "rules.html: no off-scale-text without --type-scale")
+    code, data, err = lint_json(good, "--widths", "390", "--themes", "light")
+    calm = [n["detail"] for n in data["notes"] if n["kind"] == "calm-screen"]
+    check(any("text colours" in d for d in calm), "good.html: more than 3 text colours on the first screen is a calm-screen note", str(calm))
+    code, data, err = lint_json(good, "--widths", "800", "--themes", "light", "--type-scale", "12,14,16,18,20,24,30")
+    check({p["kind"] for p in data["problems"]} == {"off-scale-text"}, "good.html: --type-scale flags only off-scale-text", str(data["problems"][:3]))
+
     print("lint host.html (iframes)")
     host = str(FIX / "host.html")
     code, data, err = lint_json(host, "--widths", "390,1280", "--themes", "light,dark")

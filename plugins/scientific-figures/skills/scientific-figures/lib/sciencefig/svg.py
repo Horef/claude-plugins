@@ -726,7 +726,7 @@ class Canvas:
         Checks: text outside the figure; text overlapping text; text crossed
         by any linted line/curve/shape outline; text covered by a filled shape
         drawn later (on top of it); text in a keep-out; font
-        smaller than min_size (default SIZE_MIN); forbidden '&'."""
+        smaller than min_size (default SIZE_MIN); forbidden '&'; ALL CAPS."""
         probs = []
         T = [(b, s, f) for b, s, f in self.texts if f["lint"]]
         for b, s, f in T:
@@ -736,6 +736,8 @@ class Canvas:
                 probs.append(f"TOO SMALL ({f['size']}px < {min_size}): '{s}'")
             if "&" in s:
                 probs.append(f"'&' in label '{s}' (breaks XML) - write 'and'")
+            if S.shouting(s.replace("**", "")):
+                probs.append(f"ALL CAPS: '{s}' (use sentence case)")
             for k in self.keepouts:
                 if _rects_overlap(b, k):
                     probs.append(f"IN KEEP-OUT: '{s}'")

@@ -48,12 +48,12 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 
 ## 3. House style (all values in `sciencefig/style.py`; never hard-code)
 
-- **Font**: Helvetica (stack "Helvetica, Arial, sans-serif"). Sizes: 13 px for labels and axis titles, 11.5 px for ticks and annotations, **never below 11 px**. Labels are usually too small (Wilke ch. 24), so check at the real display size. Use sentence case, never ALL CAPS, and keep text horizontal (no vertical text except a matplotlib y-axis title).
+- **Font**: Helvetica (stack "Helvetica, Arial, sans-serif"). Sizes: 13 px for labels and axis titles, 11.5 px for ticks and annotations, **never below 11 px**. Labels are usually too small (Wilke ch. 24), so check at the real display size. Use sentence case, never ALL CAPS, and keep text horizontal (no vertical text except a matplotlib y-axis title). Linted.
 - **Ink**: text `INK` #1f1f1f, secondary `INK2` #555, context data `MUTED` #8a8a8a, axes `AXIS` #444, grid `GRID` #e6e6e6, faint background `FAINT` #f2f2f2. White background.
 - **Line weights**: data 2 px (2.6 for a highlight), structure 1.2 px, hairlines 0.8. Data is heavier than structure (Tufte).
 - **Categorical colours** (Okabe-Ito, in this order, which passes the dataviz validator): blue #0072B2, vermilion #D55E00, green #009E73, orange #E69F00, purple #CC79A7. Up to 3 series anywhere; 4–5 only with direct labels; more than ~5 → small multiples or labels instead of colour.
 - **Fills**: `S.tint(hue, 0.15–0.35)` for areas, with the full hue for outlines and marks. Labels in a hue use `S.shade(hue)` (Wilke's two-shade rule). Avoid large saturated areas.
-- **Magnitude** = one-hue lightness ramp (`N.activity_color`, `Blues`, `viridis`). **Polarity** = blue↔red with a light neutral midpoint (`RdBu_r`). Never rainbow or jet.
+- **Magnitude** = one-hue lightness ramp (`N.activity_color`, `Blues`, `viridis`). **Polarity** = blue↔red with a light neutral midpoint (`RdBu_r`). Never rainbow or jet (linted).
 - **Emphasis form** (the most useful one): the subject in `ACCENT` blue, everything else in `MUTED` gray (Rougier rule 6: "is there a reason this is blue and not black?").
 - **Neuroscience semantics** (consistent across all notes):
   - Excitatory = blue + **triangle** terminal; inhibitory = vermilion + **filled dot** (or T-bar).
@@ -69,13 +69,13 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 - **Dynamics conventions**: stable fixed point = filled dot, unstable = open dot, saddle = half-filled; flow field = light gray streamlines; highlighted trajectories carry arrowheads in the direction of time and an open dot at their start; separatrix = dashed black; growing eigen-direction vermilion, decaying blue. Compute fixed points (`Dy.fixed_points`), never place them by eye.
 - **Panel letters**: lowercase bold a, b, c, small and quiet (Wilke ch. 21). Consistent visual language across panels and across the figures of one note: the same entity keeps the same colour and order everywhere.
 - **One hue, one meaning, across the whole document.** A hue that means "wiring draw a" in one panel must not mean "encoder v2" in the next, or "ON afferents" in another figure. Declare the meanings once, in a small module every figure script of the document imports: `key = S.ColorKey(); key.add("v2", S.BLUE, marker="D")`. `key[name]` gives the colour, `key.style(name)` the plot kwargs, and a second meaning for a used colour raises. Repeated instances of one thing (draws, seeds, trials) get *one* neutral ink and differ by line style and marker, not by hue.
-- **Every categorical colour has a second channel** (marker or line style, via `key.style`). Figures that relied on hue alone failed the grayscale check (three of eight in the cell 1542 write-up).
+- **Every categorical colour has a second channel** (marker or line style, via `key.style`). Figures that relied on hue alone failed the grayscale check (three of eight in the cell 1542 write-up). `P.lint` flags lines that differ only in hue, unless a label in that hue names them.
 - **Colour words must match the drawn colour.** Prefer direct labels to colour words. When a caption or label must name a colour, take it from `S.name_of(colour)` ("orange" printed next to an olive line misleads).
 
 ## 4. Design rules checklist (apply while drawing)
 
 **Integrity (Tufte ch. 2; Wilke ch. 17)**
-- Bars and filled areas start at 0 (bars on a log scale start at 1, and only for ratios).
+- Bars and filled areas start at 0 (bars on a log scale start at 1, and only for ratios). Bars are linted.
 - Area is proportional to value (size discs by area, not radius).
 - No fake perspective or decorative 3D, no varying scales within one figure. Real 3D (`surf`) only when the shape of z(x, y) is the message (plateaus vs slopes, a valley, a saddle); add a contour view if values must be read.
 - Small multiples share axes; if they don't, say so in the caption.
@@ -112,7 +112,7 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 ## 5. The loop: draw → lint → render → look → fix
 
 1. **Draw** with the library. Compute geometry (cell positions, edge points, label positions) from variables; never eyeball offsets. Use `neuro.edge_point`, `box()['r']` and similar anchors.
-2. **Lint**: `c.lint()` (Canvas) or `svg, probs = P.finish(fig)` (matplotlib: lint, then export; `P.lint` after `P.export` fails because export closes the figure) must give `[]`. It reports text outside the figure, text overlapping text, lines, streamlines, nullcline contours, and scatter markers under text, filled patches (boxes, bars, bands) drawn on top of text, curves or branches that run off the canvas (clipped), fonts below the floor (11 px default, 7 pt for `paper=True`), and `&`. Place portrait nullcline labels outside the axes (`Dy.portrait(..., labels=...)`) rather than inside the flow field. A filled patch drawn before the text (a label inside a box) is fine; one drawn after it is flagged, unless it is under about 35% opaque. Raw SVG added with `c.raw` and images are not linted, so check those when you look. Fix the layout. Do not silence a warning with `lint=False` or a halo unless the overlap is intended (e.g. a label inside a shaded area).
+2. **Lint**: `c.lint()` (Canvas) or `svg, probs = P.finish(fig)` (matplotlib: lint, then export; `P.lint` after `P.export` fails because export closes the figure) must give `[]`. What it reports (layout, and the style rules of sections 3 and 4 marked "linted"): `lib/README.md`, "What the linter checks", read when a line is unclear. Place portrait nullcline labels outside the axes (`Dy.portrait(..., labels=...)`) rather than inside the flow field. A filled patch drawn before the text (a label inside a box) is fine; one drawn after it is flagged, unless it is under about 35% opaque. Raw SVG added with `c.raw` and images are not linted, so check those when you look. Fix the layout. Do not silence a warning with `lint=False` or a halo unless the overlap is intended (e.g. a label inside a shaded area).
 3. **Render**: `C.render([svg,...], "work/check.png", names=[...])` (Chromium via Playwright, or headless Chrome on a Mac; 2×). For figures saved as PNG (e.g. matplotlib straight to file), `C.cvd_sheet(png, out_png)` puts the original beside grayscale, deuteranopia and protanopia versions (Machado et al. 2009, linear RGB) for one look. Batch 4–6 figures per sheet while iterating, re-render only the figures you changed, and add `cvd=True` (grayscale and deuteranopia copies) in one final pass for colour-coded figures: each sheet image costs context.
 4. **Look**: open the PNG with Read and check, figure by figure:
    - [ ] The message is visible within 5 seconds; the subject stands out.
