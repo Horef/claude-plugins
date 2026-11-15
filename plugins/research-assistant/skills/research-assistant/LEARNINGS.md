@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O13 2026-11-15 [wish] Provenance of results: RESULTS/verdict entries record the run that produced each number (commit, config or hash, command, date, output path); ra.py check fails on a result without them. Same fields as project-foundations' RESULTS template, kept in both skills (D12). Owner 2026-11-15 (claude-code, owner request)
 
 ## Resolved
 
