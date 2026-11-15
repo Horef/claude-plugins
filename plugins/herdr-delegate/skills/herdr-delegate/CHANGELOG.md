@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.14.0 (2026-11-15)
+- restructure R4, owner-approved 2026-11-15: SKILL.md now opens with Steps; provider table and setup, other-Claude-account discovery, configuration and model commands, and the dated Copilot Fusion research moved to references/ (providers.md, accounts.md, models.md, copilot-fusion.md) with read-when cues; Fusion notes re-checked offline against Copilot CLI 1.0.112 (audit C11). No rule removed; SKILL.md 23065 -> 16745 bytes
+
 ## 0.13.0 (2026-11-15)
 - pick says which names it wants (template names) when one has no template (O28); prompt detector reads Copilot's 'enter select / esc cancel' path-access dialog (O10, fixture captured 2026-11-14); agy standard tier is Gemini 4 Hydrogen high (O27, owner rating); SKILL: one Copilot wait timeout (60), brief rules for worktrees, inline config overrides, no Kiro push, long runs by the lead, agy scripts in files, brief inside --cwd (O6, O12, O14, O17, O20, O22); Learning loop block resynced with the template (O6, O10, O12, O14, O17, O20, O22, O27, O28)
 
