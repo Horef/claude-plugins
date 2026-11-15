@@ -1,0 +1,6 @@
+[
+ {"name": "r01", "cmd": ["python3", "sim.py", "r01"], "kind": "sim", "est_gb": 4.0, "prio": 50},
+ {"name": "r02", "cmd": ["python3", "sim.py", "r02"], "kind": "sim", "est_gb": 4.0, "prio": 50},
+ {"name": "r03", "cmd": ["python3", "sim.py", "r03"], "kind": "sim", "est_gb": 4.0, "prio": 50},
+ {"name": "r04", "cmd": ["python3", "sim.py", "r04"], "kind": "sim", "est_gb": 4.0, "prio": 50}
+]

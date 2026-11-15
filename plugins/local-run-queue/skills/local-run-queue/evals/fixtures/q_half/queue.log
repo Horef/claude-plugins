@@ -1,0 +1,8 @@
+2026-11-14 10:00:00 QUEUE START pid 40999: q_half, budget 11 GB, kill 13.2 GB, max_parallel 8, 6 jobs
+2026-11-14 10:00:00 START r01 attempt 1 pid 40901 prio 50 est 4.00 GB
+2026-11-14 10:00:00 START r02 attempt 1 pid 40902 prio 50 est 4.00 GB
+2026-11-14 10:01:02 END r01 attempt 1 exit 0 1.04 min peak 1.91 GB
+2026-11-14 10:01:02 END r02 attempt 1 exit 0 1.03 min peak 1.88 GB
+2026-11-14 10:01:02 START r03 attempt 1 pid 41001 prio 50 est 4.00 GB
+2026-11-14 10:01:02 START r04 attempt 1 pid 41002 prio 50 est 4.00 GB
+2026-11-14 10:02:10 MEM r03:1.89, r04:1.86 = 3.75 GB (budget 11, kill 13.2)

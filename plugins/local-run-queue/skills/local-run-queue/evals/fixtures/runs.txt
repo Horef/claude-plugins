@@ -1,0 +1,12 @@
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r01
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r02
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r03
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r04
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r05
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r06
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r07
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r08
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r09
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r10
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r11
+python3 evals/fixtures/sim_worker.py 25 150 3.0 --run r12
