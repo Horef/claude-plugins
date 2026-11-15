@@ -2,6 +2,15 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-15 - Restructures R1-R8, blind judged run, ledger check
+
+- Owner-approved restructures, each on its own branch and PR: R1 research rule files reviewed (65->51 and 85->51 rules, binding vs guidance, evidence in *-sources.md, ids prefixed RR-/SR- after simple_complex_v1's tag style, id check, D5 step, fallbacks; #80); R3 project-foundations, scientific-figures, strange-loop under 25 KB (#79); R4 herdr-delegate references, R6 course-lecture-notes self-contained (#81); R5 research-writing repetition (#82); R7 self-contained tier text (#83); R8 stated rules become script checks in paper-premark, scientific-figures, gui-design (#84); R2 short self-contained learning-loop footer in all skills, check compares copies, size-exception front matter (#87).
+- Blind judged run for every restructured unit: agy Gemini 4 Hydrogen generators ran each judged task case with the old and the new skill, `loop.py judge` packets, Opus judges. 33 cases: new better 14, old better 6, tie 13; each old win traced to run variance (the relevant text is unchanged). Outputs and verdicts in the owner's 2026-11-15 work folder.
+- Fresh-checker pass over docs/literature/ai_research_agents/ledger.md (agy): 64 confirmed, 2 corrected, 3 abstract-only; research-assistant 0.5.3 follows (#85).
+- Decisions: D11 citations point at herdr-delegate's references; D12 governs R2/R5/R6/R7.
+- Verified: each PR's CI green before merge (two earlier merges went in while CI was pending; both later green; herdr-delegate O30); `loop.py check` 0 errors on main; all plugins installed in both accounts.
+- Unverified: live use of the shortened footers; `--assisted-approval` for Copilot (try with the next Copilot helper).
+
 ## 2026-11-15 - Reflection pass on everything found 2026-11-14; restructures started
 
 - Six parallel jobs fixed every open observation, the 16 graded findings and the audit's fix items, each unit on its own branch: herdr-delegate 0.13.0 (#71; O10 x4 root cause: Copilot's help line "enter select"), strange-loop 2.1.0-2.2.0 (#72; reading notes ripen like use notes, owner decision; cwd marketplace wins; resolved lessons can reopen; `show`, `judge`; check --base per commit), session-status-line 0.8.0 / model-routing 0.3.0 / paper-premark 1.4.0 / course-lecture-notes 1.7.0 (#73), local-run-queue 0.3.0 / gui-design 0.5.0 (#75), scientific-figures 7.3.0 / project-foundations 5.13.0 (#76), research-assistant 0.4.0 / research-writing 0.7.0 / literature-research 0.3.0 (#77). Owner decisions applied: real 3-D and 2-3 part pies allowed (research-writing D7/F38 = scientific-figures); no osascript fallback in literature-research; paper-premark palette stays in the skill; status-line contrast stays at 3:1.
