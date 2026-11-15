@@ -32,7 +32,7 @@
       var label = labelOf(el, ++counter), cw = null, doc = null;
       try { cw = el.contentWindow; doc = cw && cw.document; } catch (e) { doc = null; }
       if (!doc) {
-        out.push({frame: label, skipped: 'cross-origin or sandboxed frame, not checked'});
+        out.push({frame: label, skipped: 'cross-origin or sandboxed frame, not checked (density numbers exclude this frame)'});
         continue;
       }
       if (!doc.body) {

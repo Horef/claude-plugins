@@ -320,9 +320,22 @@ def test_wait(tmp):
     assert r.returncode == 0 and "done" in r.stdout, (r.returncode, r.stdout, r.stderr)
 
 
+def test_unsampled_job_keeps_estimate(tmp):
+    """O2: a job finishing before the first sample must not record peak_gb=0 into done_peaks."""
+    q = Q(tmp, "unsampled", budget=0.5)
+    q.add("a", 40, 0.3, est_gb=0.3, kind="k")
+    q.add("b", 40, 0.5, est_gb=0.3, kind="k", after="a")
+    q.add("c", 40, 0.5, est_gb=0.3, kind="k", after="a")
+    r = runq("run", q.dir, "--sample-s", 10, timeout=60)
+    assert r.returncode == 0, r.stderr + r.stdout
+    L = q.lines()
+    assert "k" not in q.state()["done_peaks"], f"unsampled job wrote done_peaks: {q.state()['done_peaks']}"
+    assert idx(L, "END b") < idx(L, "START c"), "unsampled job dropped estimate to 0 and ran b, c together:\n" + "\n".join(L)
+
+
 TESTS = [test_tree_measurement, test_admission_budget, test_est_override_and_peak, test_kill_requeue,
          test_after_and_blocked, test_restart_skips_done, test_dynamic_job, test_stop_and_pause, test_status_plan,
-         test_start_detaches, test_wait]
+         test_start_detaches, test_wait, test_unsampled_job_keeps_estimate]
 
 
 def main() -> int:

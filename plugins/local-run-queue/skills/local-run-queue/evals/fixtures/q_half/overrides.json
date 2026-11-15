@@ -1,0 +1,9 @@
+{
+ "budget_gb": 11.0,
+ "kill_gb": 13.2,
+ "max_parallel": 8,
+ "sample_s": 10.0,
+ "est_gb": {
+  "sim": 4.0
+ }
+}

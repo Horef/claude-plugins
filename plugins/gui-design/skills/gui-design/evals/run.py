@@ -7,8 +7,9 @@ Runs scripts/lint_ui.py and scripts/shot.py against the fixtures in evals/fixtur
   - the --max-* limits turn density into problems;
   - host.html (a clean page embedding three frames): faults inside its srcdoc frame are reported with the frame
     prefix and in the frame's own density line, nothing is blamed on the host, a frame below the fold has zero
-    first-screen density, --max-* limits apply per frame; a file:// host cannot read the file:// frame (a note,
-    not a pass), but over http:// the good.html frame is checked, clean, and follows the dark theme;
+    first-screen density, --max-* limits apply per frame; over both file:// and http:// the sibling good.html frame
+    is checked, clean, and follows the dark theme; a sandboxed frame emits a frame-skipped note noting that
+    density numbers exclude it;
   - shot.py writes the expected PNGs (right size, light differs from dark, --click and --full change the image,
     a missed --click selector exits 1), plus sheet.png (Pillow, or the browser when Pillow is missing);
   - nav.html: navigation controls are counted apart from the page's; the browser has WebGL;
@@ -116,9 +117,10 @@ def main():
     check(hs == {390}, "page-hscroll only at 390px", str(sorted(hs)))
     check(all(d["notices"] == 3 for d in data["density"]), "density counts 3 notices on the first screen",
           str([d["notices"] for d in data["density"]]))
-    code, data, _ = lint_json(bad, "--widths", "800", "--themes", "light", "--max-controls", "0", "--max-words", "5", "--max-boxes", "1")
+    code, data, _ = lint_json(bad, "--widths", "800", "--themes", "light", "--max-controls", "0", "--max-words", "5", "--max-boxes", "1", "--max-sizes", "1", "--max-colors", "1", "--max-weights", "0")
     dens = [p["detail"] for p in data["problems"] if p["kind"] == "density"]
-    check(len(dens) == 3, "--max-controls/--max-words/--max-boxes each add a density problem", str(dens))
+    check(len(dens) == 6, "--max-controls/--max-words/--max-boxes/--max-sizes/--max-colors/--max-weights each add a density problem", str(dens))
+    check(bool(data["density"] and data["density"][0].get("textWeights")), "density reports textWeights", str(data["density"][:1]))
     code, out, _ = run("lint_ui.py", bad, "--widths", "390", "--themes", "light")
     check("390 light: page-hscroll: div.wide:" in out, "text output uses `width theme: kind: selector: detail`", out[:300])
 
@@ -137,19 +139,31 @@ def main():
     code, out, _ = run("lint_ui.py", host, "--widths", "390", "--themes", "light")
     check("390 light: low-contrast: iframe#1 (Faulty embed) > p.grey:" in out, "host.html: text output puts the frame before the selector", out[:300])
     fd = {d["frame"]: d for d in data["density"] if d["width"] == 1280 and d["theme"] == "light"}
-    check(set(fd) == {None, "iframe#1 (Faulty embed)", "iframe#3 (Far embed)"}, "host.html: one density line per readable frame", str(sorted(map(str, fd))))
+    check(set(fd) == {None, "iframe#1 (Faulty embed)", "iframe#2 (Good embed)", "iframe#3 (Far embed)"},
+          "host.html (file://): one density line per frame including Good embed", str(sorted(map(str, fd))))
     f1d, far = fd.get("iframe#1 (Faulty embed)", {}), fd.get("iframe#3 (Far embed)", {})
     check(f1d.get("controls") == 1 and f1d.get("words", 0) >= 4, "host.html: frame density counts the frame's own controls and words", str(f1d.get("controls")))
     check(far.get("onFirstScreen") is False and far.get("controls") == 0 and far.get("words") == 0,
           "host.html: a frame below the fold has zero first-screen density", str(far))
     skipped = [n for n in data["notes"] if n["kind"] == "frame-skipped"]
-    check(any("Good embed" in n["selector"] for n in skipped), "host.html (file://): the unreadable file:// frame is a frame-skipped note", str(skipped[:1]))
+    check(not skipped, "host.html (file://): sibling file:// iframe is readable, not skipped", str(skipped[:1]))
     code, data, _ = lint_json(host, "--widths", "1280", "--themes", "light", "--max-controls", "0", "--max-words", "1")
     dens = [(p["frame"], p["detail"]) for p in data["problems"] if p["kind"] == "density"]
-    check({f for f, _ in dens} == {None, "iframe#1 (Faulty embed)"} and any("controls" in d for f, d in dens if f),
+    check({f for f, _ in dens} == {None, "iframe#1 (Faulty embed)", "iframe#2 (Good embed)"} and any("controls" in d for f, d in dens if f),
           "host.html: --max-* limits apply to each frame separately", str(dens))
     check(not any(p["frame"] == "iframe#3 (Far embed)" for p in data["problems"] if p["kind"] == "density"),
           "host.html: a frame below the fold never breaks a first-screen limit")
+    with tempfile.TemporaryDirectory() as tmp_sb:
+        sb = Path(tmp_sb) / "sandbox_nested.html"
+        sb.write_text('<!doctype html><html><body style="font:15px sans-serif;background:#fff;color:#111">'
+                      '<div style="border:1px solid #888;padding:12px"><div style="border:1px solid #888;padding:12px;width:200px;height:40px">Nested</div></div>'
+                      '<iframe title="Sandboxed" sandbox srcdoc="<p>hi</p>"></iframe></body></html>')
+        code, data, _ = lint_json(sb, "--widths", "800", "--themes", "light")
+        sb_skip = [n for n in data["notes"] if n["kind"] == "frame-skipped"]
+        check(bool(sb_skip) and "density numbers exclude this frame" in sb_skip[0]["detail"],
+              "sandboxed frame emits frame-skipped note mentioning density exclusion", str(sb_skip))
+        check(any(n["kind"] == "nested-box" for n in data["notes"]),
+              "nested box emits nested-box note", str(data["notes"]))
 
     code, data, err = lint_json(FIX / "nav.html", "--widths", "1280", "--themes", "light", "--max-controls", "3")
     d = data["density"][0] if data["density"] else {}

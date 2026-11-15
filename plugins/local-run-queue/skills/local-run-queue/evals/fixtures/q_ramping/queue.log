@@ -1,0 +1,4 @@
+2026-11-14 10:00:00 QUEUE START pid 41999: q_ramping, budget 11 GB, kill 13.2 GB, max_parallel 8, 4 jobs
+2026-11-14 10:00:00 START r01 attempt 1 pid 42001 prio 50 est 4.00 GB
+2026-11-14 10:00:00 START r02 attempt 1 pid 42002 prio 50 est 4.00 GB
+2026-11-14 10:00:10 MEM r01:0.42, r02:0.39 = 0.81 GB (budget 11, kill 13.2)

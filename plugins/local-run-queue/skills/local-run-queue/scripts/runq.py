@@ -17,8 +17,9 @@ Memory is the PRIVATE footprint of the whole process tree (the job and every des
 smaps). Never RSS, which counts shared pages. GB here means GiB (2**30 bytes).
 
 Policy:
-- Estimate of a job = overrides.json est_gb[kind] if set (it may lower), else the larger of its declared est_gb and
-  the largest peak measured for its kind in this queue's history (state.json): measured peaks only raise it. Set the
+- Estimate of a job = overrides.json est_gb[kind] if set (it may lower). Otherwise the base is the declared est_gb
+  until a job of the kind finishes cleanly with a measured peak (> 0), then that kind's largest finished peak plus
+  10% replaces the declared value; any higher peak measured in this queue (running or finished) raises it. Set the
   override from the peaks of real runs of the same kind (`measure`), not from a smoke run with other settings.
 - Admission by estimate: start a job only if sum(max(estimate, measured now) of running jobs) + its estimate <= budget
   and running < max_parallel. Lower prio number first; a job that does not fit is skipped and a later (lower
@@ -486,8 +487,9 @@ class Driver:
         self.log(f"END {name} attempt {rec['attempt']} exit {rc} {mins:.2f} min peak {rec['peak_gb']:.2f} GB")
         if rc == 0 and (not d or not d["done"] or done_satisfied(d)):
             rec["status"] = "done"
-            dpk = self.st["done_peaks"]
-            dpk[rec["kind"]] = max(dpk.get(rec["kind"], 0.0), round(rec["peak_gb"], 3))
+            if rec["peak_gb"] > 0:
+                dpk = self.st["done_peaks"]
+                dpk[rec["kind"]] = max(dpk.get(rec["kind"], 0.0), round(rec["peak_gb"], 3))
             return
         rec["fails"] += 1
         why = "nonzero exit" if rc != 0 else "exit 0 but its done paths are missing"

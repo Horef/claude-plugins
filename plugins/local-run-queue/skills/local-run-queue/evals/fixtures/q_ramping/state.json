@@ -1,0 +1,13 @@
+{
+ "jobs": {
+  "r01": {"status": "running", "attempt": 1, "fails": 0, "peak_gb": 0.42, "cur_gb": 0.42, "seq": 1, "kind": "sim", "prio": 50, "pid": 42001, "t_start": 1700000000.0},
+  "r02": {"status": "running", "attempt": 1, "fails": 0, "peak_gb": 0.39, "cur_gb": 0.39, "seq": 2, "kind": "sim", "prio": 50, "pid": 42002, "t_start": 1700000000.0},
+  "r03": {"status": "pending", "attempt": 0, "fails": 0, "peak_gb": 0.0, "cur_gb": 0.0, "seq": 3, "kind": "sim", "prio": 50},
+  "r04": {"status": "pending", "attempt": 0, "fails": 0, "peak_gb": 0.0, "cur_gb": 0.0, "seq": 4, "kind": "sim", "prio": 50}
+ },
+ "kind_peaks": {"sim": 0.42},
+ "done_peaks": {},
+ "next_seq": 5,
+ "measured_gb": 0.81,
+ "updated": "2026-11-14 10:00:10"
+}
