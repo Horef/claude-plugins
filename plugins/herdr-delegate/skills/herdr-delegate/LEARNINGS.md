@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O15 2026-11-08 [friction] kiro-light template runs kiro-cli --effort low, yet the Kiro screen showed 'claude-haiku-5.5 · thinking · medium' (2026-11-08 one-prompt run): the --effort flag may not reach Haiku, or the status line shows a default (claude-code, usage line check)
+- O29 2026-11-15 [friction] Copilot helpers' shell exports GIT_CONFIG_* with safe.bareRepository=explicit, which breaks git commands on bare repos (strange-loop test_sync_two_machines errors only inside a Copilot helper). Brief Copilot helpers to unset GIT_CONFIG_* before running tests that use bare repos (2026-11-15, r3)
 
 ## Resolved
 - O8 2026-11-05 [win] Steps 4-5: copilot-deep (Opus 5.5) built a memory-gated, restart-safe run queue from a brief, measured footprint on smoke runs (found the NEURON worker doubles matrix memory, 7.9 vs the logged 5 GB), asked one non-blocking defaults question; ~8 assisted-judge escalations (sleep, git commit, python3 heredoc, symlinked outputs paths) needed the lead over ~40 min. (claude-code, simple_complex_v1) → rejected: a win; kept as evidence for the brief-for-cost rules (O22, 0.13.0); its judge-escalation friction is covered by O3 and the Copilot-needs-a-judge rule
