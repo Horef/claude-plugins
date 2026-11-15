@@ -80,6 +80,38 @@ def new_checks() -> list[str]:
     return fails
 
 
+def reader_checks() -> list[str]:
+    """0.6.1: status counts open question rows in the SKILL's table (status in the 5th column, O17); a reader role
+    without a description is refused unless given one."""
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t) / "w"
+        run("init", str(d))
+        (d / "ledger.md").write_text("# L\n\n## Message\nWe found X.\n\n## Claims\n| id | claim | status | evidence |"
+                                     " figure | condition |\n|---|---|---|---|---|---|\n| C1 | X rises | established | r | "
+                                     "fig:a | all |\n")
+        (d / "review" / "questions.md").write_text(
+            "# Questions\n\n| id | theme | raised by | outcome | status |\n|---|---|---|---|---|\n"
+            "| R1.1 | term undefined | pi, newcomer | text | open |\n"
+            "| R1.2 | missing control | reviewer | analysis | done / open (analysis) |\n"
+            "| R1.3 | title too broad | pi | text | Done |\n"
+            "| R1.4 | wording | editor | text | open |\n")
+        out = run("status", str(d)).stdout
+        if "review/questions.md: 3 open" not in out:
+            fails.append("status misses open reader questions (O17):\n" + out)
+        (d / "build").mkdir(exist_ok=True)
+        (d / "build" / "main.pdf").write_text("%PDF")
+        r = run("readers", str(d), "--round", "1", "--roles", "pi,reviewer2")
+        if r.returncode != 1 or "reviewer2" not in r.stdout or (d / "review" / "round-1" / "brief-reviewer2.md").exists():
+            fails.append("an unknown reader role was accepted without a description:\n" + r.stdout)
+        r = run("readers", str(d), "--round", "1", "--roles", "pi,reviewer2", "--role",
+                "reviewer2=a referee for a neuroscience journal, hostile to modelling claims")
+        brief = d / "review" / "round-1" / "brief-reviewer2.md"
+        if r.returncode != 0 or not brief.exists() or "hostile to modelling claims" not in brief.read_text():
+            fails.append("--role NAME=DESCRIPTION not used:\n" + r.stdout)
+    return fails
+
+
 def rect_pdf(path: Path, x0: int, y0: int, x1: int, y1: int, w: int = 200, h: int = 100) -> None:
     """A one-page PDF with one black filled rectangle (a stand-in for a drawing that may run past the canvas)."""
     stream = f"0 g {x0} {y0} {x1 - x0} {y1 - y0} re f"
@@ -227,6 +259,7 @@ def main() -> int:
     fails += edge_checks()
     fails += source_checks()
     fails += colour_checks()
+    fails += reader_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")
