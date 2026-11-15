@@ -47,6 +47,10 @@ Judge each output against the criteria below and the skill's §5 "Look" checklis
 **Task:** "Add a figure of the retina layers to this note." / "Plot the psychometric function from these numbers for my paper." / "Draw the autoencoder architecture and 3D loss landscape for my ML lecture notes."
 **Good looks like:** scientific-figures is loaded.
 
+## Trigger: should fire (near neighbours of the exclusions)
+**Task:** "Draw the autoencoder architecture for my paper." / "Make a figure of the network model: three populations and their connections."
+**Good looks like:** scientific-figures is loaded (a model or network figure for science is in scope; "Not for software/system architecture diagrams" must not pull these away).
+
 ## Trigger: should not fire
 **Task:** "Make a revenue dashboard for the team." / "Summarise this paper." / "Draw the architecture of this backend service as a figure."
 **Good looks like:** scientific-figures is not loaded (built-in `dataviz`, `artifact-diagramming`, or nothing is; include those built-in skills in the candidate pool when running blind routing checks).
