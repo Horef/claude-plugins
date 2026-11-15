@@ -5,6 +5,7 @@ bug of the first review (review-1.md): the G3 status written into the template c
 line, nested placeholders, hyphenated fields, re-gated drops, unsourced numbers hidden by one source, false positives
 on L2/3, run counts and failed runs, unselected hypotheses, a design changed after approval, a missing audit.
 Standard library only."""
+import re
 import subprocess
 import sys
 import tempfile
@@ -267,8 +268,36 @@ def reading_checks() -> None:
         want(run("round", d).returncode == 1, "ra.py round before gate 3 accepted")
 
 
+def rule_id_checks() -> None:
+    """Every RR- id cited in SKILL.md, ra.py, the templates, the cases and the rules files is a live rule or a retired
+    id, retired ids point at live rules, and research-rules.md and research-rules-sources.md define the same live ids."""
+    unit = HERE.parent
+    rules = (unit / "references" / "research-rules.md").read_text()
+    sources = (unit / "references" / "research-rules-sources.md").read_text()
+    rid = r"RR-[A-H]\d{1,2}"
+    live = set(re.findall(rf"^- \*\*({rid})\*\*", rules, re.M))
+    in_sources = set(re.findall(rf"^- \*\*({rid})\.\*\*", sources, re.M))
+    want(bool(live), "rule ids: none found in research-rules.md")
+    want(live == in_sources, f"rule ids: rules only {sorted(live - in_sources)}; sources only {sorted(in_sources - live)}")
+    tail = rules.split("## Retired ids", 1)
+    want(len(tail) == 2, "rule ids: research-rules.md has no 'Retired ids' section")
+    if len(tail) != 2:
+        return
+    targets = set(re.findall(rf"→ ({rid})", tail[1]))
+    want(targets <= live, f"rule ids: retired ids point to a rule that is not live: {sorted(targets - live)}")
+    retired = set(re.findall(rid, tail[1])) - live
+    want(bool(retired), "rule ids: no retired ids found")
+    known = live | retired
+    for path in [unit / "SKILL.md", unit / "scripts" / "ra.py", unit / "evals" / "cases.md",
+                 *sorted((unit / "templates").rglob("*.md")), unit / "references" / "research-rules.md",
+                 unit / "references" / "research-rules-sources.md"]:
+        bad = sorted(set(re.findall(rid, path.read_text())) - known)
+        want(not bad, f"rule ids cited in {path.name} that are neither live nor retired: {bad}")
+
+
 def main() -> int:
     unit_checks()
+    rule_id_checks()
     reading_checks()
     tagged_checks()
     round_checks()
