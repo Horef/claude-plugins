@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.8.0 (2026-11-15)
+- Restructure R5, owner-approved 2026-11-15: figure checks F33-F37, F39 point to rules D1-D8 instead of restating them; Most important 15 intro and story.md section 7 item 4 point to each other
+
 ## 0.7.0 (2026-11-15)
 - wr.py status counts open reader questions by the table's status column (any 'open' word); readers refuses a role it has no description for and takes --role NAME=DESCRIPTION; step 6: an owed reader round when no fresh agent can start (a writer role-playing readers is a smoke test), light pre-pass for clustering questions; PDF delivered as DIR/<name>.pdf noted; D7/F38 allow real 3-D and simple 2-3 part pies (owner decision 2026-11-15) (O17, O18)
 

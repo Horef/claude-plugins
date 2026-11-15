@@ -306,8 +306,8 @@ Reproducing section.
 3. **The answer was a table, not a plot** (T10). *Fix:* one answer figure (the model's rate-against-rate plot beside the
    reference pattern), plus a mechanism figure.
 4. **The figures floated free of the text** (T9): none cited in the prose, several stacked before the bullets that
-   interpreted them, captions that only described, no setup schematic. *Fix:* cite every claim to a panel, place each figure
-   after its first citation, captions that open with the finding, a schematic of the setup.
+   interpreted them, captions that only described, no setup schematic. *Fix:* T9 and the figure rules D3 to D6 in
+   `writing-rules.md`, plus a schematic of the setup.
 5. **The surprises were stated, not posed and tested** (T8, T13): the two most interesting results appeared as bullets, with
    no expectation, candidates or test, which is exactly what the owner then asked about. *Fix:* expected, observed,
    candidates, test, for each.
