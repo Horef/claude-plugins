@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 2.4.0 (2026-11-15)
+- Restructure R2, owner-approved 2026-11-15 (D12: each skill works on its own): the Learning loop footer is now a short self-contained block (note command when ~/.config/strange-loop/genome exists, otherwise an 'Observations for <name>' block, nothing else); template, loop.py new and strange-loop's own footer match; skill-specific hints go in '### Observations'. check warns when a skill's footer differs from the template. Size exception: front matter 'size-exception: <reason>' silences the size warning and status shows the reason (section 6, AGENTS.md). Section 2: the reply block no longer waits for the person's standing instructions; plain-error rule moved there from the footers.
+
 ## 2.3.0 (2026-11-15)
 - Restructure R3, owner-approved 2026-11-15: SKILL.md 28.3 KB -> 24.6 KB, under the 25 KB budget. Moved verbatim to references/: the section 8 Learning loop template (learning-loop-template.md), the section 9 steps and preference order (growing.md), section 11 and the section 5 claude plugin eval bullet (harnesses.md). Headings stay with read-when cues, so section numbers cited elsewhere still resolve; no rule changed, kernel (section 7) untouched.
 
