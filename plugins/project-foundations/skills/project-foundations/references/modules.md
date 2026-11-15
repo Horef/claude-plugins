@@ -1,0 +1,19 @@
+# Module catalogue
+
+Read in project-foundations SKILL.md Step 2 (and when an Audit or Upgrade adds or drops a module). **Core** is always installed; every other module is chosen from this table. A module owns its files, its templates, its `docmap.py` / `AGENTS.local.md` keys and the lines of `templates/agents.md` tagged `[module]` (SKILL.md, Step 2).
+
+| Module | Adds | Template | Keys | AGENTS.md lines | Add when |
+| --- | --- | --- | --- | --- | --- |
+| **core** | `AGENTS.md`, `AGENTS.local.example.md` (tracked) and `AGENTS.local.md` (ignored), `CLAUDE.md` shim, `docs/BRIEF.md`, `docs/STATUS.md`, `docs/WORKLOG.md`, `docs/DECISIONS.md`, `.gitignore`, `tools/docmap.py` with `docs/MAP.md`, tests and a CI workflow running tests + `docmap.py check` | `templates/agents.md`, `templates/agents-local.md`, `templates/shims.md` (CLAUDE.md), `templates/brief.md`, `templates/status.md`, `templates/worklog.md`, `templates/decisions.md`, `templates/gitignore.md` | `exclude`; local `machine`, `python` (the interpreter or toolchain; `python` for Python projects) | untagged | always |
+| **code-map** | a README in every folder that contains code; a header docstring/comment in every code file; the generated folder tables and `docs/MAP.md` entries | `templates/folder-readme.md`, `templates/file-headers.md` | `exclude`, `map_files_max` | `[code-map]` | the repo has code files |
+| **python-graph** | `where`, `uses`, `calls`, `deps`, `map` (how calls resolve: `references/code-graph.md`) | none | - | `[python-graph]` | the repo has Python code |
+| **architecture** | `docs/ARCHITECTURE.md` + `[[tool.docmap.forbid]]` rules; `docs/CONTRACTS.md` for data structures, units or file formats shared across components | `templates/architecture.md` (CONTRACTS: none) | `forbid` | `[architecture]` | there are boundaries or invariants worth stating (most projects past a few modules) |
+| **workstreams** | the Workstreams table in STATUS; `docs/plans/<slug>.md` with a Status line | `templates/status.md`, `templates/other-docs.md` | - | `[workstreams]` | several lines of work, or work that spans sessions |
+| **lifecycle** | Status lines and the audit queue (`docmap.py docs`); `docs/archive/` for finished specs; `backlog/` for parked code with restore instructions | none | `lifecycle`, `lifecycle_exempt`, `lifecycle_strict`, `verify_max_days`, `proposal_max_days`, `link_exempt`, `id_scan_exempt`, `id_cite_exempt`, `id_missing_exempt` | `[lifecycle]` | the project has docs that can go stale (almost always) |
+| **facts** | generated `docs/FACTS.md` of the key values (defaults, presets, counts), read from configs and code; docs cite it | none | `[tool.docmap.facts]` | `[facts]` | docs repeat values that live in configs or code |
+| **experiments** | `docs/RESULTS.md` (append-only, generated index), `docs/RUNS.md` from run manifests | `templates/other-docs.md` | `[tool.docmap.runs]`, `indexes` | `[experiments]` | research or experiments with run outputs |
+| **compute** | the memory budget and where heavy jobs run | none | local `memory_budget`, `compute` | `[compute]` | runs are heavy, or limited by a machine or cluster |
+| **releases** | `CHANGELOG.md` (Keep a Changelog), README updates with behaviour | `templates/other-docs.md` | - | `[releases]` | others use the project |
+| **reviews** | `docs/reviews/YYYY-MM-DD-<topic>.md`: findings with IDs (B bug, Q questionable, M missing) and a resolution log | `templates/other-docs.md` | - | - | a review is requested or its findings need tracking |
+| **user-defaults** | `~/.config/project-foundations/defaults.md`, outside every repo | `templates/user-defaults.md` | - | - | the user states conventions that will recur across projects |
+| **shims** | `.github/copilot-instructions.md` and Kiro steering: pointers to AGENTS.md | `templates/shims.md` | - | - | those agents are used |
