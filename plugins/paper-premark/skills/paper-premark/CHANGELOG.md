@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.5.0 (2026-11-15)
+- validate_marks.py checks what SKILL.md only stated (audit 2026-11-14 item 16, R8): a string starting or ending mid-word and more than 8 red marks fail; a back-reference start without [Context], a comment tag that does not match the colour and a 0-based skim-safe page warn; SKILL.md points at the script; eval checks added
+
 ## 1.4.0 (2026-11-15)
 - Description gets a Use-when clause and exclusions (audit E17); step 4: page-spanning strings are a documented default-split with one tried exception, anchor slicing tip; step 2: PyMuPDF fallback; validate_marks.py calls a short doubled page phantom (4+ long lines, was 6) with a fixture (evals/fixtures/awkward.pdf) and checks (O2, O7, O8)
 
