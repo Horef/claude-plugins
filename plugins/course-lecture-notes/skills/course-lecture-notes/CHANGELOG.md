@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.7.0 (2026-11-15)
+- lint catches panel/caption references; step 1 checks for an existing guide and transcript-only sessions; Use-when clause; MAX_TOKENS and missing-figure notes (O5, O6, O7)
+
 ## 1.6.0 (2026-11-07)
 - scripts/lint_notes.py checks cross-block references, Unicode math, single-backslash display, missing where:, missing --- (owner's request 2026-11-07); evals/run.py with good/bad fixtures; Workflow step 6 runs the lint before saving and before Anki (O1)
 

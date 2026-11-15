@@ -49,6 +49,12 @@ def main() -> int:
     for key in sorted(set(EXPECTED_BAD) | set(got)):
         if EXPECTED_BAD.get(key, 0) != got.get(key, 0):
             failures.append(f"bad.md {key}: expected {EXPECTED_BAD.get(key, 0)}, got {got.get(key, 0)}")
+    # Soft position references (grading 2026-11-14): panels, captions, "the lecture's figure"; block 1.2 holds allowed forms.
+    code, out = lint(HERE / "fixtures" / "soft-refs.md")
+    soft = [l for l in out if l.startswith("block 1.1 ") and ": cross-reference: " in l]
+    other = [l for l in out if not l.startswith("block 1.1 ")]
+    if code != 1 or len(soft) < 6 or other:
+        failures.append(f"soft-refs.md: expected at least 6 cross-reference problems in block 1.1 and none elsewhere, got exit {code}, {len(soft)} in 1.1, other: {other[:3]}")
     code, _ = lint(HERE / "fixtures" / "does-not-exist.md")
     if code != 2:
         failures.append(f"missing file should exit 2, got {code}")
