@@ -25,6 +25,9 @@ import matplotlib.axis
 import matplotlib.axes
 import matplotlib.figure
 import matplotlib.contour
+import matplotlib.cm
+import matplotlib.container
+import colorsys
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 logging.getLogger("matplotlib.mathtext").setLevel(logging.ERROR)
@@ -499,10 +502,79 @@ def _lint_curves(fig):
                 yield c, f"contour '{c.get_label()}'", polylines
 
 
+RAINBOW = {"jet", "rainbow", "hsv", "gist_rainbow", "nipy_spectral", "gist_ncar", "turbo"}
+HUE_GAP = 20  # degrees between two hues that count as different colours
+
+
+def _hue(color):
+    """Hue in degrees, or None for gray, black and white."""
+    r, g, b, _ = matplotlib.colors.to_rgba(color)
+    h, sat, _v = colorsys.rgb_to_hsv(r, g, b)
+    return h * 360 if sat >= 0.2 else None
+
+
+def _hue_gap(h1, h2):
+    d = abs(h1 - h2)
+    return min(d, 360 - d)
+
+
+def _bar_problems(ax):
+    for cont in ax.containers:
+        if not isinstance(cont, matplotlib.container.BarContainer) or not cont.patches:
+            continue
+        horizontal = getattr(cont, "orientation", None) == "horizontal"
+        scale = ax.get_xscale() if horizontal else ax.get_yscale()
+        lo = min((ax.get_xlim() if horizontal else ax.get_ylim()))
+        start = min(p.get_x() if horizontal else p.get_y() for p in cont.patches)
+        floor = 1 if scale == "log" else 0
+        if lo > floor and (scale == "log" or start <= lo):
+            yield (f"BAR BASELINE: {'x' if horizontal else 'y'} axis starts at {lo:g}, not {floor} "
+                   f"(bars '{cont.get_label()}'; bars start at {floor}, SKILL.md section 4)")
+
+
+def _lint_rules(fig, texts):
+    """Rules SKILL.md states that the data allows checking: bars start at 0, no rainbow colormaps,
+    no vertical text except a y-axis title, every hue has a second channel (marker or line style)
+    unless a label in that hue names the line directly."""
+    probs = []
+    for ax in fig.axes:
+        probs += _bar_problems(ax)
+    for m in fig.findobj(lambda a: isinstance(a, matplotlib.cm.ScalarMappable)):
+        try:
+            name = m.get_cmap().name
+        except Exception:
+            continue
+        if name.removesuffix("_r") in RAINBOW and not getattr(m, "_sf_nolint", False):
+            probs.append(f"RAINBOW COLORMAP: '{name}' (magnitude = one-hue ramp, polarity = RdBu_r)")
+    titles = {id(ax.yaxis.label) for ax in fig.axes}
+    for t, _ in texts:
+        if id(t) not in titles and round(t.get_rotation()) % 360 and not getattr(t, "_sf_nolint", False):
+            probs.append(f"VERTICAL TEXT: '{t.get_text()}' (keep text horizontal; only a y-axis title is rotated)")
+    for ax in fig.axes:
+        seen = {}
+        label_hues = [h for t, _ in texts if t.axes is ax and (h := _hue(t.get_color())) is not None]
+        for l in ax.get_lines():
+            if (not l.get_visible() or l.get_linestyle() in ("None", "") and l.get_marker() in ("None", "", None)
+                    or len(l.get_xydata()) < 2 or getattr(l, "_sf_nolint", False)):
+                continue
+            h = _hue(l.get_color())
+            if h is None or any(_hue_gap(h, lh) <= HUE_GAP for lh in label_hues):
+                continue  # gray and black carry no hue; a label in the line's hue names it directly
+            seen.setdefault((getattr(l, "_unscaled_dash_pattern", l.get_linestyle()), l.get_marker()), []).append((h, l.get_label()))
+        for sig, items in seen.items():
+            for i, (h1, n1) in enumerate(items):
+                for h2, n2 in items[i + 1:]:
+                    if _hue_gap(h1, h2) > HUE_GAP:
+                        probs.append(f"COLOUR ALONE: '{n1}' and '{n2}' differ only in hue "
+                                     "(add a marker or line style; SKILL.md section 3)")
+    return probs
+
+
 def lint(fig, margin=1, min_size=None):
     """Layout problems in a matplotlib figure: texts overlapping texts,
     texts outside the figure, texts crossed by data lines/streamlines/contours,
-    tiny fonts, texts hidden by a filled patch drawn on top of them.
+    tiny fonts, texts hidden by a filled patch drawn on top of them, ALL CAPS text,
+    bars on a cut axis, rainbow colormaps, rotated text, hues without a second channel.
     Empty list == clean. Call before export(), or use finish(fig)."""
     if not hasattr(fig.canvas, "get_renderer"):
         raise RuntimeError("figure already exported/closed: call P.lint before P.export, or use P.finish(fig)")
@@ -540,6 +612,9 @@ def lint(fig, margin=1, min_size=None):
             probs.append(f"TOO SMALL ({t.get_fontsize()}): '{s}'")
         if "&" in s:
             probs.append(f"'&' in '{s}'")
+        if S.shouting(s) and not getattr(t, "_sf_nolint", False):
+            probs.append(f"ALL CAPS: '{s}' (use sentence case)")
+    probs += _lint_rules(fig, texts)
     for i in range(len(texts)):
         for j in range(i + 1, len(texts)):
             if _rects_overlap(texts[i][1], texts[j][1]):

@@ -68,7 +68,8 @@ def draw_modes():
     for k, (ax, a) in enumerate(zip(axes, (0.5, 1.74))):
         M = np.array([[-1, -a], [-a, -1]]); f = Dy.linear(M)
         Dy.flow_field(ax, f, (-1, 1), (-1, 1))
-        Dy.eigenline(ax, (0, 0), (1, 1), Dy.DECAY)
+        # dotted vs dashed: second channel when growing and decaying share the panel
+        Dy.eigenline(ax, (0, 0), (1, 1), Dy.DECAY, **({"ls": (0, (1, 2.2)), "lw": 2.4} if a > 1 else {}))
         Dy.eigenline(ax, (0, 0), (1, -1), Dy.GROW if a > 1 else Dy.DECAY)
         Dy.fixed_point(ax, (0, 0), Dy.classify(M), size=8)
         ax.set_title(f"a = {a}: μ∥ = {-(1 + a):.2f}, μ⊥ = {-(1 - a):+.2f}".replace("-", "−"), size=S.SIZE_SMALL, loc="left")
