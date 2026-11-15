@@ -62,6 +62,8 @@ Papers used go to the project's `references/papers/` (copies of papers are not c
 
 ## Who does each step (a suggestion; the profile overrides)
 
+Tiers: **light** is mechanical work with a clear rule (a small, cheap model), **standard** is following detailed instructions (a mid-size model), **deep** is open judgment (the strongest model, more thinking).
+
 | Step | Suggested tier | Why |
 |---|---|---|
 | 1 Frame | deep, with the person | the question and the stop rule decide everything else |
