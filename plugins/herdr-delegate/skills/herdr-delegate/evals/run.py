@@ -62,6 +62,19 @@ with _cl.redirect_stdout(out), _cl.redirect_stderr(_io.StringIO()):
 ok = rc == 0 and out.getvalue().strip() == "copilot-argon"
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} pick skips a template whose model is not offered: {out.getvalue().strip()}")
+# Copilot's path-access dialog (screen captured 2026-11-14, paths made generic) uses "enter select · esc cancel" (O10).
+got = helpers.pending_prompt((HERE / "screens" / "copilot-path.txt").read_text())
+ok = got is not None and any("Do you want to allow this?" in l for l in got) and any("remember these paths" in l for l in got)
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} copilot-path.txt: {got if not ok else 'detected as expected'}")
+# pick takes template names; a provider name misses and says so instead of exiting silently (O28).
+import os as _os, subprocess as _sp, tempfile as _tf2
+_home = _tf2.mkdtemp()
+_env = dict(_os.environ, HOME=_home, XDG_CONFIG_HOME=_home + "/cfg")
+_r = _sp.run([sys.executable, str(HERE.parent / "scripts" / "helpers.py"), "pick", "kiro,agy"], capture_output=True, text=True, env=_env)
+ok = _r.returncode == 1 and "no template named kiro" in _r.stderr and "kiro-standard" in _r.stderr
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} pick with provider names says which names it wants: {_r.stderr.strip()!r}")
 # Usage read from real helper screens (captured 2026-11-08): the last figure, nothing for none or 0.
 USAGE_CASES = [
     ("kiro", "kiro-done.txt", {"provider": "kiro", "amount": 2.13, "unit": "credits"}),

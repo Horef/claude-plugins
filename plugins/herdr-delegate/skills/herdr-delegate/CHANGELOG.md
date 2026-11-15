@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.13.0 (2026-11-15)
+- pick says which names it wants (template names) when one has no template (O28); prompt detector reads Copilot's 'enter select / esc cancel' path-access dialog (O10, fixture captured 2026-11-14); agy standard tier is Gemini 4 Hydrogen high (O27, owner rating); SKILL: one Copilot wait timeout (60), brief rules for worktrees, inline config overrides, no Kiro push, long runs by the lead, agy scripts in files, brief inside --cwd (O6, O12, O14, O17, O20, O22); Learning loop block resynced with the template (O6, O10, O12, O14, O17, O20, O22, O27, O28)
+
 ## 0.12.1 (2026-11-14)
 - Helper template body: a helper works to a brief and must not open a model-router plan or wait for plan approval; scripted check in render_cases.py (O25)
 

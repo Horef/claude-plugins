@@ -1,0 +1,17 @@
+│                                                                                                    │
+│ ╭────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ /home/me/proj/.venv/bin/python -> /opt/python/3.14/bin/python3.14                              │ │
+│ │ /usr/bin/python3                                                                               │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                                    │
+│ Permission is checked against the resolved target shown after each arrow, not the symlink itself. │
+│                                                                                                    │
+│ Do you want to allow this?                                                                         │
+│                                                                                                    │
+│ ❯ 1. Yes                                                                                           │
+│   2. Yes, and remember these paths for this session                                                │
+│   3. No (Esc)                                                                                      │
+│                                                                                                    │
+│ ↑/↓ navigate · ctrl+e explain · enter select · esc cancel                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+[hc] only its screen: it is blocked; history is not scrolled in this state

@@ -499,7 +499,7 @@ def usable(name, state, today, check_config=True):
 
 # A pending approval box: a question, then a numbered option list and the key help line.
 QUESTION = re.compile(r"Do you want to |Allow this |Do you trust ")
-KEYS = re.compile(r"enter to select|esc to cancel")
+KEYS = re.compile(r"enter (to )?select|esc (to )?cancel", re.I)  # Copilot words the help line both ways
 BOX = str.maketrans("", "", "│╭╮╰╯─")
 
 
@@ -1395,6 +1395,9 @@ def main(argv, today=None):
         for name in order:
             if name in absent:
                 print(f"skipped {name}: its model is not offered (last `helpers.py models`)", file=sys.stderr)
+                continue
+            if command_of(name) is None:
+                print(f"skipped {name}: no template named {name} (pick takes template names such as kiro-standard,agy-standard)", file=sys.stderr)
                 continue
             provider = name.split("-")[0]
             why = unusable_reason(provider, cfg)
