@@ -1,0 +1,13 @@
+# anki_blocks.py: detail
+
+Read when: step 7 behaves unexpectedly (a stop, duplicates, figures on cards), or you need a flag. Moved from SKILL.md step 7 (restructure R6, 2026-11-15); the run procedure stays in SKILL.md.
+
+`anki_blocks.py` lives in his Anki pipeline folder (the project's `anki_pipeline` key in `AGENTS.local.md`, else ~/Scripts/GeminiAnkiCards) and runs with that folder's own `gemini_api/bin/python`. It sends each `### N.M` block through the generator exactly as his Keyboard Maestro macro would (auto-apply), never touches the clipboard, and remembers finished blocks so a rerun resumes. It also puts figures on cards: inline SVG figures (single or multi-line) and local Markdown image links `![alt](path)` in a block are rendered (SVG via headless Chrome) and passed to Gemini, which may place `<img src="NAME">` on a card where the figure helps; images are uploaded to Anki media only when a card uses them. Captions stay as text.
+
+- It needs Anki open (AnkiConnect) and the course's deck name: the project's `anki_deck` key in `AGENTS.local.md`, else ask him once and record it there.
+- `anki_blocks.py NOTE.md "DECK" --list` shows the blocks, what is done and the figure counts. If he already processed some blocks by hand, start after the last one with `--from N.M`.
+- Run one block first with `--only N.M`, read the new cards back through AnkiConnect (`findNotes "deck:DECK" added:1`, then `notesInfo`) and check that they are sensible and the LaTeX survived (for a block with a figure, also check that the image shows on the card); then run the rest in the background (about a minute per block).
+- Its command line is only `NOTE DECK` plus `--list`, `--from`, `--to`, `--only`, `--force`, `--preview-only`, `--no-images` (text only, the old behaviour); it adds `--auto-apply --quiet` itself when it calls the generator.
+- It stops at the first failed block; rerunning the same command continues from there. Long blocks (over ~2.2k characters) sometimes stop it on a Gemini MAX_TOKENS error: rerun; if the same block stops twice, split it at a concept boundary in the notes, re-lint and rerun. Never pass `--force` unless he asks: it re-sends finished blocks and creates duplicates.
+- Duplicates: it checks duplicates only within the target deck. A card that Anki refuses as a duplicate is skipped with a warning and the block is marked done; the run prints "N duplicate card(s) skipped". Report the skipped duplicates to him. No manual resume is needed.
+- If figures could not be drawn (no numpy/matplotlib for the `sciencefig` library), leave the `{{FIG:name}}` placeholders, save the notes, do not send blocks that still contain a placeholder to Anki, and say so in the reply.
