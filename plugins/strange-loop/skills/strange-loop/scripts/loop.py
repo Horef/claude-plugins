@@ -87,9 +87,7 @@ This skill improves itself from use. When a step here misleads you, is missing, 
 
 - If `~/.config/strange-loop/genome` exists, run this (in claude.ai, on the connected computer):
   `{cmd} {name} <kind> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"`
-- Otherwise end your reply with a block headed `Observations for {name}` holding the line `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`.
-
-Nothing else is needed.
+- Otherwise, only if the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for {name}` holding the line `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; if not, add nothing about it, except one line when the skill clearly failed.
 """
 SKILL_TEMPLATE = """---
 name: {name}
