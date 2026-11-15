@@ -12,6 +12,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -986,6 +987,35 @@ def s2_calls_paced_across_processes():
     finally:
         lit.s2_pace, lit.get_json = real, old
     check(seen == [1], seen)
+
+
+@test
+def rule_ids_resolve_and_files_agree():
+    """Every SR- id cited in SKILL.md, scripts, templates, evals and the rules files is a live rule or a retired id,
+    and search-rules.md and search-rules-sources.md define the same live ids."""
+    unit = HERE.parent
+    rules = (unit / "references" / "search-rules.md").read_text()
+    sources = (unit / "references" / "search-rules-sources.md").read_text()
+    sid = r"SR-[A-H]\d{1,2}"
+    live = set(re.findall(rf"^- \*\*({sid})\*\*", rules, re.M))
+    in_sources = set(re.findall(rf"^- \*\*({sid})\.\*\*", sources, re.M))
+    check(live, "no live rule ids found in search-rules.md")
+    check(live == in_sources, f"rules only: {sorted(live - in_sources)}; sources only: {sorted(in_sources - live)}")
+    tail = rules.split("## Retired ids", 1)
+    check(len(tail) == 2, "search-rules.md has no 'Retired ids' section")
+    retired_ids = set(re.findall(sid, tail[1]))
+    targets = set(re.findall(rf"→ ({sid})", tail[1]))
+    check(targets <= live, f"retired ids point to a rule that is not live: {sorted(targets - live)}")
+    retired = retired_ids - live
+    check(retired, "no retired ids found")
+    known = live | retired
+    bad = []
+    for path in [unit / "SKILL.md", unit / "scripts" / "lit.py", unit / "evals" / "cases.md",
+                 *sorted((unit / "templates").rglob("*.md")), unit / "references" / "search-rules.md",
+                 unit / "references" / "search-rules-sources.md"]:
+        text = path.read_text()
+        bad += [f"{path.name}: {i}" for i in sorted(set(re.findall(sid, text)) - known)]
+    check(not bad, f"cited rule ids that are neither live nor retired: {bad}")
 
 
 def live():
