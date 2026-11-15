@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 2.3.0 (2026-11-15)
+- Restructure R3, owner-approved 2026-11-15: SKILL.md 28.3 KB -> 24.6 KB, under the 25 KB budget. Moved verbatim to references/: the section 8 Learning loop template (learning-loop-template.md), the section 9 steps and preference order (growing.md), section 11 and the section 5 claude plugin eval bullet (harnesses.md). Headings stay with read-when cues, so section numbers cited elsewhere still resolve; no rule changed, kernel (section 7) untouched.
+
 ## 2.2.0 (2026-11-15)
 - Tooling from the 2026-11-15 pass. A marketplace above the current directory wins over the configured genome (hook and digest keep the configured one; note for a unit only the configured genome has goes there), and where/new/bump/note print absolute paths, so a fixture run cannot write into the real genome (O24). note --same on a resolved id reopens the lesson as a new open line carrying its count, note also offers close resolved lessons, and show UNIT O<n> looks ids up with the CHANGELOG lines citing them (O26). bump takes repeated --obs (O22). check warns on unit Python files that do not parse at the 3.12 floor or at a lower floor the SKILL.md states (O23), and on descriptions without a Use-when clause (audit item E.17). check --base fails, per commit, on edited judged cases or assertion lines committed with the code they grade (other eval-code edits warn) and on LEARNINGS ids or CHANGELOG versions that disappeared (audit item D.15). judge writes the blind A/B packet with the key aside (O1). status UNIT counts wins per section (O3). new --from takes --dry-run and --exclude so expressions are sorted out before copying (grade 06). SKILL.md: evals-only changes take no bump (grade 03), show in step 1 (grade 02), a check error blocks the commit (grade 01). (O1, O3, O22, O23, O24, O26)
 
