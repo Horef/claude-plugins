@@ -231,7 +231,8 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(found.resolve(), self.g.resolve())
 
     def test_skill_md_template_matches_what_new_writes(self):
-        text = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+        skill = Path(__file__).resolve().parents[1]   # the template lives in exactly this file (owner, 2026-11-15)
+        text = (skill / "references" / "learning-loop-template.md").read_text()
         self.assertIn(loop.LOOP_SECTION.format(cmd=loop.NOTE_CMD, name="<name>").rstrip(), text)
 
     def test_absorb_reply_block(self):

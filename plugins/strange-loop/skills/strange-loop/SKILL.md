@@ -117,7 +117,7 @@ Good cases come from real use: every `failure` becomes a case, so the suite grow
 - **Hard enough to matter.** A case that a capable agent passes *without* the skill carries no signal. Run new cases once with no skill loaded; keep those where the skill makes the difference, or note that the case guards against a regression.
 - **Triggering is its own test.** The `description` decides whether the skill is used at all. Keep a few should-fire and should-not-fire prompts in `cases.md` under `## Trigger:` headings, and check them when the description changes.
 - **Graders and the graded don't change together.** A reflection that changes a unit may *add* cases but not edit or remove existing ones in the same commit; a change to an existing case or to `run.py` is its own commit, citing why (`check --base` fails a commit that does both). This stops a loop from grading its own homework.
-- **In Claude Code**, `claude plugin eval` runs cases in its own layout (`evals/<case>/prompt.md` plus graders, at the plugin root) several times with and without the plugin and reports the difference; use it when you need that with/without comparison or a CI threshold. Its graders are deterministic (regex, tool used, file exists) or a short LLM judge, so write the case so its outcome lands in a file or a regex-checkable line.
+- **In Claude Code**, `claude plugin eval` compares runs with and without the plugin: read `references/harnesses.md` when you need that comparison or a CI threshold.
 
 Signals rank: tests and deterministic checks > a rubric judged blind by a fresh agent > the working agent's own impression. A lower signal never overrules a higher one.
 
@@ -163,32 +163,11 @@ Forgetting is part of learning: a rule with no recorded `win` (`loop.py status <
 6. `loop.py check`.
 7. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
-Template for the skill's own section (`loop.py new` writes exactly this; replace `<name>` and add the skill's own triggers):
-
-````markdown
-## Learning loop
-
-This skill improves itself from use (strange-loop). When a step here misleads you, is missing, needs a workaround, or clearly pays off, record one line with the note command (in claude.ai, run it on the connected computer):
-
-```bash
-python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note <name> <failure|friction|misled|missing|workaround|win|wish> "<section>: <what happened, what would have helped>" --harness <harness> --context "<context>"
-```
-
-It writes into the person's clone of the genome, which is shared at the next sync. If that fails (no `~/.config/strange-loop/genome`, no shell) and the person takes part in improving their skills (their standing instructions say so), end your reply with a block headed `Observations for <name>` holding lines `- <YYYY-MM-DD> [<kind>] <section>: <text> (<harness>, <context>)`; otherwise add nothing about it, except one line when the skill clearly failed. Edit the `LEARNINGS.md` next to this file only when this folder is inside the genome clone itself: installed and synced copies are replaced on update, and a note written there is lost. Fix only plain errors on the spot, after verifying them; everything else waits for a reflection pass.
-````
+The skill's own Learning loop section: `loop.py new` writes it; read `references/learning-loop-template.md` when you add or repair one by hand (replace `<name>`, add the skill's own triggers).
 
 ## 9. Growing a new capability
 
-When the same weakness shows up across tasks (figures that look bad, a format that keeps breaking), a rule will not fix it; a tool will. The pattern that built the scientific-figures skill:
-
-1. **Ask the agent that struggles what it lacks.** Its answer is a list of `missing` and `wish` observations: references to read, a way to see its output, a library of parts, a check.
-2. **Get sources, distil them** into a short rule list with citations (books, papers, house style).
-3. **Close the perception loop first.** An agent working blind needs a way to look at its result: render, run, lint, test. A loop with no perception cannot improve.
-4. **Build the library from the worked examples**, not upfront: every helper exists because a figure needed it, and the examples become the evals - once generalised: named after what they show, free of the task's paths and framing (section 8).
-5. **Write the skill last**, as the index to the tools: when to use which, and the checklist.
-6. Adopt it into the loop (section 8).
-
-Prefer, in this order: a check that catches the mistake, a tool that makes it impossible, an example that shows the right way, and only then a sentence that asks for it.
+When the same weakness shows up across tasks and a rule will not fix it, a tool will. Read `references/growing.md` before building a new skill or helper library for such a weakness: the six steps that built scientific-figures, and the order to prefer (check, tool, example, sentence).
 
 ## 10. Auditing the whole system
 
@@ -196,16 +175,7 @@ Occasionally (or when asked "how is the system doing?"): `loop.py status` across
 
 ## 11. Closing the loop: how a lesson travels
 
-The genome is the GitHub repository; every other copy is either a clone that can write back or an installed copy that only receives.
-
-**Upward, from use to the genome.**
-- Local agents (Claude Code, Kiro, Copilot, Codex on a machine with a clone): `loop.py note` writes into the clone; `loop.py sync` commits observation-only changes, pulls (LEARNINGS files merge as a union through `.gitattributes`, so two machines never conflict; ids both machines used are renumbered, and an open line whose resolved copy exists is dropped) and pushes. With `~/.config/strange-loop/auto_sync` set to `on`, Claude Code's session-start hook does this by itself.
-- claude.ai with the computer connected: the agent runs the note command on that computer through the connector; the next sync there shares it.
-- Chat-only and cloud sessions without the genome: the `Observations for <unit>` block at the end of the reply; `loop.py absorb` brings it in from any session that has the genome.
-
-**Inward, from the genome to every copy.** A reflection pass (section 4) changes a unit, bumps its version and pushes to the genome's main branch as its AGENTS.md allows. From there: claude.ai and Cowork re-sync the marketplace (Sync automatically), Claude Code receives the synced skills or updates its installed plugins, symlinked local agents read the clone after its next sync (pull), and CI checks every push.
-
-What closes the loop is therefore one routine per machine (sync) and one rule per change (bump and push). A note that stays in a chat reply, or a clone that is never synced, is where a lesson gets lost: when you see either, say so.
+Read `references/harnesses.md` when setting up a machine or a harness, or when a lesson seems lost: how notes travel up to the genome (note, sync, absorb) and changes come back down to every copy (bump, push, re-sync), harness by harness.
 
 ## Learning loop
 

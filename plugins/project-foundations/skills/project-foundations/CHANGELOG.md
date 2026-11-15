@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.14.0 (2026-11-15)
+- Restructure R3, owner-approved 2026-11-15 (audit C12): SKILL.md 37.4 KB -> 24.6 KB, under the 25 KB budget. Moved verbatim to references/: the module catalogue table (modules.md; Step 3 now lists the templates by module), the guiding principles (principles.md; a one-line list stays), the Retrofit procedure (retrofit.md) and the Upgrade procedure with its 5.x per-version list, step 6b (upgrade.md); the check fail/warn list moved to references/docmap-config.md, 'What check reports'. Removed as an exact duplicate: the Step 4.2 toml example (every line is in docmap-config.md). The documents table lost its column padding only. Headings stay with read-when cues; a fallback URL covers harnesses that show only SKILL.md. scripts/docmap.py unchanged (DOCMAP_VERSION stays 5.13.0).
+
 ## 5.13.0 (2026-11-15)
 - root files in MAP, self_cmd path, STATUS Works deleted-code check, O21 fresh worktree skip, O6/Step 4/Step 6 rules, Use when description (O6, O21, O24)
 

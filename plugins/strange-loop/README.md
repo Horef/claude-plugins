@@ -62,6 +62,7 @@ plugins/strange-loop/
   hooks/hooks.json              Claude Code: session-start digest of ripe lessons (silent otherwise)
   skills/strange-loop/
     SKILL.md                    the procedure (notice, fix, reflect, evals, budgets, kernel, adoption, growth)
+    references/                 detail SKILL.md points to: growth steps, harnesses, Learning loop template
     scripts/loop.py             note, status, digest, check, eval, bump, absorb, where (stdlib only)
     evals/                      unit tests for loop.py (run.py) and judged cases (cases.md)
     LEARNINGS.md, CHANGELOG.md  this skill observes itself like any other
