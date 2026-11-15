@@ -450,6 +450,7 @@ class Browser:
         self.profile = tempfile.mkdtemp(prefix="gui-chrome-")
         args = [exe, "--headless=new", "--remote-debugging-port=0", "--user-data-dir=" + self.profile,
                 "--no-first-run", "--no-default-browser-check", "--hide-scrollbars",
+                "--allow-file-access-from-files",
                 "--use-angle=swiftshader", "--enable-unsafe-swiftshader",  # software WebGL (Plotly 3D, maps)
                 "--force-color-profile=srgb", "--disable-extensions", "--disable-background-networking",
                 "--disable-component-update", "--disable-sync", "--mute-audio"]

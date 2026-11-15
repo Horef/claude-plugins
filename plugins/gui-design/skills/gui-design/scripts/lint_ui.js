@@ -295,7 +295,7 @@
   var shownCtl = inter.filter(function (it) { return inFirstScreen(it.r); });
   var navControls = shownCtl.filter(function (it) { return it.el.closest(NAV); }).length;
   var controls = shownCtl.length - navControls;
-  var words = 0, sizes = {}, colors = {};
+  var words = 0, sizes = {}, colors = {}, weights = {};
   textEls.forEach(function (t) {
     var shown = false;
     t.nodes.forEach(function (ni) {
@@ -306,6 +306,7 @@
     });
     if (shown) {
       sizes[Math.round(parseFloat(t.cs.fontSize))] = 1;
+      weights[Math.round(parseFloat(t.cs.fontWeight)) || 400] = 1;
       var fc = parseColor(t.cs.webkitTextFillColor || t.cs.color);
       colors[hex(fc) + (fc[3] < 0.99 ? '/' + fc[3].toFixed(2) : '')] = 1;
     }
@@ -339,6 +340,15 @@
     if (dup) continue;
     boxRects.push(br2); boxes.push(b);
   }
+  for (i = 0; i < boxes.length; i++) {
+    for (var j = 0; j < boxes.length; j++) {
+      if (i !== j && boxes[i].contains(boxes[j]) && !boxes[j].closest(NAV)) {
+        notes.push({kind: 'nested-box', selector: sel(boxes[j]),
+                    detail: 'box inside another box (' + sel(boxes[i]) + ')'});
+        break;
+      }
+    }
+  }
   var NOTICE_RE = /(^|[-_\s])(alert|notice|banner|callout|toast|admonition|flash|snackbar|warning)([-_\s]|$)/i;
   var notices = [];
   for (i = 0; i < all.length; i++) {
@@ -364,6 +374,7 @@
       boxes: boxes.length,
       notices: notices.length,
       textSizes: Object.keys(sizes).map(Number).sort(function (x, y) { return x - y; }),
+      textWeights: Object.keys(weights).map(Number).sort(function (x, y) { return x - y; }),
       textColors: Object.keys(colors).sort(),
       noticeSelectors: notices.slice(0, 5).map(sel),
       boxSelectors: boxes.slice(0, 8).map(sel)

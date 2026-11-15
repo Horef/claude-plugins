@@ -2,20 +2,21 @@
 
     python lint_ui.py PAGE [--widths 390,800,1280] [--themes light,dark] [--height 900] [--json]
                            [--wait-for CSS] [--settle MS] [--max-controls N] [--max-words N]
-                           [--max-boxes N] [--max-notices N]
+                           [--max-boxes N] [--max-notices N] [--max-sizes N] [--max-colors N]
+                           [--max-weights N]
 
 PAGE is an HTML file or a URL (a Streamlit app on http://localhost:8501 works: it waits until the DOM is
 stable). Every width x theme is loaded fresh (dark = emulated prefers-color-scheme) and checked in-page
 (checks live in lint_ui.js). A problem prints as `width theme: kind: selector: detail`; the same problem seen
 in several combinations is merged into one line (`390,800 light,dark: ...`).
 
-IFRAMES: the checks also run inside every displayed iframe the browser lets the page reach, i.e. same-origin and
-srcdoc frames, nested up to 3 deep (a Streamlit `components.html` viewer is one). A problem inside a frame is
+IFRAMES: the checks also run inside every displayed iframe the browser lets the page reach, i.e. same-origin,
+sibling file:// and srcdoc frames, nested up to 3 deep (a Streamlit `components.html` viewer is one). A problem inside a frame is
 printed with the frame in front of its selector, `iframe#2 (title or src) > div.panel`, and carries a "frame" key
 in --json. Each frame gets its own DENSITY line: its first screen is the part of it that shows in the top
 viewport (zero when it sits below the fold), and the --max-* limits apply to each frame separately. A
-cross-origin or sandboxed frame cannot be read: it gets a `frame-skipped` note and is NOT checked, so lint its
-own URL. Console errors and exceptions of frames are reported once, without a frame name.
+cross-origin or sandboxed frame cannot be read: it gets a `frame-skipped` note (density numbers exclude it) and
+is NOT checked, so lint its own URL. Console errors and exceptions of frames are reported once, without a frame name.
 
 Kinds: page-hscroll, text-overflow (text runs out of its box), text-clipped (cut off by overflow/ellipsis/
 line-clamp), small-text (< 12px), low-contrast (< 4.5:1, or < 3:1 for >= 24px or >= 18.66px bold; text over
@@ -24,8 +25,9 @@ console-error, exception, overlap (text boxes overlapping), density (a --max-* l
 
 DENSITY is also printed for the first screen (scroll 0, --height tall): visible controls (navigation - nav,
 role=navigation, a Streamlit sidebar - counted apart and not judged by --max-controls), words, distinct
-bordered/filled boxes, notice/alert-like elements, distinct text sizes and text colours. These are a report,
-not problems, unless you pass --max-controls / --max-words / --max-boxes / --max-notices (no defaults).
+bordered/filled boxes, notice/alert-like elements, distinct text sizes, font weights and text colours. These are a
+report (with calm-screen notes above 11 boxes, 4 text sizes or 2 weights), not problems, unless you pass
+--max-controls / --max-words / --max-boxes / --max-notices / --max-sizes / --max-colors / --max-weights (no defaults).
 
 Exit codes: 0 clean, 1 at least one problem, 2 not run (no browser, or the page cannot be loaded).
 Standard library only. --json prints {"ok", "problems", "notes", "density"} with one entry per width x theme.
@@ -77,15 +79,30 @@ def lint(page_arg, widths, themes, height=900, wait_for=None, settle=800, timeou
                     continue
                 d = dict(tag, frame=frame, onFirstScreen=e["onFirstScreen"], **res["density"])
                 density.append(d)
-                for key, label in (("controls", "visible controls"), ("words", "visible words"),
-                                   ("boxes", "bordered/filled boxes"), ("notices", "notices/alerts")):
+                for key, label, val in (
+                    ("controls", "visible controls", d["controls"]),
+                    ("words", "visible words", d["words"]),
+                    ("boxes", "bordered/filled boxes", d["boxes"]),
+                    ("notices", "notices/alerts", d["notices"]),
+                    ("sizes", "distinct text sizes", len(d["textSizes"])),
+                    ("colors", "distinct text colours", len(d["textColors"])),
+                    ("weights", "distinct font weights", len(d.get("textWeights", []))),
+                ):
                     lim = limits.get(key)
-                    if lim is not None and d[key] > lim:
+                    if lim is not None and val > lim:
                         extra = ""
                         if key == "notices" and d["noticeSelectors"]:
                             extra = " (" + ", ".join(d["noticeSelectors"]) + ")"
                         problems.append(dict(tag, kind="density", frame=frame, selector="first screen",
-                                             detail="%d %s on the first screen, limit %d%s" % (d[key], label, lim, extra)))
+                                             detail="%d %s on the first screen, limit %d%s" % (val, label, lim, extra)))
+                for key, label, val, lim in (
+                    ("boxes", "bordered/filled boxes", d["boxes"], 11),
+                    ("sizes", "distinct text sizes", len(d["textSizes"]), 4),
+                    ("weights", "distinct font weights", len(d.get("textWeights", [])), 2),
+                ):
+                    if limits.get(key) is None and val > lim:
+                        notes.append(dict(tag, kind="calm-screen", frame=frame, selector="first screen",
+                                          detail="%d %s on the first screen (target <= %d)" % (val, label, lim)))
             for kind, loc, text in page.console_problems():
                 problems.append(dict(tag, kind=kind, selector=loc, detail=text[:200], frame=None))
             warnings.extend("%d %s: %s" % (w, theme, t) for t in page.warnings())
@@ -139,9 +156,10 @@ def print_report(problems, notes, density, warnings, widths, themes, height):
     for d in density:
         name = "" if not d.get("frame") else "  %s%s:" % (d["frame"], "" if d.get("onFirstScreen", True) else " [below the first screen]")
         nav = " (+%d navigation)" % d["navControls"] if d.get("navControls") else ""
-        print("  %4d %-5s%s controls %d%s, words %d, boxes %d, notices %d, text sizes %d %s, text colours %d %s" % (
+        print("  %4d %-5s%s controls %d%s, words %d, boxes %d, notices %d, text sizes %d %s, text weights %d %s, text colours %d %s" % (
             d["width"], d["theme"], name, d["controls"], nav, d["words"], d["boxes"], d["notices"],
-            len(d["textSizes"]), d["textSizes"], len(d["textColors"]), " ".join(d["textColors"][:8])))
+            len(d["textSizes"]), d["textSizes"], len(d.get("textWeights", [])), d.get("textWeights", []),
+            len(d["textColors"]), " ".join(d["textColors"][:8])))
     print("")
     print("%d problem line(s)." % len(lines) if lines else "OK: no problems found.")
 
@@ -160,13 +178,17 @@ def main(argv=None):
     ap.add_argument("--max-words", type=int, help="problem if more visible words on the first screen")
     ap.add_argument("--max-boxes", type=int, help="problem if more bordered/filled boxes on the first screen")
     ap.add_argument("--max-notices", type=int, help="problem if more notice/alert elements on the first screen")
+    ap.add_argument("--max-sizes", type=int, help="problem if more distinct text sizes on the first screen")
+    ap.add_argument("--max-colors", type=int, help="problem if more distinct text colours on the first screen")
+    ap.add_argument("--max-weights", type=int, help="problem if more distinct font weights on the first screen")
     a = ap.parse_args(argv)
 
     widths = [int(x) for x in a.widths.split(",") if x.strip()]
     themes = [x.strip() for x in a.themes.split(",") if x.strip()]
     if not widths or not themes or any(t not in ("light", "dark") for t in themes):
         ap.error("--widths needs numbers and --themes light and/or dark")
-    limits = {"controls": a.max_controls, "words": a.max_words, "boxes": a.max_boxes, "notices": a.max_notices}
+    limits = {"controls": a.max_controls, "words": a.max_words, "boxes": a.max_boxes, "notices": a.max_notices,
+              "sizes": a.max_sizes, "colors": a.max_colors, "weights": a.max_weights}
     try:
         problems, notes, density, warnings = lint(a.page, widths, themes, a.height, a.wait_for, a.settle,
                                                   a.timeout, limits)
