@@ -55,8 +55,6 @@ RIPE_OPEN = 5                            # or this many open observations in one
 CLOSE_MIN = 0.30                        # `note`: an open observation at least this close (see closeness) is offered as a recurrence
 CLOSE_SHOW = 3                           # how many of the closest are listed
 DETAIL_MAX = 100                         # characters of a recurrence's detail kept on the line
-READING_AFTER = 3                        # later use-based notes after which an unconfirmed reading note is offered
-READING = re.compile(r"\b(from reading|reading|adopting|adoption)\b", re.I)
 STALE_DAYS = 180                         # an open observation older than this is confirmed or rejected
 SKILL_MAX_LINES = 500                    # Agent Skills guidance: keep SKILL.md under ~500 lines
 SKILL_MAX_BYTES = 25_000                 # ... and under ~25 KB: lines can be 1.5 KB long, so bytes measure the real cost
@@ -383,23 +381,8 @@ def detail(text: str) -> str:
     return t[:DETAIL_MAX].rsplit(" ", 1)[0] + "..."
 
 
-def from_reading(m: re.Match) -> bool:
-    """A note written from reading a skill (adopting, reviewing), not from using it."""
-    tail = re.search(r"\(([^()]*)\)\s*$", m.group(4))
-    return bool(READING.search(tail.group(1) if tail else "") or re.search(r"\bfrom reading\b", m.group(4), re.I))
-
-
-def reading_to_offer(opened: list[re.Match], resolved: list[re.Match] = ()) -> list[re.Match]:
-    """Open reading notes that use has not confirmed (no ×N) after READING_AFTER later use-based notes
-    (open or resolved: each is evidence the unit was used).
-
-    They are offered to the owner as possible restructures, never dropped automatically (owner, 2026-11-06)."""
-    used = [m for m in list(opened) + list(resolved) if not from_reading(m)]
-    return [m for m in opened if from_reading(m) and not m.group(5)
-            and sum(u.group(2) > m.group(2) for u in used) >= READING_AFTER]
-
-
 def is_ripe(m: re.Match) -> bool:
+    """Notes from reading count like notes from use (owner, 2026-11-15)."""
     return m.group(3) in RIPE_KINDS or int(m.group(5) or 1) >= RIPE_COUNT
 
 
@@ -471,9 +454,6 @@ def unit_report(genome: Path, name: str, d: Path) -> tuple[list[re.Match], list[
         raw = skill.read_bytes()
         n = len(raw.decode("utf-8").splitlines())
         notes.append(f"SKILL.md {n}/{SKILL_MAX_LINES} lines, {len(raw) / 1000:.1f}/{SKILL_MAX_BYTES / 1000:.1f} KB")
-    offer = reading_to_offer(opened, [m for _, m in learn.entries("resolved")] if learn else [])
-    if offer:
-        notes.append(f"reading notes unconfirmed by use, offer to the owner as restructures: {', '.join(m.group(1) for m in offer)}")
     return opened, ripe, notes
 
 
@@ -504,7 +484,6 @@ def cmd_digest(args):
                 if ripe or len(opened) >= RIPE_OPEN:
                     top = max(opened, key=lambda m: (m.group(3) in RIPE_KINDS, int(m.group(5) or 1)))
                     out.append(f"{name}: {len(opened)} open ({len(ripe)} ripe), e.g. {top.group(1)} {top.group(4)[:80]}")
-                out += [f"{name}: {n}" for n in notes if n.startswith("reading notes")]
         inbox = INBOX.read_text(encoding="utf-8").splitlines() if INBOX.exists() else []
         if inbox:
             out.append(f"{len(inbox)} observation(s) waiting in {INBOX}")

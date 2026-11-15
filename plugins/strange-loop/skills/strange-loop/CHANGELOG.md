@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 2.1.0 (2026-11-15)
+- Reading notes ripen like notes from use (owner decision 2026-11-15, the opposite of O25's proposal): loop.py no longer lists reading notes as 'unconfirmed by use, offer to the owner as restructures' in status or the digest; section 6 says problems found by reading are fixed promptly by the same change classes (a restructure still follows restructure rules); sections 2 and 8 step 5 match. Replaces the 1.1.0 rule (O5). Kernel-class change (ripeness) approved by the owner; minor, not major, by the lead's instruction on top of 2.0.0.
+
 ## 2.0.0 (2026-11-15)
 - Major (procedure/kernel-rule changes, owner approved 2026-11-14; renumbered from the unreleased 1.3.0 and 1.4.0 on 2026-11-15).
 - Judged evals scoped to what will be run: a blind judged run is required only for restructure-class changes and description changes; fix and learn changes rely on scripted checks, and judged cases stay as regression material (sections 4 step 6 and 5). Procedure change, structure review 2026-11-14 #5, owner approval 2026-11-14.

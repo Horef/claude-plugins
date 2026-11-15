@@ -60,7 +60,7 @@ Format, one line, in the `## Open` section of the unit's `LEARNINGS.md` (the fol
 - Say the section, what happened, and **what would have helped**. Concrete beats general: the next agent must be able to act on it without your context.
 - Before adding, read the open list: if it is the same lesson, append ` ×N` (or increment it) instead of a new line. Recurrence is the main evidence the loop has. The note command enforces this: when open observations of the unit (any kind) are close to your text it lists them and writes nothing; rerun with `--same O<n>` (the same lesson: adds ×N, today's date and a short detail to that line) or `--new` (a different one).
 - A warning from a check that your change did not cause (a budget, a stale doc, a slow command) is an observation too: note it with the warning's text, so drift that no single session feels gets counted.
-- A note written from **reading** a skill (adopting or reviewing it), not from using it, says so in its context (`--context "reading"`, or `adopting`): it is a logic check, weaker than use (section 6).
+- A note written from **reading** a skill (adopting or reviewing it), not from using it, says so in its context (`--context "reading"`, or `adopting`); it counts like a note from use (section 6).
 - Never paste secrets, private data or long logs; link or summarise.
 - Don't stop the user's task to reflect. Note, finish the task, mention the notes in one line at the end.
 
@@ -133,7 +133,7 @@ Always-loaded text costs every session and dilutes attention, so growth must be 
 
 Lessons also go stale: an open observation older than about six months (`loop.py check` warns) is either confirmed by new use or rejected as no longer relevant.
 
-Reading notes are checked against use: once a unit has three later notes from use and an open reading note has not recurred (no ` ×N`), `loop.py status` and the session digest list it as "unconfirmed by use". Offer each to the owner as a possible restructure (do it, keep waiting, or reject); never drop one on your own, since reading is also a basic logic check that nothing is amiss (owner, 2026-11-06).
+Reading notes ripen like notes from use: a problem found by reading (a contradiction, a broken command, a step that cannot work) is fixed promptly and proactively in the next pass, by the same change classes; one that would need a restructure still follows the restructure rules (owner, 2026-11-15; this replaces the 2026-11-06 rule that held reading notes back as "unconfirmed by use").
 
 Forgetting is part of learning: a rule with no recorded `win`, no eval that needs it and no owner preference behind it is a candidate for removal in a Restructure pass. Removed text stays in git and the CHANGELOG says where it went.
 
@@ -159,7 +159,7 @@ Forgetting is part of learning: a rule with no recorded `win`, no eval that need
 2. Replace the placeholder eval cases with real ones; a skill with scripts gets an `evals/run.py`.
 3. Adapt the Learning loop section's triggers to the skill (the command stays verbatim).
 4. If the skill installs lasting artifacts into projects (files, templates, tools), give each a provenance line and the note command, as section 1 says (project-foundations' AGENTS.md template and `docmap.py` show how).
-5. Seed `LEARNINGS.md` with what you noticed while adopting it, as `wish` or `friction` - not as edits. Your reading is weak evidence; use will confirm or reject it.
+5. Seed `LEARNINGS.md` with what you noticed while adopting it - as notes, not as edits; the next pass fixes the problems among them like any other (section 6).
 6. `loop.py check`.
 7. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
 
