@@ -1,6 +1,6 @@
 {
   "name": "course-lecture-notes",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Turn a university lecture or tutorial (slides in DEVONthink) into complete, self-contained teaching notes in Anki-ready concept blocks, linked to the course textbook. Use when he asks for a study guide or study notes for a lecture or tutorial (often one he missed), to learn a lecture, or to send the blocks of a finished guide to Anki. Not for marking up a paper (paper-premark) or drawing one standalone figure (scientific-figures).",
   "license": "MIT"
 }
