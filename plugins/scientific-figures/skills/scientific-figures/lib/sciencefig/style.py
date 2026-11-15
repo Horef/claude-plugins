@@ -39,6 +39,12 @@ SIZE_SMALL = 11.5  # tick labels, secondary annotations
 SIZE_MIN = 11
 SIZE_PANEL = 13    # panel letters (bold, lowercase, quiet - Wilke ch. 21)
 
+# Journal paper sizes (1 px = 1 pt at column width; used when paper=True)
+PAPER_SIZE = 9
+PAPER_SIZE_SMALL = 7.5
+PAPER_SIZE_MIN = 7
+PAPER_SIZE_PANEL = 10
+
 # ---------------------------------------------------------------- widths
 # Design widths in px. Content is drawn in a viewBox of this width and
 # scales with max-width:100%. Prefer wider-than-tall, ~1.5:1 (Tufte ch. 9).

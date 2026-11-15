@@ -1,6 +1,6 @@
 ---
 name: "scientific-figures"
-description: "Draw scientific figures for study notes, papers and slides: circuits, anatomy (brain, eye, retina, cochlea), data plots, flows, phase portraits, geometry, 3D surfaces. Lint-render-look loop, inline-safe SVG for Markdown notes (DEVONthink included), export for journals. Reads the person's figure profile for audience, output targets and preferences."
+description: "Draw scientific figures for study notes, papers and slides: circuits, anatomy (brain, eye, retina, cochlea), data plots, flows, phase portraits, geometry, 3D surfaces. Use when creating or revising publication, presentation, or study figures with the sciencefig Canvas/matplotlib lint-render-look workflow, exporting inline-safe SVG for Markdown/DEVONthink notes, or sizing figures for journals; reads the person's figure profile for audience, targets and preferences. Not for software/system architecture diagrams, business dashboards, or UI mockups."
 ---
 
 # Scientific figures
@@ -112,7 +112,7 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 ## 5. The loop: draw → lint → render → look → fix
 
 1. **Draw** with the library. Compute geometry (cell positions, edge points, label positions) from variables; never eyeball offsets. Use `neuro.edge_point`, `box()['r']` and similar anchors.
-2. **Lint**: `c.lint()` (Canvas) or `svg, probs = P.finish(fig)` (matplotlib: lint, then export; `P.lint` after `P.export` fails because export closes the figure) must give `[]`. It reports text outside the figure, text overlapping text, lines and scatter markers under text, filled patches (boxes, bars, bands) drawn on top of text, curves or branches that run off the canvas (clipped), fonts below 11 px, and `&`. Streamlines are not checked, so look for labels sitting on the flow field yourself (put such labels in titles or outside the axes). A filled patch drawn before the text (a label inside a box) is fine; one drawn after it is flagged, unless it is under about 35% opaque. Raw SVG added with `c.raw` and images are not linted, so check those when you look. Fix the layout. Do not silence a warning with `lint=False` or a halo unless the overlap is intended (e.g. a label inside a shaded area).
+2. **Lint**: `c.lint()` (Canvas) or `svg, probs = P.finish(fig)` (matplotlib: lint, then export; `P.lint` after `P.export` fails because export closes the figure) must give `[]`. It reports text outside the figure, text overlapping text, lines, streamlines, nullcline contours, and scatter markers under text, filled patches (boxes, bars, bands) drawn on top of text, curves or branches that run off the canvas (clipped), fonts below the floor (11 px default, 7 pt for `paper=True`), and `&`. Place portrait nullcline labels outside the axes (`Dy.portrait(..., labels=...)`) rather than inside the flow field. A filled patch drawn before the text (a label inside a box) is fine; one drawn after it is flagged, unless it is under about 35% opaque. Raw SVG added with `c.raw` and images are not linted, so check those when you look. Fix the layout. Do not silence a warning with `lint=False` or a halo unless the overlap is intended (e.g. a label inside a shaded area).
 3. **Render**: `C.render([svg,...], "work/check.png", names=[...])` (Chromium via Playwright, or headless Chrome on a Mac; 2×). For figures saved as PNG (e.g. matplotlib straight to file), `C.cvd_sheet(png, out_png)` puts the original beside grayscale, deuteranopia and protanopia versions (Machado et al. 2009, linear RGB) for one look. Batch 4–6 figures per sheet while iterating, re-render only the figures you changed, and add `cvd=True` (grayscale and deuteranopia copies) in one final pass for colour-coded figures: each sheet image costs context.
 4. **Look**: open the PNG with Read and check, figure by figure:
    - [ ] The message is visible within 5 seconds; the subject stands out.
@@ -149,7 +149,7 @@ The library `sciencefig` is in `lib/` next to this file, with its `README.md` (m
 - CC0: free. CC BY (Servier Medical Art, Bioicons CC-BY): credit in the caption, write "adapted from" if recoloured; `assets.credits(c)` builds the line. Never use NC material in a paper without checking.
 
 **Papers and slides**
-- `T.export_files(svg, "/path/fig3")` writes fig3.svg (standalone), fig3.png (3×) and fig3.pdf (vector, fonts embedded). Design at the journal column width (one column ≈ 85 mm ≈ 240 px, two columns ≈ 174 mm ≈ 490 px, at 1 px = 1 pt; check the journal) and keep text ≥ 7 pt at that size.
+- `T.export_files(svg, "/path/fig3")` writes fig3.svg (standalone), fig3.png (3×) and fig3.pdf (vector, fonts embedded). Design at the journal column width (one column ≈ 85 mm ≈ 240 px, two columns ≈ 174 mm ≈ 490 px, at 1 px = 1 pt; check the journal) and pass `paper=True` to `P.figure` (sets `S.PAPER_SIZE` = 9 pt labels, `S.PAPER_SIZE_SMALL` = 7.5 pt ticks, `S.PAPER_SIZE_MIN` = 7 pt lint floor; for Canvas check with `c.lint(min_size=S.PAPER_SIZE_MIN)`).
 
 **Math and markup**
 - Math belongs in the note as LaTeX (`$...$`, `$$...$$`).
@@ -171,7 +171,7 @@ c.dimension(x1, y1, x2, y2, "d′"); c.brace(x1, x2, y, "label"); c.panel_label(
 a = Area(c, x, y, w, h, xlim, ylim); a.line(xs, ys); a.fill(xs, ys, pos=..., neg=...)
 cell = N.soma(c, x, y, r=12, kind="star", fill=N.activity_color(0.8), color=S.EXC)
 N.connect(c, cell_a, cell_b, kind="exc"|"inh"); N.synapse_to(c, (x, y), cell, "exc", via=[corners])
-N.skin(c, x0, x1, y); N.region(c, x, y, w, h); N.stimulus_arrow(c, x, y0, y1)
+N.skin(c, x0, x1, y); N.region(c, x, y, w, h); N.stimulus_arrow(c, x, y0, y1, label="Stimulus")
 c.math(x, y, r"\Delta\mathbf{w}_j = \eta\,(\mathbf{x}\,y_j - y_j^2\,\mathbf{w}_j)", size=17, color=...)
 c.callout(tx, ty, (x, y), "Node of Ranvier")   # label + leader line + dot
 c.lint(); svg = c.svg()
@@ -190,12 +190,13 @@ An.cochlea_spiral(c, cx, cy); An.cochlea_unrolled(c, x, y, w, h, tones=((0.15, S
 b = A.place(c, A.lib("brain_lateral"), (x, y, w, h), recolor="gray", flip=True); p = b["at"](0.5, 0.3)
 T.export_files(svg, "/home/claude/work/fig1")              # svg + png + pdf for a paper
 
-fig, ax = P.figure(640, 280, name="fig-name", ncols=2)   # matplotlib; 1 pt = 1 px
+fig, ax = P.figure(640, 280, name="fig-name", ncols=2, paper=False)   # matplotlib; paper=True for journal pt sizes
+P.panel_label(ax, "a")
 P.end_label(ax, x, y, "S cone", S.BLUE); P.hbracket(ax, x1, x2, y, "JND = 2")
 P.drop_lines(ax, x, y); P.point_label(ax, x, y, "threshold"); P.scale_bar(ax, x, y, 0.2, "200 ms")
 svg, probs = P.finish(fig)            # lint, then export
 
-fps = Dy.portrait(ax, f, xlim, ylim, trajectories=[((x0, y0), S.BLUE)])   # flow+nullclines+fixed points+separatrices
+fps = Dy.portrait(ax, f, xlim, ylim, trajectories=[((x0, y0), S.BLUE)], labels=("$x$-nullcline", "$y$-nullcline"))   # flow+nullclines+fixed points+separatrices
 fps = Dy.fixed_points(f, xlim, ylim)   # [{p, kind, eig, vecs, M}]; Dy.jacobian(f, p); Dy.classify(M)
 Dy.separatrix(ax, f, saddle_fp); br = Dy.bifurcation_branches(lambda a: f_of(a), params, xlim, ylim)
 f = Dy.linear(M); Dy.flow_field(ax, f, xlim, ylim); Dy.eigenline(ax, (0, 0), v, Dy.GROW)   # clipped to axes

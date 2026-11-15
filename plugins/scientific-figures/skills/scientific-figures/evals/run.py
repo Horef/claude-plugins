@@ -46,7 +46,12 @@ def main() -> int:
     print("\n".join(l for l in cases.stdout.splitlines() if not l.startswith("ok  ")))
     if cases.returncode != 0 and cases.stderr.strip():
         print(cases.stderr.strip().splitlines()[-1])
-    passed = p.returncode == 0 and cases.returncode == 0
+    lib_cases = subprocess.run([sys.executable, str(HERE / "library_cases.py")], env=env, capture_output=True,
+                               text=True, timeout=300)
+    print("\n".join(l for l in lib_cases.stdout.splitlines() if not l.startswith("ok  ")))
+    if lib_cases.returncode != 0 and lib_cases.stderr.strip():
+        print(lib_cases.stderr.strip().splitlines()[-1])
+    passed = p.returncode == 0 and cases.returncode == 0 and lib_cases.returncode == 0
     print(f"scientific-figures evals: {'pass' if passed else 'FAIL'}{note}")
     return 0 if passed else 1
 

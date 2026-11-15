@@ -1,6 +1,6 @@
 ---
 name: "project-foundations"
-description: "Set up, retrofit, upgrade or audit a repo so agents and humans can maintain and share it: AGENTS.md, a git-ignored AGENTS.local.md for machine facts, status, decisions, layered docs, generated map, docmap checks, dated doc Status lines and a generated facts table."
+description: "Set up, retrofit, upgrade or audit a repo so agents and humans can maintain and share it: AGENTS.md, a git-ignored AGENTS.local.md for machine facts, status, decisions, layered docs, generated map, docmap checks, dated doc Status lines and a generated facts table. Use when bootstrapping or upgrading repo scaffolding (AGENTS.md, WORKLOG/STATUS/DECISIONS, tools/docmap.py), auditing project docs for staleness or bloat, or configuring docmap checks. Not for ordinary feature/bug code edits, drawing figures, or auditing skill definitions themselves."
 ---
 
 # Project foundations
@@ -168,7 +168,7 @@ reason = "core runs without heavy backends"
 
 ```yaml
       - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest -q
+      - run: python -m pytest -q   # or: python -m unittest discover -s tests
       - run: python tools/docmap.py check
 ```
 
@@ -222,7 +222,7 @@ Also check that every file written has the headings of its template (compare eac
 
 ## Step 6 - Audit mode
 
-Run Step 5 and `python tools/docmap.py docs` (the audit queue: oldest verification first; docs with no Status line on top), then look for: **staleness** (docs whose Status is current but whose claims no longer match code, configs, FACTS.md or the latest DECISIONS/RESULTS; proposals that were decided; live docs citing superseded decisions; STATUS behind the last commits; ARCHITECTURE naming modules that no longer exist; plans "in progress" with no recent commits; docstrings whose first line no longer matches the code); **bloat** (AGENTS.md over ~120 lines, and `check` warns above 150; huge single docs; rules agents follow anyway); **drift** (rules duplicated across files; shims restating rules; decisions contradicted by code without a superseding entry); **portability** (machine facts in tracked files that `check` cannot see: host or user names, a machine's RAM limit, "on my Mac"; keys missing from `AGENTS.local.example.md`); **gaps** (decisions visible in git log - `git log --oneline -i -E --grep='switch|instead|replace|chose|decid'` - with no D entry; boundaries stated in prose but not in `forbid`). Output a short findings list, most important first, with fixes; apply what the user approves. Templates: Audit reads none by default; open one only to compare a file you suspect has drifted from its shape (e.g. an AGENTS.md without the maintenance table against `templates/agents.md`, a STATUS without the verification column against `templates/status.md`) or when a fix creates a missing file.
+Run Step 5 and `python tools/docmap.py docs` (the audit queue: oldest verification first; docs with no Status line on top), then look for: **staleness** (docs whose Status is current but whose claims no longer match code, configs, FACTS.md or the latest DECISIONS/RESULTS; proposals that were decided; live docs citing superseded decisions; STATUS behind the last commits or claiming deleted code still works — re-run each `Works` row's verification command when runnable; ARCHITECTURE naming modules that no longer exist; plans "in progress" with no recent commits; docstrings whose first line no longer matches the code); **bloat** (AGENTS.md over ~120 lines, and `check` warns above 150; huge single docs; rules agents follow anyway — to prune a doubtful AGENTS.md rule on evidence, try one representative task with and without it before dropping it); **drift** (rules duplicated across files; shims restating rules; decisions contradicted by code without a superseding entry); **portability** (machine facts in tracked files that `check` cannot see: host or user names, a machine's RAM limit, "on my Mac"; keys missing from `AGENTS.local.example.md`); **gaps** (decisions visible in git log - `git log --oneline -i -E --grep='switch|instead|replace|chose|decid'` - with no D entry; boundaries stated in prose but not in `forbid`). Output a short findings list, most important first, with fixes; apply what the user approves (if the user is unavailable, apply only append-only or snapshot fixes — STATUS, a new WORKLOG entry, reconstructed D entries — and list the rest as proposed fixes). Templates: Audit reads none by default; open one only to compare a file you suspect has drifted from its shape (e.g. an AGENTS.md without the maintenance table against `templates/agents.md`, a STATUS without the verification column against `templates/status.md`) or when a fix creates a missing file.
 
 ## Step 7 - Finish
 

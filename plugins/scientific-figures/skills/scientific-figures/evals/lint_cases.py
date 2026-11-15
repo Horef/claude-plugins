@@ -72,6 +72,63 @@ def main():
     ax.text(1.5, 4.5, "Receptor field")
     ax.add_patch(mp.Rectangle((1, 3), 4, 3, fc=S.tint(S.BLUE, 0.3), ec="none", zorder=3))
     expect("matplotlib same zorder, box added later", P.lint(fig), True)
+
+    # streamlines (LineCollection) and nullclines (ContourSet) crossing text
+    from sciencefig import dynamics as Dy
+    f_lin = Dy.linear([[-1.0, 0.2], [0.2, -1.0]])
+    fig, ax = P.figure(300, 220, name="flow")
+    Dy.flow_field(ax, f_lin, (-1, 1), (-1, 1), n=20, density=0.8)
+    ax.text(0.0, 0.0, "on flow", ha="center", va="center")
+    probs_flow = P.lint(fig)
+    ok_flow = any(p.startswith("LINE CROSSES TEXT") and "'on flow'" in p for p in probs_flow)
+    print(f"{'ok  ' if ok_flow else 'FAIL'} matplotlib streamplot over label: {probs_flow or 'clean'}")
+    if not ok_flow:
+        bad.append("matplotlib streamplot over label")
+
+    fig, ax = P.figure(300, 220, name="flow-halo")
+    Dy.flow_field(ax, f_lin, (-1, 1), (-1, 1), n=20, density=0.8)
+    P.point_label(ax, 0.0, 0.0, "haloed", dx=0, dy=0, halo=True)
+    probs_halo = P.lint(fig)
+    ok_halo = not any("LINE CROSSES TEXT" in p for p in probs_halo)
+    print(f"{'ok  ' if ok_halo else 'FAIL'} matplotlib haloed label over streamplot: {probs_halo or 'clean'}")
+    if not ok_halo:
+        bad.append("matplotlib haloed label over streamplot")
+
+    fig, ax = P.figure(300, 220, name="nc")
+    Dy.nullcline(ax, f_lin, (-1, 1), (-1, 1), which=0, color=S.BLUE)
+    ax.text(0.0, 0.0, "on nullcline", ha="center", va="center")
+    probs_nc = P.lint(fig)
+    ok_nc = any(p.startswith("LINE CROSSES TEXT") and "'on nullcline'" in p for p in probs_nc)
+    print(f"{'ok  ' if ok_nc else 'FAIL'} matplotlib nullcline over label: {probs_nc or 'clean'}")
+    if not ok_nc:
+        bad.append("matplotlib nullcline over label")
+
+    # paper=True font floor (7 pt) vs note default (11 px)
+    fig, ax = P.figure(240, 180, name="paper-ok", paper=True)
+    ax.plot([0, 1], [0, 1])
+    ax.text(0.5, 0.5, "paper label", size=7.5)
+    probs_pok = P.lint(fig)
+    ok_pok = not any("TOO SMALL" in p for p in probs_pok)
+    print(f"{'ok  ' if ok_pok else 'FAIL'} matplotlib paper=True allows 7.5pt: {probs_pok or 'clean'}")
+    if not ok_pok:
+        bad.append("matplotlib paper=True allows 7.5pt")
+
+    fig, ax = P.figure(240, 180, name="paper-small", paper=True)
+    ax.plot([0, 1], [0, 1])
+    ax.text(0.5, 0.5, "tiny label", size=6.5)
+    probs_psmall = P.lint(fig)
+    ok_psmall = any(p.startswith("TOO SMALL") and "'tiny label'" in p for p in probs_psmall)
+    print(f"{'ok  ' if ok_psmall else 'FAIL'} matplotlib paper=True flags 6.5pt: {probs_psmall or 'clean'}")
+    if not ok_psmall:
+        bad.append("matplotlib paper=True flags 6.5pt")
+
+    c_pap = Canvas(240, 140, "cpap")
+    c_pap.text(20, 40, "paper canvas", size=8)
+    ok_cpap = not c_pap.lint(min_size=S.PAPER_SIZE_MIN)
+    print(f"{'ok  ' if ok_cpap else 'FAIL'} canvas lint min_size=7 allows 8pt")
+    if not ok_cpap:
+        bad.append("canvas lint min_size=7 allows 8pt")
+
     print(f"lint_cases: {'FAIL ' + ', '.join(bad) if bad else 'pass'}")
     return 1 if bad else 0
 

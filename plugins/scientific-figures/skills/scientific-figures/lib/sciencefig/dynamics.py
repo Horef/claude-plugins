@@ -125,7 +125,8 @@ def nullcline(ax, f, xlim, ylim, which=0, color=S.INK2, lw=1.4, ls="-", n=300, z
     """Curve where the `which` component of f is zero (x-nullcline: which=0)."""
     X, Y = np.meshgrid(np.linspace(*xlim, n), np.linspace(*ylim, n))
     Z = f(X, Y)[which]
-    return ax.contour(X, Y, Z, levels=[0], colors=[color], linewidths=lw, linestyles=ls,
+    styles = ls if isinstance(ls, list) else [ls]
+    return ax.contour(X, Y, Z, levels=[0], colors=[color], linewidths=lw, linestyles=styles,
                       zorder=zorder)
 
 
@@ -275,19 +276,38 @@ def separatrix(ax, f, fp, t_max=30.0, color=S.INK, lw=1.4, ls=(0, (5, 3)), eps=1
     return curves
 
 
-def portrait(ax, f, xlim, ylim, nullclines=(S.GREEN, S.PURPLE), separatrices=True,
-             trajectories=(), t_max=25.0, fp_size=7, flow=True, equal=True, **flow_kw):
+def portrait(ax, f, xlim, ylim, nullclines=(S.GREEN, S.PURPLE),
+             nullcline_styles=("-", (0, (5, 2, 1.5, 2))), labels=None,
+             separatrices=True, trajectories=(), t_max=25.0, fp_size=7, flow=True,
+             equal=True, **flow_kw):
     """One-call phase portrait in the house style: gray flow, the two
-    nullclines (x-nullcline first colour, y-nullcline second; None to skip),
-    fixed points computed and classified (filled/open/half), separatrices of
-    every saddle, and highlighted trajectories [(x0, colour), ...] with
+    nullclines (x-nullcline first colour/style, y-nullcline second for
+    grayscale separability; None to skip), optional outside `labels=(l0, l1)`
+    key, fixed points computed and classified (filled/open/half), separatrices
+    of every saddle, and highlighted trajectories [(x0, colour), ...] with
     arrowheads. Returns the fixed-point list (for captions and text)."""
     if flow:
         flow_field(ax, f, xlim, ylim, **flow_kw)
     ax.set_xlim(*xlim); ax.set_ylim(*ylim)
     if nullclines:
-        nullcline(ax, f, xlim, ylim, which=0, color=nullclines[0], lw=1.8)
-        nullcline(ax, f, xlim, ylim, which=1, color=nullclines[1], lw=1.8)
+        nullcline(ax, f, xlim, ylim, which=0, color=nullclines[0], lw=1.8, ls=nullcline_styles[0])
+        nullcline(ax, f, xlim, ylim, which=1, color=nullclines[1], lw=1.8, ls=nullcline_styles[1])
+        if labels:
+            from matplotlib.lines import Line2D
+            sz = S.PAPER_SIZE_SMALL if getattr(ax.figure, "_sf_paper", False) else S.SIZE_SMALL
+            handles = [
+                Line2D([0], [0], color=nullclines[0], lw=1.8, ls=nullcline_styles[0], label=labels[0]),
+                Line2D([0], [0], color=nullclines[1], lw=1.8, ls=nullcline_styles[1], label=labels[1]),
+            ]
+            fig = ax.figure
+            if fig.get_layout_engine() is not None:
+                leg = fig.legend(handles=handles, loc="outside upper right", ncol=2, frameon=False,
+                                 fontsize=sz, handlelength=2.0)
+            else:
+                leg = ax.legend(handles=handles, loc="lower right", bbox_to_anchor=(1.0, 1.02),
+                                ncol=2, frameon=False, fontsize=sz, handlelength=2.0)
+            for txt, col in zip(leg.get_texts(), nullclines):
+                txt.set_color(S.shade(col, 0.15) if col not in (S.INK, S.INK2) else col)
     fps = fixed_points(f, xlim, ylim)
     if separatrices:
         for fp in fps:

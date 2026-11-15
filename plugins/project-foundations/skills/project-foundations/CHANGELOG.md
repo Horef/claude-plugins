@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.13.0 (2026-11-15)
+- root files in MAP, self_cmd path, STATUS Works deleted-code check, O21 fresh worktree skip, O6/Step 4/Step 6 rules, Use when description (O6, O21, O24)
+
 ## 5.12.0 (2026-11-13)
 - docmap: id_missing_exempt silences the 'cites Dn, which is not in DECISIONS.md' warning for chosen paths; Retrofit step 6a (free prefix through indexes when old docs use another ledger's bare D ids); forwarding stubs (sys.modules[__name__] = importlib.import_module('pkg.mod')) are resolved: show/uses/where/deps/calls, folder tables and MAP follow the move and importer lists say '(via stub old.py)' (O22, O23) (O23)
 

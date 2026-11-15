@@ -1,13 +1,13 @@
 # Judged cases: scientific-figures
 
-Judge each output against the skill's own §5 "Look" checklist plus the criteria below; render it and look at the PNG (grayscale and deuteranopia copies for colour-coded figures).
+Judge each output against the criteria below and the skill's §5 "Look" checklist (a failure on §5 Look — such as labels over streamlines or missing second channels in grayscale — is at least PARTIAL); render it and look at the PNG (grayscale and deuteranopia copies for colour-coded figures).
 
 ## Lateral inhibition sharpens the relay profile
 **Task:** For a lecture note on somatosensory receptive fields: draw receptors under the skin, relay neurons with lateral inhibitory interneurons, and aligned activity profiles showing that the relay profile is narrower than the receptor profile (Kandel 17-11 style).
 **Good looks like:**
 - One message, visible in 5 s; receptor and relay profiles share the drawing's x coordinates (`Area`).
 - Excitatory = blue triangles, inhibitory = vermilion dots; relay = star, interneuron = small circle.
-- `c.lint()` returns `[]`; no label on a line; nothing below 11 px.
+- `c.lint()` returns `[]`; no label on a line (checked on the render where curves use `lint=False`); nothing below 11 px.
 - Caption opens with an assertion and says how to read the colours and shapes.
 **Origin:** example `lateral_inhibition_relay.py`; §3 neuroscience semantics.
 
@@ -15,7 +15,7 @@ Judge each output against the skill's own §5 "Look" checklist plus the criteria
 **Task:** Mutual inhibition between two rate units with equal input: phase portrait with nullclines, fixed points classified numerically, the separatrix, and two trajectories ending in different attractors.
 **Good looks like:**
 - Fixed points from `Dy.fixed_points`, not placed by eye; stable filled, unstable open, saddle half-filled.
-- Separatrix dashed black; units in `S.UNIT1` green and `S.UNIT2` purple; trajectories with arrowheads and open start dots.
+- Separatrix dashed black; units in `S.UNIT1` green and `S.UNIT2` purple with distinct line styles; trajectories (black or unit colours) with arrowheads and open start dots.
 - SVG under ~100 kB; no label sitting on the streamlines.
 **Origin:** example `mutual_inhibition.py`; §3 dynamics conventions.
 
@@ -36,17 +36,21 @@ Judge each output against the skill's own §5 "Look" checklist plus the criteria
 **Origin:** generalisation to people other than the owner (scientific-figures 7.0.0).
 
 ## Profile with a DEVONthink target
-**Task:** The profile says `targets: devonthink-markdown` and `flashcards: yes`. Add a phase-portrait figure to a study note.
+**Task:** The profile says `targets: devonthink-markdown` and `flashcards: yes`. Add the mutual-inhibition phase-portrait figure to the study note `evals/fixtures/devonthink_note.md`.
 **Good looks like:**
 - Reads `references/devonthink.md` before delivering.
 - One-line inline SVG with `rgb()` colours via `D.substitute`, blank line before the italic caption.
-- The note's prose describes everything the figure shows.
+- The note's prose describes everything the figure shows (axes, nullclines, flow field, fixed points, separatrix, trajectories).
 **Origin:** the owner's workflow, kept after the DEVONthink rules moved out of SKILL.md (7.0.0).
 
 ## Trigger: should fire
-**Task:** "Add a figure of the retina layers to this note." / "Plot the psychometric function from these numbers for my paper."
+**Task:** "Add a figure of the retina layers to this note." / "Plot the psychometric function from these numbers for my paper." / "Draw the autoencoder architecture and 3D loss landscape for my ML lecture notes."
 **Good looks like:** scientific-figures is loaded.
 
+## Trigger: should fire (near neighbours of the exclusions)
+**Task:** "Draw the autoencoder architecture for my paper." / "Make a figure of the network model: three populations and their connections."
+**Good looks like:** scientific-figures is loaded (a model or network figure for science is in scope; "Not for software/system architecture diagrams" must not pull these away).
+
 ## Trigger: should not fire
-**Task:** "Make a revenue dashboard for the team." / "Summarise this paper."
-**Good looks like:** scientific-figures is not loaded (dataviz or nothing is).
+**Task:** "Make a revenue dashboard for the team." / "Summarise this paper." / "Draw the architecture of this backend service as a figure."
+**Good looks like:** scientific-figures is not loaded (built-in `dataviz`, `artifact-diagramming`, or nothing is; include those built-in skills in the candidate pool when running blind routing checks).

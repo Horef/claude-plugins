@@ -124,7 +124,8 @@ def region(c, x, y, w, h, label=None, fill=S.FAINT, label_pos="left", rx=4):
 
 def stimulus_arrow(c, x, y_from, y_to, label="Stimulus", color=S.INK):
     c.arrow(x, y_from, x, y_to, color=color, width=1.6, head="tri")
-    c.text(x, y_from - 6, label, size=S.SIZE_SMALL, anchor="middle", color=S.INK2)
+    if label:
+        c.text(x, y_from - 6, label, size=S.SIZE_SMALL, anchor="middle", color=S.INK2)
 
 
 def spikes(c, x0, x1, y, times, height=14, color=S.INK, width=1.3, t_range=(0, 1),
