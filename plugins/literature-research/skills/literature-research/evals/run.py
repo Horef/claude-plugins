@@ -264,12 +264,65 @@ def different_dois_are_not_merged_by_title():
 
 
 @test
-def search_network_failure_exits_4_and_logs_nothing():
+def authorless_record_is_rekeyed_to_its_first_author_when_a_merge_adds_authors():
+    """O3: a hit first seen without authors (DEVONthink) kept its title-word key, Dendritic2013, after a merge added authors."""
+    a = lit.mkrec(title="Dendritic spikes enhance stimulus selectivity in cortical neurons", authors=[], year=2013)
+    recs = []
+    res = lit.merge_records(recs, [a])
+    check(res[0][0]["key"] == "Dendritic2013", res[0][0]["key"])
+    b = lit.mkrec(title="Dendritic spikes enhance stimulus selectivity in cortical neurons", authors=["Smith, SL", "Smith, IT"],
+                  year=2013, doi="10.1/ds")
+    res = lit.merge_records(recs, [b])
+    check(not res[0][1] and res[0][0]["key"] == "Smith2013", res[0][0]["key"])
+    c = lit.mkrec(title="Dendritic spikes enhance stimulus selectivity in cortical neurons", authors=[], year=2013)
+    c["key"] = "Dendritic2013"
+    c["status"] = "in"
+    d = lit.mkrec(title=c["title"], authors=["Smith, SL"], year=2013)
+    lit.merge_records([c], [d])
+    check(c["key"] == "Dendritic2013", "a record already screened in keeps its key (ledger rows cite it)")
+
+
+@test
+def check_warns_about_a_key_that_is_a_title_word():
+    d = new_folder()
+    r = lit.mkrec(title="Dendritic spikes enhance stimulus selectivity", authors=["Smith, SL"], year=2013)
+    r["key"] = "Dendritic2013"
+    lit.save_candidates(d, [r])
+    code, out, _ = run("check", d)
+    check("WARN" in out and "Dendritic2013" in out and "first author" in out, out)
+
+
+@test
+def search_network_failure_exits_4_and_logs_the_failure():
+    """O2: PRISMA-S wants every search reported, a failed one included (a row with 0 hits and the error)."""
     d = new_folder()
     with patched(FakeNet(fail=("openalex",))):
         code, _, err = run("search", d, "openalex", "x")
     check(code == 4 and "429" in err, (code, err))
-    check(table_rows(d / "search_log.md") == [] and lit.load_candidates(d) == [], "nothing written after a failed search")
+    rows = table_rows(d / "search_log.md")
+    check(len(rows) == 1 and rows[0][2] == "openalex" and rows[0][5] == "0" and "FAILED" in rows[0][7] and "429" in rows[0][7], rows)
+    check(lit.load_candidates(d) == [], "no candidates after a failed search")
+
+
+@test
+def arxiv_search_retries_patiently_and_is_paced():
+    """O2: arXiv answers 429 in bursts and asks for 3 s between calls; retry like keyless Semantic Scholar."""
+    seen, paced = [], []
+
+    def fake(url, headers=None, timeout=30, retries=3):
+        seen.append(retries)
+        return fx("arxiv_search.xml")
+
+    real = lit.s2_pace
+    lit.s2_pace = lambda *a, **k: paced.append((a, k))
+    try:
+        d = new_folder()
+        with patched(fake):
+            code, _, err = run("search", d, "arxiv", "dendritic spikes")
+    finally:
+        lit.s2_pace = real
+    check(code == 0 and seen and max(seen) >= 6, (code, seen, err))
+    check(any(3.0 in a or k.get("interval") == 3.0 for a, k in paced), paced)
 
 
 @test
@@ -528,6 +581,17 @@ def check_bad_folder():
 
 
 @test
+def self_checked_rows_are_accepted_but_flagged_when_cited():
+    """O4: with no separate checker, extractor-run checks are recorded as self-checked, not confirmed."""
+    d = copy_folder("folder_good")
+    led = d / "ledger.md"
+    led.write_text(led.read_text().replace("| measured | confirmed |", "| measured | self-checked |"))
+    code, out, _ = run("check", d)
+    check(code == 0 and "0 problem(s)" in out, out)
+    check("L1 which is self-checked" in out and "WARN" in out, out)
+
+
+@test
 def check_fresh_folder_is_clean():
     d = new_folder()
     code, out, _ = run("check", d)
@@ -667,57 +731,49 @@ def fetch_not_found_exits_3_and_lists_once():
 # ---------------------------------------------------------------- devonthink
 
 @test
-def devonthink_status_gives_a_reason():
-    saved = os.environ.pop("LIT_DEVONTHINK")
+def lit_never_calls_osascript():
+    """Owner decision 2026-11-15: DEVONthink only through its MCP tools; lit.py never runs AppleScript."""
+    bin_dir, marker = tmpdir(), tmpdir() / "osascript-was-run"
+    for tool in ("osascript", "mdfind"):
+        f = bin_dir / tool
+        f.write_text(f"#!/bin/sh\necho {tool} >> {marker}\nexit 0\n")
+        f.chmod(0o755)
+    old_path, saved = os.environ["PATH"], os.environ.pop("LIT_DEVONTHINK", None)
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{old_path}"
     try:
-        p = subprocess.run([sys.executable, str(LIT_PATH), "devonthink-status"], capture_output=True, text=True, timeout=120)
+        d = new_folder()
+        code, _, err = run("search", d, "devonthink", "x")
+        check(code == 2 and "MCP" in err, (code, err))
+        d = folder_with([cand("Mechler2002")])
+        with patched(FakeNet(fail=("",))):
+            code, _, err = run("fetch", d, "Mechler2002", "--papers", tmpdir() / "p")
+        check(code == 3, (code, err))
     finally:
-        os.environ["LIT_DEVONTHINK"] = saved
-    check(p.returncode in (0, 2) and p.stdout.strip() and "Traceback" not in p.stderr, (p.returncode, p.stdout, p.stderr))
-    check(p.returncode == 0 or p.stdout.startswith("unavailable: "), p.stdout)
+        os.environ["PATH"] = old_path
+        if saved is not None:
+            os.environ["LIT_DEVONTHINK"] = saved
+    check(not marker.exists(), f"lit.py ran {marker.read_text() if marker.exists() else ''}")
+    check(not hasattr(lit, "osa"), "no AppleScript helper left")
 
 
 @test
-def devonthink_status_reasons():
-    real = sys.platform
-    saved = os.environ.pop("LIT_DEVONTHINK")
-    try:
-        lit.sys.platform = "linux"
-        ok, why = lit.dt_status()
-        check(not ok and "not macOS" in why, why)
-        lit.sys.platform = "darwin"
-        real_which = lit.shutil.which
-        lit.shutil.which = lambda n: None
-        ok, why = lit.dt_status()
-        lit.shutil.which = real_which
-        check(not ok and "osascript not found" in why, why)
-    finally:
-        lit.sys.platform = real
-        os.environ["LIT_DEVONTHINK"] = saved
-    check("-1743" in lit.dt_reason("execution error: Not authorized to send Apple events (-1743)")
-          and "Automation" in lit.dt_reason("(-1743)"), "-1743 explained")
-    check("not running" in lit.dt_reason("(-600)"), "-600")
-    code, out, _ = run("devonthink-status")
-    check(code == 2 and "LIT_DEVONTHINK=off" in out, out)
+def search_devonthink_takes_hits_from_mcp_tools():
+    d = new_folder()
+    hits = tmpdir() / "hits.json"
+    hits.write_text(json.dumps([{"name": "On the classification of simple and complex cells - Mechler & Ringach (2002).pdf",
+                                 "path": "/x/mechler.pdf", "uuid": "U1", "url": "x-devonthink-item://U1", "doi": ""}]))
+    code, out, err = run("search", d, "devonthink", "classification", "--hits", hits)
+    check(code == 0, (code, err))
+    recs = lit.load_candidates(d)
+    check(len(recs) == 1 and recs[0]["devonthink_uuid"] == "U1" and recs[0]["authors"][0] == "Mechler", recs)
+    rows = table_rows(d / "search_log.md")
+    check(len(rows) == 1 and rows[0][2] == "devonthink" and rows[0][5] == "1", rows)
 
 
 # ---------------------------------------------------------------- pilot fixes: fetch identity, downloads, keys, bulk screen, hints
 
 OTHER_PAPER = [["Binocular interaction in striate cortex of kittens", "Ghose GM, Freeman RD, 1994", "Journal of Neurophysiology"]]
 MECHLER_P1 = [["On the classification of simple and complex cells", "Mechler F, Ringach DL", "doi 10.1016/s0042-6989(02)00025-1"]]
-
-
-@contextlib.contextmanager
-def devonthink(rows):
-    """Pretend DEVONthink is on and answers every search with `rows` (name, path, doi)."""
-    saved = os.environ.pop("LIT_DEVONTHINK")
-    real = lit.dt_search
-    lit.dt_search = lambda q, n=25: [dict(name=r[0], path=str(r[1]), uuid="U", url="x-devonthink-item://U", doi=r[2]) for r in rows]
-    try:
-        yield
-    finally:
-        lit.dt_search = real
-        os.environ["LIT_DEVONTHINK"] = saved
 
 
 def dt_pdf(content, name="f.pdf"):
@@ -729,28 +785,6 @@ def dt_pdf(content, name="f.pdf"):
 def need_pdftotext_or_skip():
     if not shutil.which("pdftotext"):
         raise Skip("pdftotext not installed")
-
-
-@test
-def fetch_devonthink_needs_doi_or_close_title_and_year():
-    need_pdftotext_or_skip()
-    wrong = dt_pdf(OTHER_PAPER)
-    right = dt_pdf(MECHLER_P1)
-    rec = cand("Mechler2002", doi="10.1016/s0042-6989(02)00025-1")
-    for name in ("Binocular interaction in striate cortex of kittens - Ghose et al. (1994)", "On the classification of simple and complex cells - Mechler & Ringach (2026)"):
-        check(not lit.dt_accept(rec, dict(name=name, path=str(wrong), doi="")), f"{name} must not match")
-    check(lit.dt_accept(rec, dict(name="On the classification of simple and complex cells - Mechler & Ringach (2002)", path=str(right), doi="")), "title+year")
-    check(lit.dt_accept(rec, dict(name="scan001", path=str(right), doi="10.1016/s0042-6989(02)00025-1")), "DOI match decides")
-    check(not lit.dt_accept(rec, dict(name="On the classification of simple and complex cells", path=str(right), doi="10.1/other")), "different DOI")
-    d = folder_with([cand("Mechler2002", doi="10.1016/s0042-6989(02)00025-1")])
-    with devonthink([("On the classification of simple and complex cells - Mechler & Ringach (2002).pdf", wrong, "")]), patched(FakeNet(fail=("",))):
-        code, out, err = run("fetch", d, "Mechler2002", "--papers", tmpdir() / "p")
-    check(code == 3 and "rejected" in err and "wrong paper" in err, (code, out, err))
-    check(len(table_rows(d / "to_fetch.md")) == 1, "to_fetch row written when the only match was rejected")
-    d = folder_with([cand("Mechler2002")])
-    with devonthink([("On the classification of simple and complex cells - Mechler & Ringach (2002).pdf", right, "")]), patched(FakeNet(fail=("",))):
-        code, out, _ = run("fetch", d, "Mechler2002", "--papers", tmpdir() / "p")
-    check(code == 0 and out.splitlines()[0] == str(right) and "devonthink" in out, (code, out))
 
 
 @test
