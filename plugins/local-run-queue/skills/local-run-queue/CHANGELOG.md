@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.3.0 (2026-11-15)
+- Skip done_peaks when job exits unsampled; sync docstring and document sample_s (O2)
+
 ## 0.2.0 (2026-11-06)
 - runq.py wait QDIR: block until the driver exits, print the summary, exit 0/3/4; SKILL Step 5 forbids pgrep loops (O1)
 
