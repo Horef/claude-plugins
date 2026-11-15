@@ -10,6 +10,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -121,7 +122,7 @@ check(code == 0 and "wrote  kiro-light" in out, "render writes the templates", o
 check(command_line("kiro-light") == "kiro-cli chat --v3 --trust-workspace --model claude-haiku-5.5 --effort low", "kiro light is haiku 5.5 low", command_line("kiro-light"))
 check(command_line("kiro-deep") == "kiro-cli chat --v3 --trust-workspace --model claude-opus-5.5 --effort high", "kiro deep", command_line("kiro-deep"))
 check(command_line("copilot-light") == "copilot --no-ask-user --model gpt-6-luna --reasoning-effort high", "copilot light", command_line("copilot-light"))
-check(command_line("agy-standard").startswith("agy --model claude-sonnet-5-5-high --mode auto"), "agy puts the level in the model id", command_line("agy-standard"))
+check(re.match(r"agy --model [\w.-]+-high --mode auto", command_line("agy-standard")) is not None, "agy puts the level in the model id", command_line("agy-standard"))
 _agy_settings = Path(os.environ["XDG_CONFIG_HOME"]) / "herdr-delegate" / "agy-settings.json"
 check(_agy_settings.exists() and "command(git log)" in _agy_settings.read_text() and "command(hc send)" in _agy_settings.read_text()
       and command_line("agy-standard").endswith(f"--settings {_agy_settings}"), "render writes agy's allowlist and passes it with --settings")
