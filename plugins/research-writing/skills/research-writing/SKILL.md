@@ -81,17 +81,17 @@ Fix until `check` reports no problems, read its notes (a figure over the height 
 
 The writer cannot find what the reader lacks. Readers who have only the PDF can.
 
-1. `wr.py readers DIR --round N --roles pi,reviewer,newcomer,outsider,editor` writes one brief per role into `review/round-N/`. The **editor** reads for the prose, not the science: sentences that are fragments, ambiguous, unnatural or that refer to something not named; the other readers ask about content and miss these. Adapt the roles to step 0's reader (a thesis committee, a journal's referees). Each reader gets **only the PDF**: no project files, no ledger, no conversation.
-2. Launch one fresh agent per brief, in parallel. **Mix model families**: at least one reader comes from a different family than the writer (for example a Gemini helper started through herdr-delegate's argon templates) when one is available; three times a non-Claude reader caught factual errors that Claude readers missed (O1, O6, O12). When none is available, run the readers as usual and say in the round's notes that no outside-family reader was used; this never blocks the flow. Readers' answer files start with the `Status:` line the brief gives, so docmap accepts them.
+1. `wr.py readers DIR --round N --roles pi,reviewer,newcomer,outsider,editor` writes one brief per role into `review/round-N/`. The **editor** reads for the prose, not the science: sentences that are fragments, ambiguous, unnatural or that refer to something not named; the other readers ask about content and miss these. Adapt the roles to step 0's reader (a thesis committee, a journal's referees): a role of your own needs its description, `--role referee2="a referee for <journal>: ..."`; `wr.py` refuses a role it cannot describe. Each reader gets **only the PDF**: no project files, no ledger, no conversation.
+2. Launch one fresh agent per brief, in parallel. **Mix model families**: at least one reader comes from a different family than the writer (for example a Gemini helper started through herdr-delegate's argon templates) when one is available; three times a non-Claude reader caught factual errors that Claude readers missed (O1, O6, O12). When none is available, run the readers as usual and say in the round's notes that no outside-family reader was used; this never blocks the flow. When no fresh agent can be started at all, the round is **owed**: say so in the handover and run it when agents are available. A writer who role-plays the readers in its own context has not run the round: it is a smoke test, labelled so, and does not count toward the stopping rule in 5. Readers' answer files start with the `Status:` line the brief gives, so docmap accepts them.
 3. Sort the questions into `review/questions.md`. Readers ask the same thing in different words, so group them by theme, one row per theme with the readers' ids (a first round can bring 150+ questions; the pilot's 170 became 22 themes): `| R<round>.<k> | theme | raised by | outcome | status |`, outcome one of **text** (the editor's sentence notes are fixed directly and need no row) (answered where it arose: name the paragraph), **limits** (a real limit: the Discussion says so), **analysis** (needs a new run or computation: the person decides), **reject** (the document already answers it clearly; say where, and ask whether the answer is where the reader needed it). Questions several readers ask come first; a weakest link that every reader names is a change to the message, not to a paragraph (update the ledger first). Expect readers to find gaps in the science as well as the prose: those become **limits** or **analysis**, never softened wording.
 4. Revise by the outcome, rebuild, re-check.
 5. Stop when a round produces no new **must** questions, or after three rounds; the remaining **analysis** items go to the person as a list with what each would cost.
 
-`wr.py status DIR` shows claims by status and the questions still open.
+`wr.py status DIR` shows claims by status and the question rows still open (any row whose status cell says `open`, even "done / open (analysis)").
 
 ## 7. Deliver
 
-The handover says: the message in one sentence; where the PDF is; the reader rounds run and what changed; the open analysis questions; numbers or claims not verified; the tier each step ran at. Keep the ledger and `review/` with the document: the next revision starts from them.
+The handover says: the message in one sentence; where the PDF is (`DIR/<name>.pdf`, the copy `build` makes of `build/main.pdf`, which the readers read); the reader rounds run and what changed; the open analysis questions; numbers or claims not verified; the tier each step ran at. Keep the ledger and `review/` with the document: the next revision starts from them.
 
 ## Who does each step (a suggestion, not a rule)
 
@@ -103,7 +103,7 @@ Steps differ in the judgement they need. Defaults, which the person's profile or
 | 4 Figures and text to the skeleton | standard | detailed instructions exist by now |
 | 5 Checks | script, plus light for number tracing | mechanical |
 | 6 Readers | standard or above, mixed families | a weak reader asks shallow questions |
-| 6 Sorting and revising | deep | judgement about what the document must answer |
+| 6 Sorting and revising | deep; a light pre-pass may cluster the questions by quoted page and keyword first | judgement about what the document must answer |
 
 ## Learning loop
 

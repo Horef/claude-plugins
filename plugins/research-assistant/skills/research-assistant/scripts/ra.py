@@ -14,6 +14,10 @@ Standard library only. Every command takes the question folder (docs/research/<t
   ra.py gate DIR G3 "<words>" --approve A1,A3 [--drop A2]
                                        each gate first checks its stage is complete, then appends a dated line to
                                        log.md; G3 sets the status in plan.md and fingerprints each approved analysis
+                                       add --dry-run to any gate to see what it would record (or refuse) without
+                                       writing: the log is append-only, so try before you record
+  ra.py round DIR                      after gate 3: writes the '# Round N' heading (stop rules, cost table) for
+                                       analyses added later; status shows 'round N' and 'gate 3 next' until approved
   ra.py deviation DIR A2 "<what changed, why, before or after seeing any outcome>"
                                        logs the change and re-fingerprints the analysis
   ra.py audit DIR                      writes verify/audit-N.md for the fresh checker to fill
@@ -397,7 +401,7 @@ def cmd_gate(a) -> int:
         for x in ap:
             if x in plan:
                 probs += check_analysis(d, x, plan[x]["fields"], hyp)
-        if not probs:
+        if not probs and not a.dry_run:
             for x in ap:
                 set_status(d, x, "approved")
             for x in drop:
@@ -411,6 +415,9 @@ def cmd_gate(a) -> int:
         for p in probs:
             print("- " + p)
         return 1
+    if a.dry_run:
+        print(f"would record {g}{extra} (dry run: nothing written)" + (f" ({names})" if names else ""))
+        return 0
     append_log(d, f'- {today()} {g}{extra}: "{_words(a)}"' + (f" ({names})" if names and tag_of(d) else ""))
     print(f"recorded {g}{extra}" + (f" ({names})" if names else ""))
     return 0
@@ -567,6 +574,8 @@ def current_audits(d: Path) -> list[tuple[int, dict[str, str]]]:
 
 def audit_status(f: dict[str, str]) -> str:
     """The first word of an audit's status ('pass. All numbers match' -> 'pass'), lower case."""
+    if empty(f.get("status")):  # the template's '<pass | disagreement>' is not an answer
+        return ""
     m = re.match(r"\W*([A-Za-z]+)", f.get("status", ""))
     return m.group(1).lower() if m else ""
 
@@ -588,6 +597,17 @@ def closed(d: Path) -> str | None:
     return out
 
 
+def open_decisions(d: Path) -> list[str]:
+    dec = sections(d / "decisions.md", pre(d, "Q"))
+    return [k for k, v in dec.items() if v["fields"].get("status", "open") == "open"]
+
+
+def rounds(d: Path) -> int:
+    """Rounds opened by gate-3 approvals: round 1 is the first approval, a later approval (extra analyses, new
+    questions after a close) is the next."""
+    return sum(1 for line in gates(d).get("G3", []) if _listed(line, "approve"))
+
+
 def stage(d: Path) -> str:
     g = gates(d)
     if stopped(d):
@@ -595,17 +615,25 @@ def stage(d: Path) -> str:
     plan = sections(d / "plan.md", pre(d, "A"))
     live = {k: p for k, p in plan.items() if p["fields"].get("status") != "dropped"}
     if "G3" in g:
+        wait = open_decisions(d)
+        wait = f"; waiting on decision {', '.join(wait)}" if wait else ""
+        proposed = [k for k, p in live.items() if p["fields"].get("status") == "proposed"]
+        if proposed:  # analyses added after gate 3 (a new round) are not approved yet
+            n = rounds(d) + 1
+            if not any(p["fields"].get("status") in ("approved", "running") for p in live.values()):
+                return f"4 plan (round {n}: gate 3 next for {', '.join(proposed)})" + wait
+            return f"5 run (round {n}: {', '.join(proposed)} proposed, gate 3 next)" + wait
         if live and all(p["fields"].get("status") in ("done", "failed") for p in live.values()):
             ver = sections(d / "verdict.md", pre(d, "A"))
             if any(k not in ver for k in live):
-                return "6 verdicts"
+                return "6 verdicts" + wait
             if not any(audit_status(x) == "pass" for _, x in current_audits(d)):
-                return "6 audit (ra.py audit, then a fresh checker)"
+                return "6 audit (ra.py audit, then a fresh checker)" + wait
             where = closed(d)
             if where:
                 return f"closed (handed over: {where})"
-            return "7 write-up (ready for hand-over: ra.py handover, then ra.py close)"
-        return "5 run"
+            return "7 write-up (ready for hand-over: ra.py handover, then ra.py close)" + wait
+        return "5 run" + wait
     if "G2" in g:
         return "4 plan (gate 3 next)"
     if "G1" in g:
@@ -616,10 +644,15 @@ def stage(d: Path) -> str:
 def cmd_status(a) -> int:
     d = Path(a.dir)
     q = fields_of(d / "question.md")
-    print(f"{d}: {q.get('question', '?')}")
+    title = " ".join(q.get("question", "?").split())
+    print(f"{d}: {title if len(title) <= 100 else title[:97] + '...'}")
     tag = tag_of(d)
     print(f"entry: {q.get('entry', '?')}; tag: {tag or 'none (plain ids; ra.py retag DIR TAG)'}; stage: {stage(d)}")
     g = gates(d)
+    m = re.match(r"[45] .*?\(round (\d+)", stage(d))
+    r = int(m.group(1)) if m else rounds(d)
+    if r > 1:
+        print(f"round: {r}")
     print("gates: " + (", ".join(f"{k} {v[-1][2:12]}" for k, v in sorted(g.items())) or "none yet"))
     hyp = sections(d / "hypotheses.md", pre(d, "H"))
     sel = selected(d)
@@ -638,7 +671,7 @@ def cmd_status(a) -> int:
         hs = ", ".join(_ids(p["fields"].get("hypotheses", ""), pre(d, "H")))
         print(f"  {label(plan, aid)}: {p['fields'].get('status', '?')}" + (f" (tests {hs})" if hs else ""))
     dec = sections(d / "decisions.md", pre(d, "Q"))
-    open_ = [k for k, v in dec.items() if v["fields"].get("status", "open") == "open"]
+    open_ = open_decisions(d)
     print(f"open decisions: {'; '.join(label(dec, k) for k in open_) if open_ else 'none'}")
     print(f"deviations: {sum(1 for l in log_lines(d) if re.match(r'- \S+ deviation ', l))}; "
           f"audits: {len(audits(d))}")
@@ -688,7 +721,7 @@ def check(d: Path) -> list[str]:
     lit = q.get("literature", "")
     if "G2" in g and empty(lit):
         probs.append("question.md: 'literature' is not filled (the literature folder, or 'none: why')")
-    elif not empty(lit) and root and re.match(r"docs/\S+/?$", lit.split()[0]) and not (root / lit.split()[0]).exists():
+    elif "G2" in g and not empty(lit) and root and re.match(r"docs/\S+/?$", lit.split()[0]) and not (root / lit.split()[0]).exists():
         probs.append(f"question.md: literature folder {lit.split()[0]} does not exist")
     hyp = sections(d / "hypotheses.md", pre(d, "H"))
     plan = sections(d / "plan.md", pre(d, "A"))
@@ -850,6 +883,28 @@ def cmd_close(a) -> int:
     return 0
 
 
+def cmd_round(a) -> int:
+    """Write the heading of the next round into plan.md: its own stop rules and cost table, as plain text (no '- field:'
+    lines, which would be read as fields of the analysis above)."""
+    d = Path(a.dir)
+    if "G3" not in gates(d):
+        print("a round follows gate 3: the first round is the plan itself")
+        return 1
+    n = rounds(d) + 1
+    plan = d / "plan.md"
+    text = plan.read_text()
+    if re.search(rf"^# Round {n}\b", text, re.M):
+        print(f"plan.md already has '# Round {n}'; approve its analyses with gate 3 first")
+        return 1
+    plan.write_text(text.rstrip("\n") + f"\n\n# Round {n}\n\nStop rules for round {n}: <when to stop; what is left of "
+                    "the budget in question.md>\n\n| analysis | hypotheses | compute h | peak memory | wall clock | tokens "
+                    "| person time | value |\n|---|---|---|---|---|---|---|---|\n| | | | | | | | |\n\nAdd the analyses "
+                    "below as sections (status: proposed), then gate 3 with the person.\n")
+    append_log(d, f"- {today()} round {n}: opened in plan.md")
+    print(f"round {n} heading written to {plan}; add its analyses (status: proposed), then gate 3")
+    return 0
+
+
 def cmd_check(a) -> int:
     probs = check(Path(a.dir))
     for p in probs:
@@ -865,7 +920,8 @@ def main(argv=None) -> int:
     s.add_argument("--question", required=True); s.add_argument("--tag"); s.set_defaults(fn=cmd_init)
     s = sub.add_parser("gate"); s.add_argument("dir"); s.add_argument("gate"); s.add_argument("words")
     s.add_argument("--select"); s.add_argument("--approve"); s.add_argument("--drop")
-    s.add_argument("--stop", action="store_true"); s.set_defaults(fn=cmd_gate)
+    s.add_argument("--stop", action="store_true"); s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(fn=cmd_gate)
     s = sub.add_parser("retag"); s.add_argument("dir"); s.add_argument("tag"); s.set_defaults(fn=cmd_retag)
     s = sub.add_parser("deviation"); s.add_argument("dir"); s.add_argument("analysis"); s.add_argument("text")
     s.set_defaults(fn=cmd_deviation)
@@ -873,6 +929,7 @@ def main(argv=None) -> int:
     s = sub.add_parser("status"); s.add_argument("dir"); s.set_defaults(fn=cmd_status)
     s = sub.add_parser("handover"); s.add_argument("dir"); s.set_defaults(fn=cmd_handover)
     s = sub.add_parser("close"); s.add_argument("dir"); s.add_argument("where"); s.set_defaults(fn=cmd_close)
+    s = sub.add_parser("round"); s.add_argument("dir"); s.set_defaults(fn=cmd_round)
     s = sub.add_parser("check"); s.add_argument("dir"); s.set_defaults(fn=cmd_check)
     a = p.parse_args(argv)
     return a.fn(a)

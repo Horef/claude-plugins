@@ -11,7 +11,9 @@ Standard library only; needs latexmk (with lualatex or pdflatex, and biber) for 
   wr.py check DIR                     the mechanical checks of the skill (exit 1 when a problem is found); then notes that
                                       never fail it: figure heights against the page, figure numbers vs the text (pdftotext); with pdftoppm,
                                       figures whose ink reaches their edge (cut off) are problems
-  wr.py readers DIR --round N [--roles pi,reviewer,newcomer,outsider,editor]   write one brief per fresh reader into review/round-N/
+  wr.py readers DIR --round N [--roles pi,reviewer,newcomer,outsider,editor] [--role NAME=DESCRIPTION ...]
+                                      write one brief per fresh reader into review/round-N/; a role that is not one of
+                                      these needs its description from --role (refused otherwise)
   wr.py status DIR                    claims, figures and the reader questions still open
 
 Exit codes: 0 ok, 1 problems found, 2 a tool is missing (not checked: never report that as clean).
@@ -604,11 +606,23 @@ def cmd_readers(a) -> int:
     if not pdf.exists():
         print("no build/main.pdf: build first, readers read the rendered document")
         return 1
+    roles = dict(ROLES)
+    for item in a.role or []:
+        name, sep, text = item.partition("=")
+        if not sep or not name.strip() or not text.strip():
+            print(f"--role takes NAME=DESCRIPTION, got '{item}'")
+            return 1
+        roles[name.strip()] = text.strip()
+    names = [r.strip() for r in a.roles.split(",") if r.strip()]
+    unknown = [r for r in names if r not in roles]
+    if unknown:
+        print(f"no description for the role(s) {', '.join(unknown)}: give each one with --role NAME=DESCRIPTION "
+              f"(known: {', '.join(ROLES)}); nothing written")
+        return 1
     rd = d / "review" / f"round-{a.round}"
     rd.mkdir(parents=True, exist_ok=True)
-    for role in a.roles.split(","):
-        role = role.strip()
-        desc = ROLES.get(role, role)
+    for role in names:
+        desc = roles[role]
         out = (rd / f"{role}.md").resolve()
         (rd / f"brief-{role}.md").write_text(BRIEF.format(role=role, n=a.round, desc=desc, pdf=pdf, out=out,
                                                        date=datetime.date.today().isoformat()))
@@ -633,7 +647,15 @@ def cmd_status(a) -> int:
     q = d / "review" / "questions.md"
     if q.exists():
         t = q.read_text()
-        opened = len(re.findall(r"^\|\s*R\d+[^|]*\|[^|]*\|\s*open\s*\|", t, re.M))
+        opened = 0
+        col = None  # the status column: named in the table's header, else the last one
+        for ln in t.splitlines():
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")] if ln.lstrip().startswith("|") else []
+            if cells and "status" in (c.lower() for c in cells):
+                col = [c.lower() for c in cells].index("status")
+            elif cells and re.match(r"R\d+", cells[0]):
+                cell = cells[col] if col is not None and col < len(cells) else cells[-1]
+                opened += bool(re.search(r"\bopen\b", cell, re.I))
         print(f"review/questions.md: {opened} open")
     return 0
 
@@ -647,6 +669,7 @@ def main(argv=None) -> int:
     s.add_argument("--dpi", type=int, default=60)
     s = sub.add_parser("check"); s.add_argument("dir")
     s = sub.add_parser("readers"); s.add_argument("dir"); s.add_argument("--round", type=int, required=True)
+    s.add_argument("--role", action="append", help="NAME=DESCRIPTION for a role that is not a default one (repeatable)")
     s.add_argument("--roles", default="pi,reviewer,newcomer,outsider,editor")
     s = sub.add_parser("status"); s.add_argument("dir")
     a = p.parse_args(argv)

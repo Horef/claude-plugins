@@ -199,8 +199,77 @@ def round_checks() -> None:
         want("6 audit" in run("status", legacy).stdout, "an old unlogged audit covers a later round (O10)")
 
 
+def reading_checks() -> None:
+    """0.3.2: a blank audit is not a pass (O11), a proposed round after close reads as plan (O9), gate --dry-run,
+    a literature folder named before gate 2, an escalation waiting for the person, a short status title."""
+    with tempfile.TemporaryDirectory() as t:
+        root, d = project(t)
+        run("init", d, "--entry", "project", "--question", "Is TC NMDA enough? " + "very long " * 30)
+        lit = QUESTION.replace("<docs/literature/<topic>/ once stage 2 runs>", "docs/literature/later/")
+        (d / "question.md").write_text(lit.replace("- question: Is TC NMDA enough?", "- question: Is TC NMDA enough? "
+                                                   + "very long " * 30))
+        st = run("status", d).stdout.splitlines()[0]
+        want(len(st) < 200, "status prints the whole question as its title line:\n" + st)
+        want("literature folder" not in run("check", d).stdout, "a literature folder named before gate 2 is a problem")
+        (d / "hypotheses.md").write_text(HYP)
+        r = run("gate", d, "G1", "yes", "--dry-run")
+        want(r.returncode == 0 and "would record" in r.stdout and not any(" G1" in l for l in ra.log_lines(d)),
+             "gate --dry-run wrote or refused:\n" + r.stdout)
+        r = run("gate", d, "G2", "go", "--select", "H1", "--dry-run")
+        want(r.returncode == 1 and "G1 has not been passed" in r.stdout, "dry run skips the order check:\n" + r.stdout)
+        run("gate", d, "G1", "yes")
+        run("gate", d, "G2", "go", "--select", "H1,H2", "--drop", "H3")
+        want("literature folder docs/literature/later/ does not exist" in run("check", d).stdout,
+             "after gate 2 a missing literature folder is not reported")
+        a1 = A1.replace("status: proposed", "status: approved").replace("<run ids, once run>", "`mel_nmda_sweep_a`") \
+               .replace("<RESULTS section, once run>", "RESULTS §55")
+        (d / "plan.md").write_text((d / "plan.md").read_text() + "\n" + a1)
+        before = (d / "plan.md").read_text()
+        r = run("gate", d, "G3", "run A1", "--approve", "A1", "--dry-run")
+        want(r.returncode == 0 and ra.approved(d) == set() and (d / "plan.md").read_text() == before
+             and "would record" in r.stdout, "G3 --dry-run changed the folder:\n" + r.stdout)
+        want(not any(" G3" in l for l in ra.log_lines(d)), "G3 --dry-run logged a gate")
+        run("gate", d, "G3", "run A1", "--approve", "A1")
+        (d / "decisions.md").write_text((d / "decisions.md").read_text() + "\n## Q1: rerun on the cluster?\n"
+                                        "- status: open\n- options: a, b\n- recommendation: a\n")
+        want("waiting on decision Q1" in run("status", d).stdout, "status hides an open decision at stage 5:\n"
+             + run("status", d).stdout)
+        (d / "decisions.md").write_text((d / "decisions.md").read_text().replace("- status: open", "- status: answered\n"
+                                                                                  "- answer: yes"))
+        # a blank audit form is not a pass (O11)
+        (d / "plan.md").write_text((d / "plan.md").read_text().replace("status: approved", "status: done"))
+        (d / "verdict.md").write_text(GOOD)
+        run("audit", d)
+        st = run("status", d).stdout
+        want("7 write-up" not in st and "6 audit" in st, "an unfilled audit counts as a pass (O11):\n" + st)
+        want(run("handover", d).returncode == 1, "hand-over proceeded on an unfilled audit (O11)")
+        (d / "verify" / "audit-1.md").write_text(
+            "# Audit 1\n\n- checker: Argon\n- inputs: plan.md\n- numbers: all match\n- rules: follow\n- deviations: none\n"
+            "- substitutions: none\n- selection: none\n- status: pass\n")
+        want("7 write-up" in run("status", d).stdout, "a filled passing audit does not reach stage 7")
+        run("close", d, "docs/writeups/x/")
+        # round 2 (O9): proposed analyses after a close read as plan, and ra.py round writes the heading
+        a3 = a1.replace("## A1:", "## A3:").replace("status: approved", "status: proposed")
+        (d / "plan.md").write_text((d / "plan.md").read_text() + "\n" + a3)
+        st = run("status", d).stdout
+        want("4 plan" in st and "5 run" not in st and "A3" in st, "round 2 proposals read as '5 run' (O9):\n" + st)
+        r = run("round", d)
+        want(r.returncode == 0 and "# Round 2" in (d / "plan.md").read_text() and "round 2" in (d / "log.md").read_text(),
+             "ra.py round:\n" + r.stdout)
+        want(ra.sections(d / "plan.md", "A")["A3"]["fields"].get("status") == "proposed", "round heading broke A3")
+        want("round 2" in run("status", d).stdout, "status does not name round 2")
+        want(run("round", d).returncode == 1, "a second round heading before gate 3 accepted")
+        run("gate", d, "G3", "also A3", "--approve", "A3")
+        want("5 run" in run("status", d).stdout, "approved round 2 is not stage 5")
+    with tempfile.TemporaryDirectory() as t:
+        root, d = project(t)
+        run("init", d, "--entry", "project", "--question", "x")
+        want(run("round", d).returncode == 1, "ra.py round before gate 3 accepted")
+
+
 def main() -> int:
     unit_checks()
+    reading_checks()
     tagged_checks()
     round_checks()
     with tempfile.TemporaryDirectory() as t:

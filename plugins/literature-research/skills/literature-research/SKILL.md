@@ -13,17 +13,17 @@ Rules with sources, by stage: `references/search-rules.md` (its "Most important 
 
 ## 0. Setup
 
-1. `SKILL` = this skill's folder. `lit.py` needs Python 3.10+; `pdftotext` (poppler) for full text; on macOS, DEVONthink through `osascript`. A missing tool gives exit 2: that source or step is not available, never "nothing found".
+1. `SKILL` = this skill's folder. `lit.py` needs Python 3.10+; `pdftotext` (poppler) for full text; DEVONthink only through its MCP tools (never `osascript`; `lit.py` does not call it). A missing tool gives exit 2: that source or step is not available, never "nothing found".
 2. Read the person's profile if there is one, `~/.config/literature-research/profile.md` (format: `profile.example.md`): default sources, where their papers live (DEVONthink databases, a project's `references/papers/`), how to get paywalled papers, API keys in the environment, model tiers per step.
-3. DEVONthink, two ways in. If the agent has DEVONthink MCP tools (`search_records`, `get_imported_record_path`, ...), use them: they need no automation permission. Otherwise `python3 SKILL/scripts/lit.py devonthink-status`; if it is not reachable (not this machine, not running, automation not allowed), say so once and continue with the other sources. The automation permission belongs to the terminal app the agent runs in (System Settings > Privacy & Security > Automation): a helper in another terminal may reach DEVONthink when the lead cannot.
+3. DEVONthink only through its MCP tools (`search_records`, `get_imported_record_path`, ...). If the agent has none (not this machine, not running), DEVONthink is not available as a source: say so once and continue with the others; never fall back to AppleScript. Search hits go into the folder with `lit.py search DIR devonthink "<query>" --hits FILE.json` (a JSON list of rows with `name`, `path`, `uuid`, `url`, `doi`), which logs the query; without `--hits` that command exits 2.
 4. `lit.py` takes the Semantic Scholar key from `S2_API_KEY`, else from the macOS Keychain item `S2_API_KEY` (so helpers started without the variable use it too), and paces all its Semantic Scholar calls to one per 1.1 s across every `lit.py` process on the machine, the keyed limit being 1 request/s over all endpoints: run parallel searches freely, they queue. Relevance search can still answer 429 with a key when busy; `lit.py` retries, then falls back to bulk as below. Without a key, Semantic Scholar shares one busy public pool: the same call flips between 200 and 429. `lit.py` retries patiently and, when relevance search stays busy, falls back to `/search/bulk` (most-cited first, not relevance-ranked; whitespace is AND, `|` is OR, `"…"` a phrase), which the log records. Write keyless S2 queries in that syntax; if S2 still fails, rely on OpenAlex and say so in the log.
 
 ## 1. Frame the question (search-rules A)
 
-`lit.py init docs/literature/<topic> --question "..." --type value|review|novelty|verify|method` creates the folder: `question.md`, `search_log.md`, `candidates.jsonl`, `ledger.md`, `verify/`, `synthesis.md`, `sources.bib`, `to_fetch.md`. Fill `question.md` before searching:
+`lit.py init docs/literature/<topic> --question "..." --type value|review|novelty|verify|method` creates the folder: `question.md`, `search_log.md`, `candidates.jsonl`, `ledger.md`, `verify/`, `synthesis.md`, `sources.bib`, `to_fetch.md`. Fill `question.md` before searching (type `verify` with a complete reference starts at step 5; with only an author-year citation ("Chen et al. 2026") first resolve it: search the title or author terms, confirm identity on page 1 of the paper found, and ask the person when two papers fit):
 - the question in one sentence, its **type**, and the **decision it serves** (what changes depending on the answer);
 - **inclusion criteria**: species, age, brain area and layer, preparation (slice, in vivo, culture), measurement definition, years; what would make a paper irrelevant;
-- **sources** (default: PubMed, Semantic Scholar, arXiv, OpenAlex, the web; DEVONthink when reachable) and a **stop rule** (for example: two backward-and-forward rounds bring no new relevant paper, or 4 hours of search).
+- **sources** (default: PubMed, Semantic Scholar, arXiv, OpenAlex, the web; DEVONthink when its MCP tools are available) and a **stop rule** (for example: two backward-and-forward rounds bring no new relevant paper, or 4 hours of search).
 Show it to the person when they are available: it is the cheapest place to change the question.
 
 ## 2. Search, log, chase (B, C)
@@ -34,11 +34,11 @@ Show it to the person when they are available: it is the cheapest place to chang
 
 ## 3. Screen (D)
 
-Titles and abstracts first, over-inclusively; then full text. `lit.py screen DIR <key> in|out "<reason>"` records every full-text exclusion with its reason; for the hundreds of off-topic hits a broad search brings, write a TSV of decisions and use `lit.py screen DIR --from FILE`, or `--rest out "<reason>"` once every relevant one is marked in. Count studies, not papers: the same data reported twice is one data set (D3).
+Titles and abstracts first, over-inclusively; then full text. `lit.py screen DIR <key> in|out "<reason>"` records every full-text exclusion with its reason; for the hundreds of off-topic hits a broad search brings, write a TSV of decisions and use `lit.py screen DIR --from FILE`, or `--rest out "<reason>"` once every relevant one is marked in. When the answer will be an absence ("not found"), do not bulk-dismiss unread candidates: abstract-screen them, or have the synthesis say how many were dismissed on the title alone. Count studies, not papers: the same data reported twice is one data set (D3).
 
 ## 4. Read and fill the ledger (E)
 
-Get the full text with `lit.py fetch DIR <key>`: DEVONthink first, then the project's papers folder, then open access (the candidate's OA link, arXiv, bioRxiv/medRxiv at the latest version, eLife, OpenAlex locations, then Europe PMC's open-access full text found from the DOI). With DEVONthink MCP tools, look the paper up yourself first: `search_records` with the bare DOI as the query (hits carry `doi`; fall back to the title), `get_imported_record_path` for the file, then `lit.py fetch DIR <key> --file PATH`, which runs the same page-1 identity check (exit 1: not this paper). Never edit files inside a `.dtBase2` package; `lit.py text` caches outside it.
+Get the full text with `lit.py fetch DIR <key>`: the project's papers folder (`--papers DIR` outside a project: the default is `references/papers` at the repository root, or two levels above a folder with no repository), then open access (the candidate's OA link, arXiv, bioRxiv/medRxiv at the latest version, eLife, OpenAlex locations, then Europe PMC's open-access full text found from the DOI). With DEVONthink MCP tools, look the paper up yourself before fetch: `search_records` with the bare DOI as the query (hits carry `doi`; fall back to the title), `get_imported_record_path` for the file, then `lit.py fetch DIR <key> --file PATH`, which runs the same page-1 identity check (exit 1: not this paper). Never edit files inside a `.dtBase2` package; `lit.py text` caches outside it.
 
 A paper none of these has goes to `to_fetch.md` for the person (title, DOI, why it is needed); continue with its abstract and mark the rows `abstract-only`. Publisher sites (J Neurosci, APS, OUP, Nature, Elsevier) refuse scripted downloads even for free papers, so to_fetch.md is still the way for those; put the DOI link in each row and give the person's paper folder (profile) where they should save them. Extract text with `lit.py text <pdf>`.
 
@@ -46,7 +46,7 @@ One ledger row per finding, before any prose: the claim in one sentence, the **v
 
 ## 5. Verify with fresh checkers (F)
 
-Each ledger row is checked by an agent that did not extract it and sees only the row's claim, value, conditions, source and locator, not the synthesis. It first confirms that the file is the cited paper (title and first author on page 1: the pilot found four wrong PDFs matched by title words), then runs `lit.py quote <pdf> "<quote>"`, reads the passage, and sets `verified` to `confirmed`, `corrected` (with the right value or conditions), `not-found` or `indirect` (the source cites someone else). Give checkers a different model family from the extractor where possible; a light tier is enough for confirming quotes, a standard tier for judging conditions. Their reports go in `verify/`. Rows not confirmed do not carry the answer.
+Each ledger row is checked by an agent that did not extract it and sees only the row's claim, value, conditions, source and locator, not the synthesis. It first confirms that the file is the cited paper (title and first author on page 1: the pilot found four wrong PDFs matched by title words), then runs `lit.py quote <pdf> "<quote>"`, reads the passage, and sets `verified` to `confirmed`, `corrected` (with the right value or conditions), `not-found` or `indirect` (the source cites someone else). Give checkers a different model family from the extractor where possible; a light tier is enough for confirming quotes, a standard tier for judging conditions. Their reports go in `verify/`. Rows not confirmed do not carry the answer. When no fresh agent can be started, the extractor re-reads each row itself and writes `self-checked`, never `confirmed`: `lit.py check` accepts it but warns wherever the synthesis cites it, and the handover says a fresh checker round is owed.
 
 ## 6. Synthesise (G, H)
 
@@ -56,7 +56,7 @@ Each ledger row is checked by an agent that did not extract it and sees only the
 
 ## 7. Save and hand over
 
-Papers used go to the project's `references/papers/` (copies of papers are not committed where the project forbids it) and, when DEVONthink is reachable and the person wants it, into their database; add a pointer to the project's paper notes. The handover says: the answer in one sentence, its evidence labels, the conflicts, the gaps with costs, the papers in `to_fetch.md`, and what the search did not cover.
+Papers used go to the project's `references/papers/` (copies of papers are not committed where the project forbids it) and, when DEVONthink's MCP tools are available and the person wants it, into their database; add a pointer to the project's paper notes. The handover says: the answer in one sentence, its evidence labels, the conflicts, the gaps with costs, the papers in `to_fetch.md`, and what the search did not cover.
 
 ## Who does each step (a suggestion; the profile overrides)
 

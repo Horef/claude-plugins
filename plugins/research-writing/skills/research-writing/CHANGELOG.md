@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.7.0 (2026-11-15)
+- wr.py status counts open reader questions by the table's status column (any 'open' word); readers refuses a role it has no description for and takes --role NAME=DESCRIPTION; step 6: an owed reader round when no fresh agent can start (a writer role-playing readers is a smoke test), light pre-pass for clustering questions; PDF delivered as DIR/<name>.pdf noted; D7/F38 allow real 3-D and simple 2-3 part pies (owner decision 2026-11-15) (O17, O18)
+
 ## 0.6.0 (2026-11-09)
 - \figref and \Figref are robust (work inside captions; the plain macro was fatal there, twice in one write-up); a thing keeps its colour in main and supplementary figures, and wr.py check notes a figure drawn in grey only when others use colour (owner request 2026-11-09). New eval cases. (O15, O16)
 
