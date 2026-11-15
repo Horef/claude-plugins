@@ -459,13 +459,13 @@ Tags: **[S]** script (regex, parser, file structure); **[A]** fresh reading agen
 
 **Figures**
 - F32 [S] Every figure and table is cited in the text at least once, and each citation resolves to a figure that exists. [syn]
-- F33 [S] The first citation of Figure n comes before Figure n appears in the file, and figures are numbered in order of first citation. [syn]
-- F34 [S] Each figure appears no later than the end of the section that first cites it, and no earlier than the paragraph that cites it. [syn]
-- F35 [S+A] Each figure title is a full sentence with a verb, stating a finding (not "f–I curves for inputs A and B"). (MK17 R7)
-- F36 [S+A] Each caption has: what is plotted with units, n, what error bars mean, how to read it, the point of interest. Script checks for "n =", "error bars/bands", units; agent checks the rest. (Rou14 R4)
-- F37 [A] From title and caption alone, the agent states each figure's message; it must equal the message in the figure manifest, and the body text must support the same message. (Rou14 R2; MK17 R7)
+- F33 [S] The first citation of Figure n comes before Figure n appears in the file, and figures are numbered in order of first citation (D6). [syn]
+- F34 [S] Each figure appears no later than the end of the section that first cites it, and no earlier than the paragraph that cites it (D6). [syn]
+- F35 [S+A] Each figure title is a full sentence with a verb, stating a finding (D3). (MK17 R7)
+- F36 [S+A] Each caption has the contents listed in D4. Script checks for "n =", "error bars/bands", units; agent checks the rest. (Rou14 R4)
+- F37 [A] From title and caption alone, the agent states each figure's message; it must equal the message in the figure manifest (D1, D2), and the body text must support the same message. (Rou14 R2; MK17 R7)
 - F38 [S] Plot code check: no jet/rainbow colormap, no default fonts too small to read, no decorative 3-D, no pie chart beyond a simple 2-3 part whole (bars or stacked bars otherwise), axes labelled with units, full axis range or stated truncation. (Rou14 R5 to R8)
-- F39 [S+A] The same variable, condition or colour is encoded the same way in every figure where they are compared. [syn]
+- F39 [S+A] The same variable, condition or colour is encoded the same way in every figure where they are compared (D8). [syn]
 
 ---
 
@@ -483,7 +483,7 @@ Tags: **[S]** script (regex, parser, file structure); **[A]** fresh reading agen
 
 ## Most important 15
 
-Ranked for a draft that is already competent but reads like a lab report. The typical symptoms are chronological order, no stated question, results with no stated meaning, project labels as subjects, figures with no message, and an ending that lists limitations.
+Ranked for a draft that is already competent but reads like a lab report. The typical symptoms, in order of impact, are listed in the worked diagnosis (`story.md` section 7).
 
 1. **Write the one-paragraph message first and put its claim in the title (A1, A2).** Without it every other fix is cosmetic.
 2. **Order the paper by the argument, not by the work log (B1, B2).** The commonest cause of "reads like a lab report".
@@ -492,7 +492,7 @@ Ranked for a draft that is already competent but reads like a lab report. The ty
 5. **Give every section, subsection and paragraph an opening that ends in its point and key terms (B14, C1).** The whole paper becomes skimmable, and the point is never at the end of a page of detail.
 6. **End with a resolution that answers the question and ties it back to the opening. Do not end on limitations or "more work" (B13, A10, A15).** Readers keep what they read last.
 7. **Answer the reader's questions where they arise, with the claim-question ledger and explicit logical connectives (A12, C12, E6).** This is the cure for "explanations leave questions unanswered".
-8. **Give every figure one message, state it in the title, write a full caption, and cite it before it appears (D1 to D4, D6).** This fixes erratic plot placement and makes figures carry the argument.
+8. **Make every figure carry one stated message (D1 to D4, D6).** This fixes erratic plot placement and makes figures carry the argument.
 9. **Test on a reader who is not you, with specific questions (E1 to E3).** The curse of knowledge cannot be removed by effort alone.
 10. **Put the old or linking information first and the new point last, and chain sentences stress-to-topic (C3, C4, C9).** Most of the "flow" in a draft comes from this.
 11. **Make characters the subjects and actions the verbs; replace nominalizations and fuzzy verbs (C6, C7).** This removes most of the dense-report feel.
