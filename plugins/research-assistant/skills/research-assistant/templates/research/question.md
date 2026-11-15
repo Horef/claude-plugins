@@ -20,4 +20,4 @@ Status: current (verified {date}). Research question (research-assistant); entry
 
 ## Questions for gate 1
 
-<!-- Concrete questions for the person (A5): is this the decision, is the budget right, what is out, which bracket or definition to use. -->
+<!-- Concrete questions for the person (RR-A5): is this the decision, is the budget right, what is out, which bracket or definition to use. -->

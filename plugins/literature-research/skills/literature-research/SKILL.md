@@ -7,9 +7,9 @@ description: "Literature research and claim verification for any research questi
 
 Use this skill to answer a research question from the literature and to check claims against their sources: a parameter value with its conditions, the state of a mechanism, whether an idea is new, whether a citation says what it is cited for, how others did a method. The output is an evidence ledger and a short synthesis that a person can check line by line. It is not for writing the paper that uses the answer (research-writing does that) and not for running analyses.
 
-**The problem it solves.** An agent asked a literature question answers from memory, cites a review for a number measured in another species, and states "not found" as "does not exist". About one citation in four in the published literature has some error and one in eight a serious one (JB15 in `references/search-rules.md`), and claims grow by being cited without data (Gre09). The procedure therefore writes every finding into a ledger with its conditions and a verbatim quote before any prose, and has fresh checkers, who did not extract it, re-read each cited passage.
+**The problem it solves.** An agent asked a literature question answers from memory, cites a review for a number measured in another species, and states "not found" as "does not exist". About one citation in four in the published literature has some error and one in eight a serious one (JB15 in `references/search-rules-sources.md`), and claims grow by being cited without data (Gre09). The procedure therefore writes every finding into a ledger with its conditions and a verbatim quote before any prose, and has fresh checkers, who did not extract it, re-read each cited passage.
 
-Rules with sources, by stage: `references/search-rules.md` (its "Most important 12" is the short version; rule ids such as F3 below point into it). Tools: `scripts/lit.py`. Templates: `templates/literature/`.
+Rules by stage: `references/search-rules.md` (its "Most important 12" is the short version; rule ids carry the prefix SR-, as in SR-F3 below, so they are never read as another list's ids; each rule is marked binding, which this procedure relies on, or guidance). The reason and the sources behind each rule, by the same ids: `references/search-rules-sources.md`. Tools: `scripts/lit.py`. Templates: `templates/literature/`.
 
 ## 0. Setup
 
@@ -18,7 +18,7 @@ Rules with sources, by stage: `references/search-rules.md` (its "Most important 
 3. DEVONthink only through its MCP tools (`search_records`, `get_imported_record_path`, ...). If the agent has none (not this machine, not running), DEVONthink is not available as a source: say so once and continue with the others; never fall back to AppleScript. Search hits go into the folder with `lit.py search DIR devonthink "<query>" --hits FILE.json` (a JSON list of rows with `name`, `path`, `uuid`, `url`, `doi`), which logs the query; without `--hits` that command exits 2.
 4. `lit.py` takes the Semantic Scholar key from `S2_API_KEY`, else from the macOS Keychain item `S2_API_KEY` (so helpers started without the variable use it too), and paces all its Semantic Scholar calls to one per 1.1 s across every `lit.py` process on the machine, the keyed limit being 1 request/s over all endpoints: run parallel searches freely, they queue. Relevance search can still answer 429 with a key when busy; `lit.py` retries, then falls back to bulk as below. Without a key, Semantic Scholar shares one busy public pool: the same call flips between 200 and 429. `lit.py` retries patiently and, when relevance search stays busy, falls back to `/search/bulk` (most-cited first, not relevance-ranked; whitespace is AND, `|` is OR, `"…"` a phrase), which the log records. Write keyless S2 queries in that syntax; if S2 still fails, rely on OpenAlex and say so in the log.
 
-## 1. Frame the question (search-rules A)
+## 1. Frame the question (SR-A)
 
 `lit.py init docs/literature/<topic> --question "..." --type value|review|novelty|verify|method` creates the folder: `question.md`, `search_log.md`, `candidates.jsonl`, `ledger.md`, `verify/`, `synthesis.md`, `sources.bib`, `to_fetch.md`. Fill `question.md` before searching (type `verify` with a complete reference starts at step 5; with only an author-year citation ("Chen et al. 2026") first resolve it: search the title or author terms, confirm identity on page 1 of the paper found, and ask the person when two papers fit):
 - the question in one sentence, its **type**, and the **decision it serves** (what changes depending on the answer);
@@ -26,31 +26,33 @@ Rules with sources, by stage: `references/search-rules.md` (its "Most important 
 - **sources** (default: PubMed, Semantic Scholar, arXiv, OpenAlex, the web; DEVONthink when its MCP tools are available) and a **stop rule** (for example: two backward-and-forward rounds bring no new relevant paper, or 4 hours of search).
 Show it to the person when they are available: it is the cheapest place to change the question.
 
-## 2. Search, log, chase (B, C)
+## 2. Search, log, chase (SR-B, SR-C)
 
 - Build each query from the question's concepts with synonyms (and MeSH terms for PubMed). PubMed joins every word with AND, so a natural-language query usually returns nothing: write short boolean queries (`thalamocortical AND NMDA AND "layer 2/3"`), one concept combination at a time; run it on each source with `lit.py search DIR <source> "<query>"`. Every run appends a row to `search_log.md` (source, query, filters, hits, new): never search without logging.
-- Chase citations from the key papers: `lit.py cites DIR <key> --refs` always, `--citedby` for the papers that carry the answer, and look on purpose for papers that contradict the emerging answer (C8).
+- Chase citations from the key papers: `lit.py cites DIR <key> --refs` always, `--citedby` for the papers that carry the answer, and look on purpose for papers that contradict the emerging answer (SR-C8).
 - A project's `references/` folder is where papers already used are saved; it is not a search space, but check it before fetching a paper again.
 
-## 3. Screen (D)
+## 3. Screen (SR-D)
 
-Titles and abstracts first, over-inclusively; then full text. `lit.py screen DIR <key> in|out "<reason>"` records every full-text exclusion with its reason; for the hundreds of off-topic hits a broad search brings, write a TSV of decisions and use `lit.py screen DIR --from FILE`, or `--rest out "<reason>"` once every relevant one is marked in. When the answer will be an absence ("not found"), do not bulk-dismiss unread candidates: abstract-screen them, or have the synthesis say how many were dismissed on the title alone. Count studies, not papers: the same data reported twice is one data set (D3).
+Titles and abstracts first, over-inclusively; then full text. `lit.py screen DIR <key> in|out "<reason>"` records every full-text exclusion with its reason; for the hundreds of off-topic hits a broad search brings, write a TSV of decisions and use `lit.py screen DIR --from FILE`, or `--rest out "<reason>"` once every relevant one is marked in. When the answer will be an absence ("not found"), do not bulk-dismiss unread candidates: abstract-screen them, or have the synthesis say how many were dismissed on the title alone. Count studies, not papers: the same data reported twice is one data set (SR-D3).
 
-## 4. Read and fill the ledger (E)
+Then a fresh agent re-checks the exclusions (SR-D5): it gets the inclusion criteria and the excluded full texts with their reasons (the `out` rows of `candidates.jsonl`), not the hypothesis or the answer you expect, and flags every exclusion it would not have made. Resolve each flag (include the paper, or keep the exclusion and note why in `question.md`) before reading on; a standard tier is enough.
+
+## 4. Read and fill the ledger (SR-E)
 
 Get the full text with `lit.py fetch DIR <key>`: the project's papers folder (`--papers DIR` outside a project: the default is `references/papers` at the repository root, or two levels above a folder with no repository), then open access (the candidate's OA link, arXiv, bioRxiv/medRxiv at the latest version, eLife, OpenAlex locations, then Europe PMC's open-access full text found from the DOI). With DEVONthink MCP tools, look the paper up yourself before fetch: `search_records` with the bare DOI as the query (hits carry `doi`; fall back to the title), `get_imported_record_path` for the file, then `lit.py fetch DIR <key> --file PATH`, which runs the same page-1 identity check (exit 1: not this paper). Never edit files inside a `.dtBase2` package; `lit.py text` caches outside it.
 
 A paper none of these has goes to `to_fetch.md` for the person (title, DOI, why it is needed); continue with its abstract and mark the rows `abstract-only`. Publisher sites (J Neurosci, APS, OUP, Nature, Elsevier) refuse scripted downloads even for free papers, so to_fetch.md is still the way for those; put the DOI link in each row and give the person's paper folder (profile) where they should save them. Extract text with `lit.py text <pdf>`.
 
-One ledger row per finding, before any prose: the claim in one sentence, the **value with units**, the **conditions** (species, age, layer, preparation, temperature, method, the measurement's definition), the source key, the **locator** (page, figure, table), a **verbatim quote** of the passage, and the **evidence type**: `measured` (the paper's own data), `modelled`, `cited` (the paper cites another for it: trace it, F3) or `inferred` (our conversion or reasoning: show it in the note). A claim taken from a review is traced to the paper with the data; record the chain in the note.
+One ledger row per finding, before any prose: the claim in one sentence, the **value with units**, the **conditions** (species, age, layer, preparation, temperature, method, the measurement's definition), the source key, the **locator** (page, figure, table), a **verbatim quote** of the passage, and the **evidence type**: `measured` (the paper's own data), `modelled`, `cited` (the paper cites another for it: trace it, SR-F3) or `inferred` (our conversion or reasoning: show it in the note). A claim taken from a review is traced to the paper with the data; record the chain in the note.
 
-## 5. Verify with fresh checkers (F)
+## 5. Verify with fresh checkers (SR-F)
 
 Each ledger row is checked by an agent that did not extract it and sees only the row's claim, value, conditions, source and locator, not the synthesis. It first confirms that the file is the cited paper (title and first author on page 1: the pilot found four wrong PDFs matched by title words), then runs `lit.py quote <pdf> "<quote>"`, reads the passage, and sets `verified` to `confirmed`, `corrected` (with the right value or conditions), `not-found` or `indirect` (the source cites someone else). Give checkers a different model family from the extractor where possible; a light tier is enough for confirming quotes, a standard tier for judging conditions. Their reports go in `verify/`. Rows not confirmed do not carry the answer. When no fresh agent can be started, the extractor re-reads each row itself and writes `self-checked`, never `confirmed`: `lit.py check` accepts it but warns wherever the synthesis cites it, and the handover says a fresh checker round is owed.
 
-## 6. Synthesise (G, H)
+## 6. Synthesise (SR-G, SR-H)
 
-`synthesis.md`: the answer first, in a sentence the decision can use, each sentence tagged with ledger ids (`[L3, L7]`); then a table of the values with their conditions; conflicts and what explains them (conditions usually do, Tri14); gaps, each with what would close it (a measurement, a paper to fetch, an analysis) and its cost. Call the work what it is (a rapid review on the sources and dates in the log) and claim only what the search supports: "not found in PubMed and Semantic Scholar on 2026-11-06", never "does not exist".
+`synthesis.md`: the answer first, in a sentence the decision can use, each sentence tagged with ledger ids (`[L3, L7]`); then a table of the values with their conditions; conflicts and what explains them (conditions usually do, Tri15); gaps, each with what would close it (a measurement, a paper to fetch, an analysis) and its cost. Call the work what it is (a rapid review on the sources and dates in the log) and claim only what the search supports: "not found in PubMed and Semantic Scholar on 2026-11-06", never "does not exist".
 
 `lit.py check DIR` until clean (ledger fields, vocabularies, sources in candidates, every `[L..]` resolves, no unverified row cited). `lit.py bib DIR` writes `sources.bib`.
 

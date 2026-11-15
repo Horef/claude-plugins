@@ -16,7 +16,7 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 **Good looks like:**
 - Opens the cited paper, quotes the passage, and says whether the claim matches it (measured vs inferred, which cells, which method).
 - Gives a corrected sentence if the claim overstates the source.
-**Origin:** search-rules F1-F6.
+**Origin:** search-rules SR-F1 to SR-F6.
 
 ## Trigger: should fire
 **Task:** "Find measured values of the dLGN contact count per L2/3 cell." / "Is there prior work on clustered thalamic inputs making orientation selectivity?" / "Check whether these three citations support our sentences."
