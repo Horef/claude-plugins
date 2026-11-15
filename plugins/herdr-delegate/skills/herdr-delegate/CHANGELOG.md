@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.14.2 (2026-11-15)
+- Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
+
 ## 0.14.1 (2026-11-15)
 - restructure R7, owner-approved 2026-11-15: tier definitions stand on their own, no pointer to the model-router (D12)
 
