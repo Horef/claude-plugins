@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.4.0 (2026-11-15)
+- Restructure R3, owner-approved 2026-11-15 (audit C9): SKILL.md 29.9 KB -> 24.6 KB, under the 25 KB budget. Section 7's quick-reference code block and the worked examples by kind moved verbatim into lib/README.md ('Quick reference', 'Examples'); its 'examples are general' rule merged into the README's identical rule (adds 'keep it free of output paths'); setup step 2's Playwright/Chrome lookup order merged into the README's Setup and Chrome fallback, which already held it. Section 7 keeps a read-when cue. No house style or preference changed.
+
 ## 7.3.0 (2026-11-15)
 - portrait second-channel nullclines and outside labels; streamline/contour lint; paper sizing; panel_label; stimulus_arrow and label_curves fixes; Use when description (O12, O13)
 
