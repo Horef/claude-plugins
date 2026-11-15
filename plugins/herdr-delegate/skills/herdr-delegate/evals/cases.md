@@ -10,6 +10,7 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - Waits with `hc wait --children`, never sleep loops.
 - Reads the summary file itself before reporting to the person.
 - Kills and removes the helper afterwards.
+**Note:** the run may stop at a planned launch (no live helper, to save quota); grade what is planned and specified, not live behaviour.
 **Origin:** 2026-10-31 setup session (probes of kiro, agy, copilot).
 
 ## A permission prompt
@@ -43,4 +44,18 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - Waits with `hc wait --children any --timeout 60`, not a long or backgrounded wait, and runs `helpers.py prompt <name>` at every check-in.
 - Reads the command, approves a read-only `curl` loop inside scope, choosing the "don't ask again" option; declines or asks the person for a POST or a delete outside scope.
 - The person never has to answer the prompt in the Herdr app.
+**Screen:** use `evals/screens/copilot-shell.txt` (a captured Copilot approval box) as what `hc read` shows; do not invent the prompt text.
 **Origin:** 2026-11-01: a lead in a 15-minute wait left three Copilot shell prompts to the person.
+
+## A Copilot path-access dialog
+**Task:** A `copilot-standard` helper is `blocked` according to hc; `helpers.py prompt <name>` is run against the screen in `evals/screens/copilot-path.txt` (Copilot asks to allow paths: the project's venv python and `/usr/bin/python3`, with "Yes, and remember these paths for this session").
+**Good looks like:**
+- `helpers.py prompt` reports the dialog (exit 0), not "no prompt"; the lead reads the paths before deciding.
+- Approves when the paths are the project's own interpreter and inside what the brief needs, choosing "remember these paths" so it asks once; asks the person if a path is outside scope.
+- Next time puts a brief file inside `--cwd` or sends it inline, to avoid the dialog.
+**Origin:** O10 (seen four times; the detector missed the "enter select · esc cancel" help line).
+
+## pick with provider names
+**Task:** "Pick a helper in the order kiro, then agy for a standard step."
+**Good looks like:** runs `helpers.py pick kiro-standard,agy-standard` (template names). If it ran `pick kiro,agy` and got nothing, it reads stderr ("no template named kiro") and retries with template names instead of concluding there is no helper.
+**Origin:** O28 (2026-11-14 grading: provider names exited 1 silently).
