@@ -81,6 +81,8 @@ Work alone and collect the person's decisions in `decisions.md`, each with its o
 
 ## Who does each step (a suggestion; the profile and the project override)
 
+Tiers: **light** is mechanical work with a clear rule (a small, cheap model), **standard** is following detailed instructions (a mid-size model), **deep** is open judgment (the strongest model, more thinking).
+
 | Step | Suggested tier | Why |
 |---|---|---|
 | 1 Frame, 3 Hypotheses, the gates | deep, here with the person | the question and the competing explanations decide everything after |

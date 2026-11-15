@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.5.2 (2026-11-15)
+- restructure R7, owner-approved 2026-11-15: the step-tier table is preceded by a one-line, standalone definition of light, standard and deep (no model-router dependence, D12)
+
 ## 0.5.1 (2026-11-15)
 - Rule ids prefixed RR- so they cannot be read as analysis, hypothesis or gate ids (the tag style of simple_complex_v1); a fallback line in SKILL.md section 0 for each skill it depends on (literature-research, research-writing, local-run-queue, paper-premark, project-foundations); a scripted check that every cited rule id is live or retired and that the rules and sources files define the same ids (owner decisions 2026-11-15) (O12)
 
