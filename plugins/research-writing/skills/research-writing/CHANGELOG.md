@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.8.1 (2026-11-15)
+- restructure R7, owner-approved 2026-11-15: the step-tier table is preceded by a one-line, standalone definition of light, standard and deep (no model-router dependence, D12)
+
 ## 0.8.0 (2026-11-15)
 - Restructure R5, owner-approved 2026-11-15: figure checks F33-F37, F39 point to rules D1-D8 instead of restating them; Most important 15 intro and story.md section 7 item 4 point to each other
 
