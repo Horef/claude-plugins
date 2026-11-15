@@ -39,6 +39,9 @@ CROSS_REFS = [
     r"\b(?:in|from|see|cf\.?) (?:figure|fig\.) ?\d",
     r"\b(?:previous|preceding|earlier|prior|next|following|later|last) (?:block|section|part|derivation|example|step)\b",
     r"\bin the (?:previous|preceding|earlier|prior|next|following|later|last) (?:equation|figure)\b",
+    r"\bthe (?:left|right|middle|centre|center|top|bottom|upper|lower)(?:[- ]hand)? (?:panel|plot|graph|curve|trace|diagram|figure|image|picture)\b",
+    r"\bthe (?:lecture|slide|book|textbook|paper)(?:'s|\u2019s) (?:figure|plot|diagram|graph|slide|image)\b",
+    r"\bthe (?:figure|plot|diagram|graph)(?:'s|\u2019s) caption\b|\bthe caption\b",
     r"\bblocks? \d+(?:\.\d+)?\b",
     r"\b(?:in|from|of|see|recall) (?:part|section) \d+\b",
 ]

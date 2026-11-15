@@ -1,6 +1,6 @@
 ---
 name: "paper-premark"
-description: "Pre-read a scientific paper in DEVONthink and mark it up in Sergiy's colour scheme (whole logical units, comments, skim-safe markers) plus a linked reading-map note. Works with or without a project."
+description: "Pre-read a scientific paper in DEVONthink and mark it up in Sergiy's colour scheme (whole logical units, comments, skim-safe markers) plus a linked reading-map note. Works with or without a project. Use when he asks to pre-mark, pre-read, highlight, map or mark up a paper, or which parts to read closely. Not for summaries, lecture notes (course-lecture-notes) or changing his own marks."
 ---
 
 # Paper pre-marking (DEVONthink)
@@ -48,9 +48,9 @@ Mac palette, if his marks use it: yellow #FFFF0A, green #6CC056, red #F64376, bl
 2. **Get the text DEVONthink will match against:** `extract_record_content` with `pages` (0-based).
    - Do NOT build strings from PyMuPDF text. It merges words in some PDFs and spaces symbols differently. Use an exported copy plus PyMuPDF only to read existing annotation colours and to verify afterwards.
    - Large results are saved to a file (a JSON list of {link, text}). Requesting many pages at once is fine; the file is the cache. Step 5 validates strings against it directly.
-   - Export (for PyMuPDF only): see the harness table in step 0.
+   - Export (for PyMuPDF only): see the harness table in step 0. If PyMuPDF is not installed, run Python with `uv run --with pymupdf …` or in a scratch venv under the temporary folder (`python3 -m venv /tmp/<paper>/venv`), never in the project's environment.
 3. **Read the whole paper**, including Methods, Extended Data captions and any supplementary pages appended to the PDF.
-4. **Write a mark spec** (list of {colour, type, string, comment}). Strings are copied from the PDFKit text, with `\n` exactly at line breaks. Strings cannot span pages: split a unit at the page break, and put the comment on the first part. Check where a line starts: Methods text often breaks at a different word than you expect (e.g. "We\nused …").
+4. **Write a mark spec** (list of {colour, type, string, comment}). Strings are copied from the PDFKit text, with `\n` exactly at line breaks. Default: split a unit at a page break and put the comment on the first part. `mark_record_text`'s schema says a multi-line occurrence yields one annotation per page, so a string spanning pages may work (untested on a PDF; `validate_marks.py` checks one page at a time): only when a split would cut a unit in two, try one spanning string, compare `markups_added`, and record the result with the note command. A string cut from `extract.json` between start and end anchors (e.g. before glued line numbers) matched 93 of 93 on its first run. Check where a line starts: Methods text often breaks at a different word than you expect (e.g. "We\nused …").
 5. **Validate** that each string occurs exactly once in the PDFKit text. Save the mark spec as JSON (a list of `{page, string, colour, comment}`, page 0-based) and run `python scripts/validate_marks.py <extract.json> <marks.json>` (path relative to this skill). It parses the extract per page, normalises NBSP, and exits non-zero listing every string that is missing, duplicated, contains a soft hyphen or `***`, or sits on a phantom page. Fix and rerun until it exits 0. Rules behind its checks and what it cannot see:
    - Soft hyphens (U+00AD) never match: split around them. Plain end-of-line hyphens ("pro-\nduced") do match.
    - Watch for figure text that PDFKit inserts into the flow, and split units there.

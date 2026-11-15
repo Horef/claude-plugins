@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.8.0 (2026-11-15)
+- README matches the code on context colour under 50% and states the 3:1 contrast bar (4.5:1 is unreachable on off-white and dark together); tests/behaviour.test.tsx checks the compaction counter (subagent exclusion, resume), a saved layout loading at the start, and the colours' contrast (O2)
+
 ## 0.7.1 (2026-11-13)
 - separators between budgets, old readings keep their colour (marked ~), overage bold red, session row dim
 

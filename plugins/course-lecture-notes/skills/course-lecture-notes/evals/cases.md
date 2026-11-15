@@ -1,6 +1,6 @@
 # Judged cases: course-lecture-notes
 
-Judge against the skill's Goals, Math rules and Workflow step 7. The DEVONthink steps need the owner's Mac connected; a case can also be run on a lecture PDF given directly, skipping the DEVONthink steps.
+Judge against the skill's Goals, Math rules and Workflow step 7. The DEVONthink steps need the owner's Mac connected; a case can also be run on a lecture PDF given directly, skipping the DEVONthink steps. Without a real lecture, case 1 is mostly a format test: supply the slides, transcript and chapter excerpt yourself, or judge only the format and Math rules. Drawing figures needs numpy and matplotlib for the `sciencefig` library; where they are missing, judge the visual plan and the `{{FIG:name}}` placeholders instead and mark those items not run.
 
 ## A math-heavy lecture becomes Anki-ready blocks
 **Task:** A 30-slide lecture on a two-population rate model (E-I network) with its transcript and the textbook chapter. Produce the study guide.
@@ -19,12 +19,24 @@ Judge against the skill's Goals, Math rules and Workflow step 7. The DEVONthink 
 - Runs one block first and reads the created cards back before running the rest in the background.
 - Does not use `--force`; after a failure, reruns the same command instead of restarting from the beginning.
 - The reply gives blocks processed, cards created and any failed block.
+**Without a deck or Anki:** give a small saved guide (any Markdown with `### N.M` blocks) and judge the plan plus `--list` and `--preview-only`; the read-back and card counts are then not run.
 **Origin:** owner request 2026-10-31 (76901 Lecture 3: 2.4 tested, then 2.5–9.6 in the background).
 
 ## Trigger: should fire
 **Task:** "Help me learn tutorial 4 of the vision course, I missed it." / "Make study notes for lecture 6."
-**Good looks like:** course-lecture-notes is loaded (and scientific-figures for the figures).
+**Also:** "Send the rest of the blocks of the Lecture 3 guide to Anki." / "Write me a study guide for tutorial 2."
+**Good looks like:** course-lecture-notes is loaded. (Whether scientific-figures loads for the figures is judged in case 1, not here.)
 
 ## Trigger: should not fire
-**Task:** "Pre-read this paper and mark it up." / "Draw a phase portrait for this equation."
+**Task:** "Pre-read this paper and mark it up." / "Draw a phase portrait for this equation." / "Summarise this paper in five lines."
 **Good looks like:** course-lecture-notes is not loaded (paper-premark or scientific-figures is).
+
+## Soft references are rewritten
+**Task:** The finished notes say "the middle panel is the transition" and "the lecture's figure uses an S-shaped curve" in a block.
+**Good looks like:** `lint_notes.py` flags both lines; the fix restates the context in words (what the panel shows) rather than pointing at it; the lint then exits 0.
+**Origin:** eval grading 2026-11-14 (Lecture 3 run).
+
+## An existing guide is found before writing
+**Task:** "Make study notes for lecture 3." A "Lecture 3 - … - Study Guide" record already exists in the Lectures group.
+**Good looks like:** the lookup happens in step 1, before any block is written; he is asked whether to update or extend it.
+**Origin:** O7; grading 2026-11-14.
