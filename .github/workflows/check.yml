@@ -22,6 +22,25 @@ jobs:
           sudo apt-get install -y -q graphviz >/dev/null
           python -m pip install -q matplotlib numpy scipy pillow morphio
           python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval scientific-figures
+      - name: every other unit's scripted evals (exit 2 = not run, reported, not a failure)
+        run: |
+          # The three units above ran in their own steps (they install what they need).
+          loop=plugins/strange-loop/skills/strange-loop/scripts/loop.py
+          failed=""; notrun=""
+          for unit in $(python "$loop" where | sed -n 's/^  \([a-z0-9-]*\):.*/\1/p'); do
+            case "$unit" in strange-loop|project-foundations|scientific-figures) continue ;; esac
+            echo "::group::eval $unit"
+            rc=0
+            python "$loop" eval "$unit" || rc=$?
+            echo "::endgroup::"
+            case "$rc" in
+              0) echo "$unit: pass" ;;
+              2) echo "$unit: not run (exit 2)"; notrun="$notrun $unit" ;;
+              *) echo "::error::$unit: evals failed (exit $rc)"; failed="$failed $unit" ;;
+            esac
+          done
+          [ -n "$notrun" ] && echo "not run:$notrun"
+          if [ -n "$failed" ]; then echo "FAILED:$failed"; exit 1; fi
       - name: genome check (changed plugins must bump their version)
         run: |
           base=origin/main
