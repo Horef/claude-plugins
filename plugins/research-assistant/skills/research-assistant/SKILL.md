@@ -21,6 +21,12 @@ Rules by stage: `references/research-rules.md` (rule ids such as D5 below point 
    - **idea**: a raw idea. Frame it (1); stage 2 runs a novelty check (literature-research, type `novelty`: "not found in S on D with queries Q", the nearest prior work named; B2, B3) and the background search together, before the hypotheses.
    - **review**: questions from a write-up's readers (`review/round-N/`) or a referee. In framing, triage each under "What is already known" in `question.md`: answered by the text (send it back to research-writing), answerable from the literature (stage 2 only), or needs an analysis (a hypothesis in 3 and an analysis in 4 whose title names the question). This is how a reader round becomes costed analyses.
    - **paper**: a paper to reproduce, extend or test in our system. Read it with paper-premark during framing; its central claim, its methods and the numbers to match become the frame.
+5. Skills this loop hands work to; each has a minimal fallback, and the hand-over says which was used:
+   - If literature-research is not installed: do stage 2 by hand to rule B1 (several sources, every query logged, a ledger row per finding with a verbatim quote, a fresh checker).
+   - If research-writing is not installed: write the draft yourself from `verdict.md` and the audit, one claim per verdict row, and have a fresh agent read it cold before it goes to the person.
+   - If local-run-queue is not installed: run the approved analyses one at a time within the project's memory budget, logging each run in RUNS.md.
+   - If paper-premark is not installed: read the paper yourself and write its central claim, methods and the numbers to match into `question.md`.
+   - If project-foundations is not installed: use the project's own docs as they are, and create only the files the project lacks (`docs/research/<topic>/`, a RESULTS or DECISIONS entry).
 
 ## 1. Frame (rules A) → gate 1
 
