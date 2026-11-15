@@ -341,9 +341,10 @@ Source: Sch12 8.2.3; MK17 R7. The "no panel tour" wording is [syn].
 Why: a figure that appears before the reader knows its question has no frame, and a figure far from its text breaks the reading order. The sources say figures support the sequence of statements; the placement rules are [syn].
 Source: MK17 R7 (sequence of statements supported by figures) [syn].
 
-**D7. Do not mislead. Use the simplest plot that carries the message; use the full range or state the truncation; area, not radius, for size; avoid 3-D and pie charts; ask a colleague how they read it.**
+**D7. Do not mislead. Use the simplest plot that carries the message; use the full range or state the truncation; area, not radius, for size; no decorative or fake-perspective 3-D; pie charts only for a simple part-of-whole of 2-3 parts; ask a colleague how they read it.**
 Fit the figure to the medium and audience: a journal reader can study detail, a talk audience cannot (Rou14 R1, R3).
-Source: Rou14 R7.
+Real 3-D only when the shape of z(x,y) is the message, with a contour view when the values matter. Otherwise use bars or stacked bars instead of a pie: position on a common scale is read more accurately than angle or area (Cleveland & McGill 1984).
+Source: Rou14 R7; the 3-D and pie wording is the owner's decision of 2026-11-15 (same as scientific-figures), not Rou14's blanket ban.
 
 **D8. Use colour for a reason, keep colour mappings the same across figures, and avoid default colour maps like jet or rainbow. Choose sequential, diverging or categorical maps to fit the data and avoid colour pairs colour-blind readers cannot separate.**
 Why: consistent encodings are parallel structure for figures. Defaults suit every plot and none well.
@@ -463,7 +464,7 @@ Tags: **[S]** script (regex, parser, file structure); **[A]** fresh reading agen
 - F35 [S+A] Each figure title is a full sentence with a verb, stating a finding (not "f–I curves for inputs A and B"). (MK17 R7)
 - F36 [S+A] Each caption has: what is plotted with units, n, what error bars mean, how to read it, the point of interest. Script checks for "n =", "error bars/bands", units; agent checks the rest. (Rou14 R4)
 - F37 [A] From title and caption alone, the agent states each figure's message; it must equal the message in the figure manifest, and the body text must support the same message. (Rou14 R2; MK17 R7)
-- F38 [S] Plot code check: no jet/rainbow colormap, no default fonts too small to read, no 3-D or pie chart, axes labelled with units, full axis range or stated truncation. (Rou14 R5 to R8)
+- F38 [S] Plot code check: no jet/rainbow colormap, no default fonts too small to read, no decorative 3-D, no pie chart beyond a simple 2-3 part whole (bars or stacked bars otherwise), axes labelled with units, full axis range or stated truncation. (Rou14 R5 to R8)
 - F39 [S+A] The same variable, condition or colour is encoded the same way in every figure where they are compared. [syn]
 
 ---
