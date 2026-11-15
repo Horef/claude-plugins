@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-15 - Reflection pass on everything found 2026-11-14; restructures started
+
+- Six parallel jobs fixed every open observation, the 16 graded findings and the audit's fix items, each unit on its own branch: herdr-delegate 0.13.0 (#71; O10 x4 root cause: Copilot's help line "enter select"), strange-loop 2.1.0-2.2.0 (#72; reading notes ripen like use notes, owner decision; cwd marketplace wins; resolved lessons can reopen; `show`, `judge`; check --base per commit), session-status-line 0.8.0 / model-routing 0.3.0 / paper-premark 1.4.0 / course-lecture-notes 1.7.0 (#73), local-run-queue 0.3.0 / gui-design 0.5.0 (#75), scientific-figures 7.3.0 / project-foundations 5.13.0 (#76), research-assistant 0.4.0 / research-writing 0.7.0 / literature-research 0.3.0 (#77). Owner decisions applied: real 3-D and 2-3 part pies allowed (research-writing D7/F38 = scientific-figures); no osascript fallback in literature-research; paper-premark palette stays in the skill; status-line contrast stays at 3:1.
+- strange-loop 2.0.0 (#70): judged runs only for restructures and description changes; SKILL.md byte budget 25 KB (warning). CI runs every unit's evals (#74): 13 pass, model-router not run (needs the claude CLI).
+- Verified: each branch's `loop.py eval` exit 0 and `check --base origin/main` 0 errors after rebase; CI green on each PR; blind trigger runs for the four changed descriptions (paper-premark, course-lecture-notes: 17/17 vs 14/17 old; scientific-figures, project-foundations: no regressions, 3 old false fires removed).
+- Decisions: D11's unverified router experiments kept as options; D12 skills stay independent. Paper: phase-1 tag pushed; weekly launchd transcript archive (see STATUS).
+- Unverified: live sessions for Copilot path-dialog detection, Kiro effort (O15), DEVONthink MCP hand-over in lit.py (`--hits`), status-line on screen. Restructure R1 (research rules) done on a branch, being rebased; R3-R6 running.
+
 ## 2026-11-14 - CI runs every unit's evals; judged evals scoped; SKILL.md budget in bytes
 
 - Owner-approved changes from the structure review (#4, #5), three commits on a worktree branch. (1) `ci: run every unit's scripted evals`: one new step loops over `loop.py where`, skipping the three units with their own steps. (2) strange-loop 2.0.0 (first numbered 1.3.0): blind judged run required only for restructure-class and description changes (sections 4 step 6 and 5, README). (3) also in 2.0.0 (first numbered 1.4.0): SKILL.md budget 25,000 bytes next to the 500-line one (`SKILL_MAX_BYTES`, a `check` warning, KB in `status`; section 6, AGENTS.md).

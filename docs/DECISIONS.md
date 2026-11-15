@@ -15,6 +15,7 @@ Every choice between alternatives about the genome itself, and every gap we fill
 | D9 | Personal choices live in a profile the skill reads (2026-10-30; status: accepted) |
 | D10 | How lessons travel; who merges (2026-10-30; status: accepted) |
 | D11 | The router cluster's shared contracts (2026-11-14; status: accepted) |
+| D12 | Each skill works on its own (2026-11-15; status: accepted) |
 <!-- docmap:end -->
 
 ## D1. This repository is the genome (2026-10-30; status: accepted, confirmed by owner 2026-10-30)
@@ -101,10 +102,17 @@ Every choice between alternatives about the genome itself, and every gap we fill
   | The router's default helper order and skill name (`skill: 'herdr-delegate'`, `kiro-light,copilot-light,agy-light` and the standard and deep equivalents) | model-router (the defaults) | herdr-delegate (must keep those template names rendered) | `plugins/model-router/hooks/tiers.ts:17-26`; template names are herdr-delegate's (row 2) |
 
   The copies of the tier definitions are not yet checked by a script; until one exists, a change to `TIER_USE` or `LADDER` in `tiers.ts` means editing the copies in the same change and saying so in the CHANGELOG (model-routing's ladder already ends at "Opus xhigh", the mod's at "Fable").
-- **Open, owner decides by (date left blank):** unverified experiments in the cluster, each to be either tried in a real session or removed.
-  - Here-step effort (`tiers.ts:29`, `hereEffort`): never tried in a real chat; cache cost unmeasured (STATUS, since 2026-11-05). Open, owner decides by ____.
-  - Copilot Fusion (`helpers.default.json` `fusion-high` / `fusion-max`, `tiers.ts:42-47`): rests on an unofficial feature flag; quality below Max unmeasured. Open, owner decides by ____.
-  - Auto mode (`tiers.ts:31-34`: `autoRoute`, `autoMinRuns`, `autoOkPercent`), with verdicts, per-kind advice and nested parts (model-router 0.16-0.18): not yet seen in a real session. Open, owner decides by ____.
+- **Kept as options (owner, 2026-11-15):** unverified experiments in the cluster stay available without a deadline: they may not fit the owner's own use but may suit other users. Each stays marked unverified until tried in a real session.
+  - Here-step effort (`tiers.ts:29`, `hereEffort`): never tried in a real chat; cache cost unmeasured (STATUS, since 2026-11-05).
+  - Copilot Fusion (`helpers.default.json` `fusion-high` / `fusion-max`, `tiers.ts:42-47`): rests on an unofficial feature flag; quality below Max unmeasured.
+  - Auto mode (`tiers.ts:31-34`: `autoRoute`, `autoMinRuns`, `autoOkPercent`), with verdicts, per-kind advice and nested parts (model-router 0.16-0.18): not yet seen in a real session.
 - **Alternatives:** merge the four plugins into one - different install surfaces (mod, band, portable skill), and model-routing must work without the mod; leave the contracts implicit - what happened until now, and herdr-delegate O25 sat in the gap between two of them; generate the copies from `tiers.ts` - sensible but a larger change, left until a copy next drifts.
 - **Consequences:** a contract change is visible in the owner's CHANGELOG with its readers named; the unverified features have a decision to make instead of staying indefinitely.
 - **Evidence / source:** structure review of 2026-11-14 (sections 2, 3 and 6 item 3), approved by the owner the same day; each location above was found with grep on the worktree.
+
+## D12. Each skill works on its own (2026-11-15; status: accepted)
+- **Context:** the genome's skills are installed one by one by other people; restructures (audit 2026-11-14) proposed moving shared text into one place or pointing from one skill to another.
+- **Decision:** every skill and mod must work when installed alone. A skill never depends on another skill, a shared file or a mod being installed; a rule two skills need stays in both, in short form. Naming another skill as optional ("if X is installed") is fine; an orchestrator (research-assistant) may expect others but states a minimal fallback for each.
+- **Alternatives:** one shared source per rule (less text, but breaks single installs); bundling skills (defeats separate plugins).
+- **Consequences:** some duplication is intended and is not bloat; audits remove repetition only inside one skill. The learning-loop footer stays self-contained in each skill.
+- **Evidence / source:** owner, 2026-11-15, while approving restructures R2-R8.
