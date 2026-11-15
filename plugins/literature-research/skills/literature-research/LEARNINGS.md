@@ -5,9 +5,9 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
-- O5 2026-11-15 [missing] SKILL.md 2-3 vs references/search-rules.md 'Most important 12': the procedure never asks for the query review (B10, item 8) or the fresh check of exclusions (D5, item 11); both are marked guidance since 0.3.0. Either add a step for each or drop them from the 12 (reading note, restructure R1) (claude-code, restructure R1 2026-11-15)
 
 ## Resolved
+- O5 2026-11-15 [missing] SKILL.md 2-3 vs references/search-rules.md 'Most important 12': the procedure never asks for the query review (B10, item 8) or the fresh check of exclusions (D5, item 11); both are marked guidance since 0.3.0. Either add a step for each or drop them from the 12 (reading note, restructure R1) (claude-code, restructure R1 2026-11-15) → 0.4.1
 - O4 2026-11-14 [missing] No 'self-checked' ledger label: when no separate checker can run, extractor-run checks are recorded as confirmed, against SKILL.md:49 (eval grading 2026-11-14) → 0.3.0
 - O3 2026-11-07 [friction] lit.py keys: Smith et al. 2013 (Nature, 'Dendritic spikes enhance stimulus selectivity...') got the key Dendritic2013 (first title word, no author); keys should come from the first author's surname whenever the record has authors, and check could flag keys that equal a title word. (claude-code, simple_complex_v1 follow-up) → 0.3.0
 - O2 2026-11-07 [friction] 2 Search log: in a 53-query survey 7 arXiv queries hit HTTP 429 and were neither retried long enough nor logged (lit.py logs nothing after a failed search, by design); PRISMA-S wants every search reported. Log failed searches as a row with 0 results and the error, and retry arXiv like keyless S2 (it asks for 3 s between calls). (claude-code, research-assistant survey) → 0.3.0
