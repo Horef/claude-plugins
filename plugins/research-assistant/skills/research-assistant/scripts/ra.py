@@ -282,7 +282,7 @@ def check_hypotheses(d: Path, for_gate2: bool = False) -> list[str]:
     probs = []
     hyp = sections(d / "hypotheses.md", pre(d, "H"))
     if for_gate2 and len(hyp) < 3:
-        probs.append(f"hypotheses.md: {len(hyp)} hypotheses; write at least three competing ones (C1)")
+        probs.append(f"hypotheses.md: {len(hyp)} hypotheses; write at least three competing ones (RR-C1)")
     tagged = bool(tag_of(d))
     for hid, h in hyp.items():
         for k in HYP_FIELDS + (("statement",) if tagged else ()):
@@ -512,7 +512,7 @@ def cmd_retag(a) -> int:
     return 0
 
 
-AUDIT = """Status: current (verified {date}). Audit {n} (research-assistant, rules E8, G2, G6): a fresh checker that did not run
+AUDIT = """Status: current (verified {date}). Audit {n} (research-assistant, rules RR-E8, RR-G2, RR-G6): a fresh checker that did not run
 the analyses, from another model family where possible, given plan.md, log.md, verdict.md and the runs' logs and code,
 not the conversation.
 
@@ -805,7 +805,7 @@ def check(d: Path) -> list[str]:
                 nums = [n for n in nums if "." in n or "%" in n]
             if nums:
                 probs.append(f"verdict.md {aid} '{k}': numbers ({', '.join(nums[:3])}) without a [source] next to "
-                             "them; take each from a run output or a RESULTS section (E2)")
+                             "them; take each from a run output or a RESULTS section (RR-E2)")
     live = [k for k, p in plan.items() if p["fields"].get("status") != "dropped"]
     if live and all(plan[k]["fields"].get("status") in ("done", "failed") and k in ver for k in live):
         au = current_audits(d)
