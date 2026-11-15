@@ -301,15 +301,22 @@ def main() -> int:
         sh(root, "git", "add", "-A")
         sh(root, "git", "commit", "-qm", "base")
         sh(root, "git", "worktree", "add", "-q", str(Path(tmp) / "proj_done"), "-b", "done")
+        (Path(tmp) / "proj_done" / "d.txt").write_text("done", encoding="utf-8")
+        sh(Path(tmp) / "proj_done", "git", "add", "d.txt")
+        sh(Path(tmp) / "proj_done", "git", "commit", "-qm", "merged work")
+        sh(root, "git", "merge", "--no-ff", "-qm", "merge done", "done")
+        sh(root, "git", "worktree", "add", "-q", str(Path(tmp) / "proj_fresh"), "-b", "fresh")  # O21: fresh 0-commit branch
         sh(root, "git", "worktree", "add", "-q", str(Path(tmp) / "proj_open"), "-b", "open")
         (Path(tmp) / "proj_open" / "x.txt").write_text("x", encoding="utf-8")
         sh(Path(tmp) / "proj_open", "git", "add", "x.txt")
         sh(Path(tmp) / "proj_open", "git", "commit", "-qm", "unmerged")
         p = docmap(root, "check")
         hits = [ln for ln in p.stdout.splitlines() if "worktree " in ln]
-        expect(len(hits) == 1 and "branch done" in hits[0] and "git worktree remove" in hits[0],
-               "check warns about the merged worktree only, not the one with unmerged commits", p)
+        expect(len(hits) == 1 and "branch done" in hits[0] and "git worktree remove" in hits[0]
+               and "branch fresh" not in p.stdout,
+               "check warns about the merged worktree only, not unmerged or fresh 0-commit worktrees (O21)", p)
         sh(root, "git", "worktree", "remove", str(Path(tmp) / "proj_done"))
+        sh(root, "git", "worktree", "remove", str(Path(tmp) / "proj_fresh"))
         p = docmap(root, "check")
         expect(not [ln for ln in p.stdout.splitlines() if "worktree " in ln], "the warning goes once the worktree is removed", p)
 
@@ -668,6 +675,47 @@ def main() -> int:
     bad = [n for n in sorted(on_disk) if not (lambda t: t.startswith("Produces ") and len(t) > 40)((SKILL_DIR / "templates" / n).read_text(encoding="utf-8").split("\n", 1)[0])]
     expect(not bad, f"each template opens with its descriptive 'Produces ...' line (without: {bad or 'none'})")
     expect(len(skill.splitlines()) <= 500, f"SKILL.md stays within its ~500-line budget ({len(skill.splitlines())} lines)")
+
+    with tempfile.TemporaryDirectory() as tmp:  # O24: root code files appear in docs/MAP.md; stale STATUS Works claims warn
+        root = Path(tmp) / "rootmap"
+        root.mkdir()
+        (root / "analysis.py").write_text('"""Load a CSV and fit a line."""\n\n\ndef fit():\n    return 1\n', encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo\n\nRoot script demo.\n", encoding="utf-8")
+        (root / "docs").mkdir()
+        (root / "docs/STATUS.md").write_text("# Status\n\n## Works (verified)\n- `analysis.py` (`python analysis.py` passes)\n", encoding="utf-8")
+        for a in (("init", "-q", "-b", "main"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        p_upd = docmap(root, "update")
+        rootmap = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect("`analysis.py`" in rootmap and "Load a CSV" in rootmap,
+               "MAP lists code files at the repo root with their summary (O24)", p_upd)
+        p_ok = docmap(root, "check")
+        expect("STATUS.md" not in p_ok.stdout, "STATUS check does not warn on existing root script analysis.py", p_ok)
+
+        stale = Path(tmp) / "stale_repo"
+        sh(SKILL_DIR, "bash", str(SKILL_DIR / "evals/fixtures/make_stale_status_repo.sh"), str(stale))
+        (stale / "tools").mkdir(exist_ok=True)
+        (stale / "tools/docmap.py").write_text(DOCMAP.read_text(encoding="utf-8"), encoding="utf-8")
+        docmap(stale, "update")
+        p_stale = docmap(stale, "check")
+        expect("pkg/export.py" in p_stale.stdout and "STATUS.md" in p_stale.stdout,
+               "check warns when STATUS Works names a deleted path or module (O24)", p_stale)
+
+    with tempfile.TemporaryDirectory() as tmp:  # MAP.md and usage text reflect docmap.py's actual repo-relative path
+        root = Path(tmp)
+        (root / "AGENTS.md").write_text("# Genome demo\n", encoding="utf-8")
+        (root / "scripts").mkdir()
+        (root / "scripts/docmap.py").write_text(DOCMAP.read_text(encoding="utf-8"), encoding="utf-8")
+        for a in (("init", "-q", "-b", "main"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        p_upd2 = subprocess.run([sys.executable, "scripts/docmap.py", "update"], cwd=root, capture_output=True, text=True)
+        m = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect("python scripts/docmap.py update" in m and "tools/docmap.py" not in m,
+               "MAP names docmap.py's own repo-relative path when run inside the repo", p_upd2)
+        p_usage = subprocess.run([sys.executable, "scripts/docmap.py"], cwd=root, capture_output=True, text=True)
+        usage_out = p_usage.stderr + p_usage.stdout
+        expect("python scripts/docmap.py" in usage_out and "tools/docmap.py" not in usage_out,
+               "usage text names docmap.py's repo-relative path when run inside the repo", p_usage)
 
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
