@@ -84,8 +84,8 @@ def main() -> int:
     ax.plot(xs, 0.98 * xs, color=S.VERMILION)
     anns = P.label_curves(ax, [(1.0, 1.0, "A", S.BLUE), (1.0, 0.98, "B", S.VERMILION)])
     check("P.label_curves avoids figure pixels textcoords",
-          all(a.textcoords != "figure pixels" for a in anns),
-          str([a.textcoords for a in anns]))
+          all(a.anncoords != "figure pixels" for a in anns),
+          str([a.anncoords for a in anns]))
     # Shift axes after label_curves by adding a suptitle and re-drawing
     fig.suptitle("Shifted layout", size=S.SIZE)
     fig.canvas.draw()
