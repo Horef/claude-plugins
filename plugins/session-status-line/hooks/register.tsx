@@ -16,7 +16,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Win } from '../types'
 
-const VERSION = '0.7.1' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.8.0' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -25,6 +25,7 @@ const CONFIG = {
   // Mid-tone hex colors chosen to keep at least 3:1 contrast on white,
   // off-white and dark backgrounds alike (plain ANSI yellow/cyan wash out on
   // light themes). Darker shades favour light themes, lighter ones dark.
+  // 4.5:1 cannot hold on both off-white and dark (the best possible is about 3.8:1).
   colors: {
     ok: '#15803d', // green
     warn: '#a16207', // dark gold
