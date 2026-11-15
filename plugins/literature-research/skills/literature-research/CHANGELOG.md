@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.4.2 (2026-11-15)
+- restructure R7, owner-approved 2026-11-15: the step-tier table is preceded by a one-line, standalone definition of light, standard and deep (no model-router dependence, D12)
+
 ## 0.4.1 (2026-11-15)
 - Rule ids prefixed SR-; D5 (a fresh agent re-checks the excluded papers) is a step in SKILL.md section 3 and binding, B10 stays guidance, and the Most important 12 names its one guidance item; self-checked, verify-by-author-year and the MCP-only DEVONthink wording now agree with the rules file; a scripted check that every cited rule id is live or retired and that the rules and sources files define the same ids (owner decisions 2026-11-15) (O5)
 

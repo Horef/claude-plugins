@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.14.1 (2026-11-15)
+- restructure R7, owner-approved 2026-11-15: tier definitions stand on their own, no pointer to the model-router (D12)
+
 ## 0.14.0 (2026-11-15)
 - restructure R4, owner-approved 2026-11-15: SKILL.md now opens with Steps; provider table and setup, other-Claude-account discovery, configuration and model commands, and the dated Copilot Fusion research moved to references/ (providers.md, accounts.md, models.md, copilot-fusion.md) with read-when cues; Fusion notes re-checked offline against Copilot CLI 1.0.112 (audit C11). No rule removed; SKILL.md 23065 -> 16745 bytes
 

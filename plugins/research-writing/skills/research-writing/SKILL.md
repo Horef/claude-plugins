@@ -97,6 +97,8 @@ The handover says: the message in one sentence; where the PDF is (`DIR/<name>.pd
 
 Steps differ in the judgement they need. Defaults, which the person's profile or request overrides; before a submission, raise every step one tier.
 
+Tiers: **light** is mechanical work with a clear rule (a small, cheap model), **standard** is following detailed instructions (a mid-size model), **deep** is open judgment (the strongest model, more thinking).
+
 | Step | Suggested tier | Why |
 |---|---|---|
 | 2 Message and ledger, 3 skeleton | deep, with the person | the story is decided here |
