@@ -33,8 +33,10 @@ def draw():
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values():
         sp.set_visible(False)
-    ax.text(L, -0.12, "$x_1$", ha="right", va="top", size=S.SIZE)
-    ax.text(0.12, L, "$x_2$", ha="left", va="top", size=S.SIZE)
+    import matplotlib.patheffects as pe
+    halo = [pe.withStroke(linewidth=3.5, foreground="white")]
+    ax.text(L, -0.12, "$x_1$", ha="right", va="top", size=S.SIZE, path_effects=halo)
+    ax.text(0.12, L, "$x_2$", ha="left", va="top", size=S.SIZE, path_effects=halo)
     # direct labels in the margin, next to where each eigenline leaves the box
     tx = 395 / W
     fig.text(tx, 0.86, "growing (dashed) $\\mathbf{u}_2$ = (2+√6, 1)", color=S.shade(Dy.GROW, .15),

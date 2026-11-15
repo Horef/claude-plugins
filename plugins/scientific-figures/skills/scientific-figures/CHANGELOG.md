@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 7.3.0 (2026-11-15)
+- portrait second-channel nullclines and outside labels; streamline/contour lint; paper sizing; panel_label; stimulus_arrow and label_curves fixes; Use when description (O12, O13)
+
 ## 7.2.0 (2026-11-07)
 - Lint flags filled patches drawn over text (matplotlib and Canvas), with known-answer eval cases (O2)
 

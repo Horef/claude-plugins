@@ -720,20 +720,20 @@ class Canvas:
         self.keepouts.append((x0, y0, x1, y1))
 
     # ---------------- lint
-    def lint(self, margin=2):
+    def lint(self, margin=2, min_size=S.SIZE_MIN):
         """Return a list of layout problems. Empty list == clean.
 
         Checks: text outside the figure; text overlapping text; text crossed
         by any linted line/curve/shape outline; text covered by a filled shape
         drawn later (on top of it); text in a keep-out; font
-        smaller than SIZE_MIN; forbidden '&'."""
+        smaller than min_size (default SIZE_MIN); forbidden '&'."""
         probs = []
         T = [(b, s, f) for b, s, f in self.texts if f["lint"]]
         for b, s, f in T:
             if b[0] < margin or b[1] < margin or b[2] > self.w - margin or b[3] > self.h - margin:
                 probs.append(f"OUTSIDE figure: '{s}' bbox={tuple(round(v) for v in b)}")
-            if f["size"] < S.SIZE_MIN - 1e-6:
-                probs.append(f"TOO SMALL ({f['size']}px < {S.SIZE_MIN}): '{s}'")
+            if f["size"] < min_size - 1e-6:
+                probs.append(f"TOO SMALL ({f['size']}px < {min_size}): '{s}'")
             if "&" in s:
                 probs.append(f"'&' in label '{s}' (breaks XML) - write 'and'")
             for k in self.keepouts:

@@ -26,13 +26,13 @@ def _axes(ax, first):
 
 def draw_phase():
     """Three regimes side by side (small multiples): one parameter changes."""
-    fig, axes = P.figure(640, 270, ncols=3, name="l3b-phase")
+    fig, axes = P.figure(640, 290, ncols=3, name="l3b-phase")
     for k, (ax, J) in enumerate(zip(axes, (1, 4.35, 10))):
-        fps = Dy.portrait(ax, field(J), BOX, BOX, density=0.55, n=30)
+        fps = Dy.portrait(ax, field(J), BOX, BOX,
+                          labels=("$r_1$-nullcline", "$r_2$-nullcline") if k == 0 else None,
+                          density=0.55, n=30)
         ax.set_title(f"J = {J:g}: {len(fps)} fixed point" + ("s" if len(fps) > 1 else ""), size=S.SIZE_SMALL, loc="left")
         _axes(ax, k == 0)
-    P.end_label(axes[0], 0.97, g(-0.97 + 1), "$r_2$-nullcline", color=S.UNIT2, dx=-2, dy=-10, ha="right")
-    P.end_label(axes[0], g(-0.97 + 1), 0.97, "$r_1$-nullcline", color=S.UNIT1, dx=5, dy=-3)
     return P.finish(fig)
 
 

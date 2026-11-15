@@ -24,6 +24,7 @@ import matplotlib.legend
 import matplotlib.axis
 import matplotlib.axes
 import matplotlib.figure
+import matplotlib.contour
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 logging.getLogger("matplotlib.mathtext").setLevel(logging.ERROR)
@@ -60,6 +61,7 @@ RC = {
     "ytick.color": S.AXIS,
     "xtick.labelcolor": S.INK2,
     "ytick.labelcolor": S.INK2,
+    "text.hinting": "default",
     "xtick.direction": "out",
     "ytick.direction": "out",
     "xtick.major.size": 4,
@@ -92,15 +94,49 @@ def use_style():
 use_style()
 
 
+def _font_size(ax, size, panel=False):
+    if size is not None:
+        return size
+    paper = getattr(ax.figure, "_sf_paper", False)
+    if panel:
+        return S.PAPER_SIZE_PANEL if paper else S.SIZE_PANEL
+    return S.PAPER_SIZE_SMALL if paper else S.SIZE_SMALL
+
+
 def figure(w=S.WIDTH_FULL, h=300, nrows=1, ncols=1, name="fig", layout="constrained",
-           **kw):
-    """New figure of w x h design px. Returns (fig, ax) or (fig, axes)."""
+           paper=False, **kw):
+    """New figure of w x h design px (set paper=True for journal sizes: 9 pt labels,
+    7.5 pt ticks, 7 pt lint floor). Returns (fig, ax) or (fig, axes)."""
     use_style()
+    if paper:
+        matplotlib.rcParams.update({
+            "font.size": S.PAPER_SIZE,
+            "axes.labelsize": S.PAPER_SIZE,
+            "axes.titlesize": S.PAPER_SIZE,
+            "xtick.labelsize": S.PAPER_SIZE_SMALL,
+            "ytick.labelsize": S.PAPER_SIZE_SMALL,
+            "legend.fontsize": S.PAPER_SIZE_SMALL,
+            "text.hinting": "none",  # macOS Helvetica.ttc bitmap strikes fail FreeType at <=7.5pt/72dpi
+        })
     fig, ax = plt.subplots(nrows, ncols, figsize=(w / 72, h / 72), layout=layout, **kw)
     if layout == "constrained":
         fig.get_layout_engine().set(w_pad=6 / 72, h_pad=6 / 72, wspace=0.06, hspace=0.08)
     fig._sf_name = re.sub(r"[^A-Za-z0-9_-]", "-", name)
+    fig._sf_paper = bool(paper)
+    fig._sf_min_size = S.PAPER_SIZE_MIN if paper else S.SIZE_MIN
     return fig, ax
+
+
+def panel_label(ax, letter, dx=-8, dy=6, size=None):
+    """Quiet lowercase panel letter above-left of `ax` (Wilke ch. 21)."""
+    return ax.annotate(letter, (0, 1), xycoords="axes fraction", xytext=(dx, dy),
+                       textcoords="offset points", size=_font_size(ax, size, panel=True),
+                       weight="bold", color=S.INK, ha="right", va="bottom", annotation_clip=False)
+
+
+def panel_labels(axes, letters="abcdefghijklmnopqrstuvwxyz", **kw):
+    """Add lowercase panel letters across an array or sequence of Axes."""
+    return [panel_label(ax, letter, **kw) for ax, letter in zip(np.ravel(axes), letters)]
 
 
 # ------------------------------------------------------------------ axes styling
@@ -180,30 +216,42 @@ def end_label(ax, x, y, text, color=S.INK, dx=6, dy=0, ha="left", va="center",
                        color=c, size=size, ha=ha, va=va, annotation_clip=False)
 
 
-def label_curves(ax, items, x_text=None, min_gap=None, size=S.SIZE_SMALL):
+def label_curves(ax, items, x_text=None, min_gap=None, size=None):
     """Direct-label several curves at their right ends, spreading labels
     vertically so they never collide (with thin leader lines when moved).
     items: list of (x_end, y_end, text, color)."""
+    sz = _font_size(ax, size)
     fig = ax.figure
     fig.canvas.draw()
     tr = ax.transData
+    inv = ax.transAxes.inverted()
+    ab = ax.bbox
     pts = [(tr.transform((x, y))[1], i) for i, (x, y, t, c) in enumerate(items)]
     pts.sort()
-    gap = min_gap or size * 1.25
+    gap = min_gap or sz * 1.25
     placed = []
     for ypix, i in pts:
         yp = ypix if not placed or ypix - placed[-1][0] >= gap else placed[-1][0] + gap
         placed.append((yp, i))
     # shift down if we ran off the top
+    if placed and placed[-1][0] > ab.y1:
+        yp_hi = ab.y1
+        shifted = []
+        for yp, i in reversed(placed):
+            yp = min(yp, yp_hi)
+            shifted.append((yp, i))
+            yp_hi = yp - gap
+        placed = list(reversed(shifted))
     out = []
     for yp, i in placed:
         x, y, t, c = items[i]
         xpix, ypix = tr.transform((x, y))
         xt = xpix + 8 if x_text is None else tr.transform((x_text, 0))[0]
+        ax_x, ax_y = inv.transform((xt, yp))
         moved = abs(yp - ypix) > 2
         col = S.shade(c, 0.15) if c not in (S.INK, S.INK2) else c
         out.append(ax.annotate(
-            t, (x, y), xytext=(xt, yp), textcoords="figure pixels", color=col, size=size,
+            t, (x, y), xytext=(ax_x, ax_y), textcoords="axes fraction", color=col, size=sz,
             va="center", ha="left", annotation_clip=False,
             arrowprops=dict(arrowstyle="-", color=S.MUTED, lw=0.8, shrinkA=2, shrinkB=2) if moved else None))
     return out
@@ -419,16 +467,49 @@ def _covering_polys(fig):
     return out
 
 
-def lint(fig, margin=1):
+def _lint_curves(fig):
+    """Yield (artist, label, [display-space polylines]) for visible linted Line2D,
+    LineCollection (e.g. streamplot) and ContourSet (e.g. nullcline) artists."""
+    for l in fig.findobj(matplotlib.lines.Line2D):
+        if (l.axes is not None and l.get_visible() and l.get_linestyle() not in ("None", "")
+                and len(l.get_xydata()) > 1 and not getattr(l, "_sf_nolint", False)):
+            try:
+                pts = l.get_transform().transform(l.get_xydata())
+            except Exception:
+                continue
+            yield l, f"line '{l.get_label()}'", [pts]
+    for c in fig.findobj(matplotlib.collections.LineCollection):
+        if c.axes is not None and c.get_visible() and not getattr(c, "_sf_nolint", False):
+            try:
+                tr = c.get_transform()
+                polylines = [tr.transform(seg) for seg in c.get_segments() if len(seg) > 1]
+            except Exception:
+                continue
+            if polylines:
+                yield c, f"streamlines '{c.get_label()}'", polylines
+    for c in fig.findobj(matplotlib.contour.ContourSet):
+        if c.axes is not None and c.get_visible() and not getattr(c, "_sf_nolint", False):
+            try:
+                tr = c.get_transform()
+                polylines = [poly for pth in c.get_paths()
+                             for poly in pth.to_polygons(tr, closed_only=False) if len(poly) > 1]
+            except Exception:
+                continue
+            if polylines:
+                yield c, f"contour '{c.get_label()}'", polylines
+
+
+def lint(fig, margin=1, min_size=None):
     """Layout problems in a matplotlib figure: texts overlapping texts,
-    texts outside the figure, texts crossed by data lines, tiny fonts,
-    texts hidden by a filled patch drawn on top of them.
+    texts outside the figure, texts crossed by data lines/streamlines/contours,
+    tiny fonts, texts hidden by a filled patch drawn on top of them.
     Empty list == clean. Call before export(), or use finish(fig)."""
     if not hasattr(fig.canvas, "get_renderer"):
         raise RuntimeError("figure already exported/closed: call P.lint before P.export, or use P.finish(fig)")
     fig.canvas.draw()
     r = fig.canvas.get_renderer()
     W, H = fig.bbox.width, fig.bbox.height
+    floor = min_size if min_size is not None else getattr(fig, "_sf_min_size", S.SIZE_MIN)
     texts = []
     hidden = set()
     for a in fig.axes:
@@ -455,7 +536,7 @@ def lint(fig, margin=1):
         s = t.get_text()
         if b[0] < -margin or b[1] < -margin or b[2] > W + margin or b[3] > H + margin:
             probs.append(f"OUTSIDE figure: '{s}'")
-        if t.get_fontsize() < S.SIZE_MIN - 1e-6:
+        if t.get_fontsize() < floor - 1e-6:
             probs.append(f"TOO SMALL ({t.get_fontsize()}): '{s}'")
         if "&" in s:
             probs.append(f"'&' in '{s}'")
@@ -463,37 +544,31 @@ def lint(fig, margin=1):
         for j in range(i + 1, len(texts)):
             if _rects_overlap(texts[i][1], texts[j][1]):
                 probs.append(f"TEXT OVERLAP: '{texts[i][0].get_text()}' x '{texts[j][0].get_text()}'")
-    lines = [l for l in fig.findobj(matplotlib.lines.Line2D)
-             if l.get_visible() and l.get_linestyle() not in ("None", "") and len(l.get_xydata()) > 1
-             and not getattr(l, "_sf_nolint", False)]
+    curves = list(_lint_curves(fig))
     for t, b in texts:
         if t.get_path_effects():
             continue  # haloed text is allowed to sit on lines
         rr = (b[0] - 1, b[1] - 1, b[2] + 1, b[3] + 1)
-        for l in lines:
-            if l.axes is None:
-                continue
-            try:
-                pts = l.get_transform().transform(l.get_xydata())
-            except Exception:
-                continue
-            # clip to axes box
-            ab = l.axes.bbox
+        for artist, label, polylines in curves:
+            ab = artist.axes.bbox
             r2 = rr
-            if l.get_clip_on():
+            if artist.get_clip_on():
                 # a clipped line can only touch the part of the label inside the axes
                 r2 = (max(rr[0], ab.x0), max(rr[1], ab.y0), min(rr[2], ab.x1), min(rr[3], ab.y1))
                 if r2[0] >= r2[2] or r2[1] >= r2[3]:
                     continue
             hit = False
-            for p, q in zip(pts, pts[1:]):
-                if not (np.isfinite(p).all() and np.isfinite(q).all()):
-                    continue
-                if _seg_intersects_rect(p, q, r2):
-                    hit = True
+            for pts in polylines:
+                for p, q in zip(pts, pts[1:]):
+                    if not (np.isfinite(p).all() and np.isfinite(q).all()):
+                        continue
+                    if _seg_intersects_rect(p, q, r2):
+                        hit = True
+                        break
+                if hit:
                     break
             if hit:
-                probs.append(f"LINE CROSSES TEXT: '{t.get_text()}' x line '{l.get_label()}'")
+                probs.append(f"LINE CROSSES TEXT: '{t.get_text()}' x {label}")
     # scatter markers (PathCollection, e.g. a dotted bifurcation branch) under text
     cols = [c for c in fig.findobj(matplotlib.collections.PathCollection)
             if c.get_visible() and not getattr(c, "_sf_nolint", False) and c.axes is not None]
