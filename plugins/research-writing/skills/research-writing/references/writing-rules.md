@@ -1,9 +1,6 @@
 # Writing rules, by stage
 
-Distilled for this skill from the sources in `sources.md` by a helper agent (Sonnet 5.5) on 2026-11-04 and reviewed by the skill author. Paraphrase throughout; examples are constructed. Section F lists what `wr.py check` and fresh readers verify.
-
-
-Distilled from the writing books and short guides in `text/` for the "research-writing" skill. All wording is paraphrase unless in quotation marks.
+Distilled for this skill from the writing books and short guides listed in `sources.md` by a helper agent (Sonnet 5.5) on 2026-11-04 and reviewed by the skill author. All wording is paraphrase unless in quotation marks. Section F lists what `wr.py check` and fresh readers verify.
 Examples are constructed in a generic computational-neuroscience setting (two inhibitory inputs, A and B, on a model cell), not taken from the sources. Numbers in them are illustrative.
 
 ## Source keys
