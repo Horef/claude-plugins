@@ -76,7 +76,7 @@ def phantom_pages(pages: dict[int, str]) -> set[int]:
     bad = set()
     for p, text in pages.items():
         lines = [ln.strip() for ln in text.split("\n") if len(ln.strip()) > 12]
-        if len(lines) >= 6:
+        if len(lines) >= 4:  # a short supplement page doubled has only a handful of long lines
             c = Counter(lines)
             if sum(1 for ln in lines if c[ln] > 1) / len(lines) > 0.6:
                 bad.add(p)

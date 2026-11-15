@@ -79,6 +79,24 @@ def main() -> int:
         p = subprocess.run([sys.executable, str(SCRIPT), str(tmp / "bad.json"), str(tmp / "good.json")], capture_output=True, text=True)
         expect(p.returncode == 2, "unreadable input exits 2", p)
 
+        # Fixture (evals/fixtures/awkward.pdf and its extract): dropped symbols, one owner mark, a short doubled supplement page.
+        fx = Path(__file__).resolve().parent / "fixtures" / "awkward-extract.json"
+        fx_ok = [
+            {"page": 0, "string": "Neurons were recorded in visual cortex of mice.", "colour": "green"},
+            {"page": 1, "string": "The width was 0.42 0.03 mm and the rate 12 2 Hz.", "colour": "ref"},  # dropped symbols kept as in the layer
+        ]
+        fx_bad = {"page": 2, "string": "The fitted weights are given for each connection.", "colour": "yellow"}
+
+        def run_fx(marks: list[dict], name: str) -> subprocess.CompletedProcess:
+            mf = tmp / f"{name}.json"
+            mf.write_text(json.dumps(marks), encoding="utf-8")
+            return subprocess.run([sys.executable, str(SCRIPT), str(fx), str(mf)], capture_output=True, text=True)
+
+        p = run_fx(fx_ok, "fx_ok")
+        expect(p.returncode == 0 and "2/2 marks would match" in p.stdout, "fixture: marks on the clean pages pass", p)
+        p = run_fx(fx_ok + [fx_bad], "fx_bad")
+        expect(p.returncode == 1 and "phantom text layer" in p.stdout, "fixture: a short doubled page (5 long lines, 4 doubled) is called phantom", p)
+
     print(f"\n{len(failures)} failure(s)" if failures else "\nall ok")
     return 1 if failures else 0
 

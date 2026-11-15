@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.4.0 (2026-11-15)
+- Description gets a Use-when clause and exclusions (audit E17); step 4: page-spanning strings are a documented default-split with one tried exception, anchor slicing tip; step 2: PyMuPDF fallback; validate_marks.py calls a short doubled page phantom (4+ long lines, was 6) with a fixture (evals/fixtures/awkward.pdf) and checks (O2, O7, O8)
+
 ## 1.3.0 (2026-11-14)
 - Step 6: mark_record_text calls for one PDF go one at a time (parallel calls collide on DEVONthink's save: 'saving failed'); validate_marks.py ends a passing run with the apply plan saying so (O6)
 
