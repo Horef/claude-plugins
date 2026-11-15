@@ -1,0 +1,53 @@
+{
+  "sets": [
+    {
+      "name": "alt_s6p25_n2",
+      "kind": "bar",
+      "n_bars": 2,
+      "alternating": true,
+      "spacing_deg": 6.25,
+      "trials": [
+        {"id": "bar/p0/r0", "position_deg": -6.25, "polarity": "ON", "repeat": 0},
+        {"id": "bar/p0/r1", "position_deg": -6.25, "polarity": "ON", "repeat": 1},
+        {"id": "bar/p0/r2", "position_deg": -6.25, "polarity": "ON", "repeat": 2},
+        {"id": "bar/p1/r0", "position_deg": -6.25, "polarity": "OFF", "repeat": 0},
+        {"id": "bar/p1/r1", "position_deg": -6.25, "polarity": "OFF", "repeat": 1},
+        {"id": "bar/p1/r2", "position_deg": -6.25, "polarity": "OFF", "repeat": 2},
+        {"id": "bar/p2/r0", "position_deg": 0.0, "polarity": "ON", "repeat": 0},
+        {"id": "bar/p2/r1", "position_deg": 0.0, "polarity": "ON", "repeat": 1},
+        {"id": "bar/p2/r2", "position_deg": 0.0, "polarity": "ON", "repeat": 2},
+        {"id": "bar/p3/r0", "position_deg": 0.0, "polarity": "OFF", "repeat": 0},
+        {"id": "bar/p3/r1", "position_deg": 0.0, "polarity": "OFF", "repeat": 1},
+        {"id": "bar/p3/r2", "position_deg": 0.0, "polarity": "OFF", "repeat": 2},
+        {"id": "bar/p4/r0", "position_deg": 6.25, "polarity": "ON", "repeat": 0},
+        {"id": "bar/p4/r1", "position_deg": 6.25, "polarity": "ON", "repeat": 1},
+        {"id": "bar/p4/r2", "position_deg": 6.25, "polarity": "ON", "repeat": 2},
+        {"id": "bar/p5/r0", "position_deg": 6.25, "polarity": "OFF", "repeat": 0},
+        {"id": "bar/p5/r1", "position_deg": 6.25, "polarity": "OFF", "repeat": 1},
+        {"id": "bar/p5/r2", "position_deg": 6.25, "polarity": "OFF", "repeat": 2},
+        {"id": "bar/p6/r0", "position_deg": 12.5, "polarity": "ON", "repeat": 0},
+        {"id": "bar/p6/r1", "position_deg": 12.5, "polarity": "ON", "repeat": 1},
+        {"id": "bar/p6/r2", "position_deg": 12.5, "polarity": "ON", "repeat": 2},
+        {"id": "bar/p7/r0", "position_deg": 12.5, "polarity": "OFF", "repeat": 0},
+        {"id": "bar/p7/r1", "position_deg": 12.5, "polarity": "OFF", "repeat": 1},
+        {"id": "bar/p7/r2", "position_deg": 12.5, "polarity": "OFF", "repeat": 2}
+      ]
+    },
+    {
+      "name": "drifting_grating_c100",
+      "kind": "grating",
+      "contrast": 1.0,
+      "spatial_freq_cpd": 0.08,
+      "trials": [
+        {"id": "grating/d0/r0", "direction_deg": 0, "phase_deg": 0, "repeat": 0},
+        {"id": "grating/d0/r1", "direction_deg": 0, "phase_deg": 0, "repeat": 1},
+        {"id": "grating/d1/r0", "direction_deg": 0, "phase_deg": 180, "repeat": 0},
+        {"id": "grating/d1/r1", "direction_deg": 0, "phase_deg": 180, "repeat": 1},
+        {"id": "grating/d2/r0", "direction_deg": 90, "phase_deg": 0, "repeat": 0},
+        {"id": "grating/d2/r1", "direction_deg": 90, "phase_deg": 0, "repeat": 1},
+        {"id": "grating/d3/r0", "direction_deg": 90, "phase_deg": 180, "repeat": 0},
+        {"id": "grating/d3/r1", "direction_deg": 90, "phase_deg": 180, "repeat": 1}
+      ]
+    }
+  ]
+}

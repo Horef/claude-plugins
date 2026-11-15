@@ -9,7 +9,7 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - The verification result appears once, quietly (an icon or a word plus detail on click); no fact is shown twice.
 - Paths, payload sizes and storage go to layer 3 or a Details expander; re-making a bundle is no longer on layer 1.
 - Every feature of the original is still reachable (capability list checked).
-- `lint_ui.py` is run on the result with no text-overflow problems, and fewer controls, boxes and notices than before are reported with numbers; before and after shots are shown.
+- `lint_ui.py` is run on the result with no text-overflow problems, and fewer controls, boxes and notices than before are reported with numbers counted the same way (same page scope, chips counted or not in both); before and after shots are shown.
 **Origin:** owner's screenshots of the simple_complex_v1 replay viewer, 2026-11-01.
 
 ## Settings panel with many options
@@ -18,7 +18,7 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - Grouped by task, the most used first; layer 1 holds at most about 7 controls; the rest sits in named, collapsed groups whose handles say what is inside.
 - Every row has a one-line help that says what it changes (not its name restated); destructive resets are quiet and confirm with the count.
 - No "minimal mode" switch replaces the layer plan, unless the profile asks for one.
-- The handover says the terminal layout was not seen, and lists the row count against the pane height.
+- The handover says the terminal layout was not seen, states the assumed pane height, and lists the row count against it.
 **Origin:** model-router 0.8.3, 0.8.4, 0.9.2 and 0.11.0 reworks (Settings went from bare toggles, to help under every row, to a second hidden mode).
 
 ## Too-thin trap
@@ -39,7 +39,7 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 **Origin:** the skill's purpose (explainers presented to other people).
 
 ## No profile
-**Task:** a request for a small dashboard with no `~/.config/gui-design/profile.md` and no standing instructions.
+**Task:** "Build a small dashboard showing daily test pass rates and runtimes" with no `~/.config/gui-design/profile.md` and no standing instructions.
 **Good looks like:**
 - Assumes one expert user, balanced density, light and dark; asks at most one question, and only if the audience or surface changes the build.
 - States the assumptions in the handover and offers to write a profile.
@@ -53,15 +53,15 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 **Origin:** model-router 0.11.0 worklog ("not verified: how it looks in the real terminal").
 
 ## Pickers that say what they pick
-**Task:** "Add a trial picker to this replay page." Inputs: a stimulus set of bar trials that differ in position (−6.25, 0, 6.25, 12.5°) and polarity (ON/OFF), 3 repeats each, with ids `bar/p0/r0` ...; the set is named `alt_s6p25_n2`.
+**Task:** "Add a trial picker to this replay page." Inputs: `evals/fixtures/bar_set.json`, containing stimulus set `alt_s6p25_n2` (two-bar trials differing in position (−6.25, 0, 6.25, 12.5°), polarity (ON/OFF), and 3 repeats, ids `bar/p0/r0` ...) and a second `drifting_grating_c100` set differing in direction and phase.
 **Good looks like:**
 - Each option names the values that differ within the set (position, polarity, repeat), not only kind and orientation; no two options read the same.
-- One quiet line next to the set picker decodes the set (2 bars, alternating polarity, 6.25° apart, positions x polarities x repeats).
-- The labels are generated from the data, so a grating set gets phase or direction instead, with no per-set code.
+- One quiet line next to the set picker decodes the set from its trials and metadata (2 bars, alternating polarity, 6.25° apart, positions x polarities x repeats).
+- The labels are generated from the data (tested on the second `grating` set too), so unseen fields format cleanly with no per-set code.
 **Origin:** owner's screenshots of the simple_complex_v1 replay Trial picker ("bar ori 0°, r0" repeated) and Stimuli table without bar parameters, 2026-11-02.
 
 ## What will vary next
-**Task:** "Add a short description of the selected run under the run picker." Inputs: a run config with three conditions that differ only in one nested model setting (`inhibition.activation`: none / PV at 4 Hz / PV at 12 Hz), and stimulus sets whose trials differ in direction.
+**Task:** "Add a short description of the selected run under the run picker." Inputs: a run config with three conditions that differ only in one nested model setting (`inhibition` block omitted on baseline, vs `inhibition.activation`: PV at 4 Hz / PV at 12 Hz), and stimulus sets whose trials differ in direction.
 **Good looks like:**
 - Before building, the plan names what may vary in future runs (other model settings, new stimulus fields) and chooses a data-driven description.
 - Each condition's line shows the setting that sets it apart, found by diffing its config against the other conditions; no field name is hard-coded.
@@ -73,7 +73,7 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 **Task:** "Show the 2000 inhibitory contacts (two classes) on this 3D neuron view; the branches are coloured by voltage on a blue-to-red scale."
 **Good looks like:**
 - The two class colours differ from the branch palette and from each other in lightness, checked in a shot at full density.
-- The dense view gets zoom about the pointer, pan, double-click reset and menu buttons; marks scale with zoom; compared panes share the view.
+- The dense view gets zoom about the pointer, pan, double-click reset and menu buttons; marks scale with zoom; if compared panes are shown, they share the view.
 - Contacts start hidden or faint when they would bury the cell, with a labelled toggle.
 **Origin:** O12, O13, simple_complex_v1 replay viewer, 2026-11-04.
 
@@ -93,9 +93,9 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 **Origin:** O9, simple_complex_v1 replay viewer and dLGN player, 2026-11-03.
 
 ## Trigger: should fire
-**Task:** "Build a settings panel for this mod"; "this Streamlit viewer is too cluttered, clean it up"; "make an interactive demo of momentum in gradient descent for my students".
+**Task:** "Build a settings panel for this mod"; "this Streamlit viewer is too cluttered, clean it up"; "make an interactive demo of momentum in gradient descent for my students". (Requires a live session to test triggering; batch grading from descriptions alone is insufficient.)
 **Good looks like:** gui-design is loaded.
 
 ## Trigger: should not fire
-**Task:** "Plot these tuning curves for my notes" (scientific-figures); "pick colours for this chart series" (dataviz); "write the README for this tool".
+**Task:** "Plot these tuning curves for my notes" (scientific-figures); "pick colours for this chart series" (dataviz); "write the README for this tool". (Requires a live session to test triggering; batch grading from descriptions alone is insufficient.)
 **Good looks like:** gui-design is not loaded.
