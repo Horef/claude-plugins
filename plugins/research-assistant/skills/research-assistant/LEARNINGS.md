@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O12 2026-11-15 [friction] references/research-rules.md ids: rule ids share letters and numbers with the question's own ids and the gates (rule A1 vs analysis A1, rule H1 vs hypothesis H1, rule G2 vs gate G2); SKILL.md has '(D10, H2)' next to '--approve A1,A3'. Tags fix it only for tagged questions. Would help: a prefix for rule ids (R-D5) or a scripted check that every rule id cited in SKILL.md, ra.py and templates resolves to a live or retired rule (reading note, restructure R1) (claude-code, restructure R1 2026-11-15)
 
 ## Resolved
 
