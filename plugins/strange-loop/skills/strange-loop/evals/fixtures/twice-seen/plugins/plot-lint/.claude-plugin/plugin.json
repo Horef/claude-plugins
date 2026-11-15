@@ -1,0 +1,6 @@
+{
+  "name": "plot-lint",
+  "version": "1.0.0",
+  "description": "Lint figure layouts before rendering. Use when checking a figure for overlaps.",
+  "license": "MIT"
+}

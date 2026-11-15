@@ -1,0 +1,6 @@
+{
+  "name": "project-foundations",
+  "version": "5.0.0",
+  "description": "Set up a repo so agents can maintain it. Use when creating or auditing AGENTS.md and docs.",
+  "license": "MIT"
+}
