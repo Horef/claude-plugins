@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O5 2026-11-15 [missing] SKILL.md 2-3 vs references/search-rules.md 'Most important 12': the procedure never asks for the query review (B10, item 8) or the fresh check of exclusions (D5, item 11); both are marked guidance since 0.3.0. Either add a step for each or drop them from the 12 (reading note, restructure R1) (claude-code, restructure R1 2026-11-15)
 
 ## Resolved
 - O4 2026-11-14 [missing] No 'self-checked' ledger label: when no separate checker can run, extractor-run checks are recorded as confirmed, against SKILL.md:49 (eval grading 2026-11-14) → 0.3.0

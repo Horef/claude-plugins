@@ -7,9 +7,9 @@ description: "Literature research and claim verification for any research questi
 
 Use this skill to answer a research question from the literature and to check claims against their sources: a parameter value with its conditions, the state of a mechanism, whether an idea is new, whether a citation says what it is cited for, how others did a method. The output is an evidence ledger and a short synthesis that a person can check line by line. It is not for writing the paper that uses the answer (research-writing does that) and not for running analyses.
 
-**The problem it solves.** An agent asked a literature question answers from memory, cites a review for a number measured in another species, and states "not found" as "does not exist". About one citation in four in the published literature has some error and one in eight a serious one (JB15 in `references/search-rules.md`), and claims grow by being cited without data (Gre09). The procedure therefore writes every finding into a ledger with its conditions and a verbatim quote before any prose, and has fresh checkers, who did not extract it, re-read each cited passage.
+**The problem it solves.** An agent asked a literature question answers from memory, cites a review for a number measured in another species, and states "not found" as "does not exist". About one citation in four in the published literature has some error and one in eight a serious one (JB15 in `references/search-rules-sources.md`), and claims grow by being cited without data (Gre09). The procedure therefore writes every finding into a ledger with its conditions and a verbatim quote before any prose, and has fresh checkers, who did not extract it, re-read each cited passage.
 
-Rules with sources, by stage: `references/search-rules.md` (its "Most important 12" is the short version; rule ids such as F3 below point into it). Tools: `scripts/lit.py`. Templates: `templates/literature/`.
+Rules by stage: `references/search-rules.md` (its "Most important 12" is the short version; rule ids such as F3 below point into it; each rule is marked binding, which this procedure relies on, or guidance). The reason and the sources behind each rule, by the same ids: `references/search-rules-sources.md`. Tools: `scripts/lit.py`. Templates: `templates/literature/`.
 
 ## 0. Setup
 
@@ -50,7 +50,7 @@ Each ledger row is checked by an agent that did not extract it and sees only the
 
 ## 6. Synthesise (G, H)
 
-`synthesis.md`: the answer first, in a sentence the decision can use, each sentence tagged with ledger ids (`[L3, L7]`); then a table of the values with their conditions; conflicts and what explains them (conditions usually do, Tri14); gaps, each with what would close it (a measurement, a paper to fetch, an analysis) and its cost. Call the work what it is (a rapid review on the sources and dates in the log) and claim only what the search supports: "not found in PubMed and Semantic Scholar on 2026-11-06", never "does not exist".
+`synthesis.md`: the answer first, in a sentence the decision can use, each sentence tagged with ledger ids (`[L3, L7]`); then a table of the values with their conditions; conflicts and what explains them (conditions usually do, Tri15); gaps, each with what would close it (a measurement, a paper to fetch, an analysis) and its cost. Call the work what it is (a rapid review on the sources and dates in the log) and claim only what the search supports: "not found in PubMed and Semantic Scholar on 2026-11-06", never "does not exist".
 
 `lit.py check DIR` until clean (ledger fields, vocabularies, sources in candidates, every `[L..]` resolves, no unverified row cited). `lit.py bib DIR` writes `sources.bib`.
 
