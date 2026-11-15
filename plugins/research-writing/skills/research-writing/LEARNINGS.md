@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O19 2026-11-15 [wish] 1 Mode / layout: Sergiy (15 Nov) asked whether write-ups should be a folder of section files instead of one main.tex. Experience on cell1542_mel1998 (900 lines, 35 pp): single file is not the bottleneck for targeted edits (grep + exact replace); the real gains of sections/*.tex with main.tex as the \input skeleton are parallel helpers per section, a ledger column claim->section file so Add mode knows which files to touch, and wr.py checks (each section input once, each claim in exactly one section, figure in the section of its first citation, warn when a section's numbers change but the In short/closing still quote the old ones; that last check would have caught 'every draw' in four places). Proposed pilot: split cell1542_mel1998 after the 13-placement update. (claude-code, simple_complex_v1 write-up update)
 
 ## Resolved
 - O1 2026-11-04 [win] 6 Readers: in the pilot (a 14-page modelling write-up) four fresh readers with only the PDF (3x Sonnet 5.5, 1x Gemini 4 Argon) all named the same weakest link (the title claimed more generality than the evidence supported); the revision changed the message and title, which no amount of polishing by the writer had done. (claude-code, simple_complex_v1) → 0.1.0
