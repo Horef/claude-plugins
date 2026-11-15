@@ -22,13 +22,13 @@ Ranked for an agent doing a one-day review of a parameter or a mechanism claim. 
 5. Have a fresh checker verify each row, seeing only the claim, the source and the locator (F10).
 6. Log every query as run, with source, date and hit counts, while searching (B8).
 7. Write the question type, the decision, the criteria and the stop rule first (A1, A2, A4, A7).
-8. Search more than one source, with synonyms and controlled vocabulary, and have the query reviewed (B1, B3, B10).
+8. Search more than one source, with synonyms and controlled vocabulary (B1, B3); where a missed paper would cost most, have the query reviewed by an agent that did not write it (B10, guidance).
 9. Chase references backward always, forward on the key papers, and look for the contradicting papers on purpose (C2, C3, C8).
 10. Count studies, not papers, and independent data sets, not citations (D3).
 11. Record a reason for each full-text exclusion and have the exclusions checked (D5, D6).
 12. Call it a rapid review, list the shortcuts, and claim only "not found in S on D", never "does not exist" or "the literature agrees" (H2, H3, H4).
 
-Two of these, the query review (B10) and the exclusion check (D5), are guidance: the procedure in SKILL.md does not yet ask for them.
+Everything in this list is done by the procedure in SKILL.md except the query review inside item 8 (B10), which is guidance.
 
 ---
 
@@ -70,7 +70,7 @@ Two of these, the query review (B10) and the exclusion check (D5), are guidance:
 - **D1** (binding). Merge the sources, remove duplicate records, then screen titles and abstracts over-inclusively: dropping a paper at the title stage is the cheapest way to lose evidence.
 - **D2** (binding). Decide inclusion on the full text, not the abstract: abstracts omit the methods and conditions that decide eligibility.
 - **D3** (binding). Count studies, not papers, and independent data sets, not citations. Link every report of the same data set (the original paper, a later paper, a review) into one record: compare authors, laboratory, species and preparation, n, dates and the exact values; name one primary report, say why, and keep the others for methods or extra values. Repetition is not corroboration. `[syn on the example]`
-- **D5** (guidance). Have a fresh screener check the exclusions: it gets the criteria and the list of excluded full texts with reasons, not the hypothesis or the preferred answer, and flags disagreements, which are resolved or left as awaiting a decision. `[syn on the agent form]`
+- **D5** (binding; SKILL.md section 3). Have a fresh screener check the exclusions: it gets the criteria and the list of excluded full texts with reasons, not the hypothesis or the preferred answer, and flags disagreements, which are resolved or left as awaiting a decision. `[syn on the agent form]`
 - **D6** (binding; `lit.py screen`). Record a reason for every full-text exclusion, in one primary category. List the studies a reader might expect to see included, not every irrelevant hit.
 - **D7** (guidance). Do not exclude a study only because its values are hard to use (in a figure, in running text); tag it. `[syn on the application]`
 - **D8** (binding; `verified: abstract-only`, `to_fetch.md`). Use explicit statuses for the unfinished cases: abstract only, full text not obtained, awaiting a decision. A paper you could not open is never handled as one you read. `[syn on the list]`
