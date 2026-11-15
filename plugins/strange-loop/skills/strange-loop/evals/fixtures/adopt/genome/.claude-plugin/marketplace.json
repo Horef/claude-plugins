@@ -1,0 +1,8 @@
+{
+  "name": "fixture-genome",
+  "owner": {
+    "name": "fixture"
+  },
+  "description": "A throwaway genome for a strange-loop judged case; copy it to a scratch folder before use.",
+  "plugins": []
+}

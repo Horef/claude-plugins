@@ -1,0 +1,15 @@
+{
+  "name": "fixture-genome",
+  "owner": {
+    "name": "fixture"
+  },
+  "description": "A throwaway genome for a strange-loop judged case; copy it to a scratch folder before use.",
+  "plugins": [
+    {
+      "name": "project-foundations",
+      "source": "./plugins/project-foundations",
+      "description": "Set up a repo so agents can maintain it. Use when creating or auditing AGENTS.md and docs.",
+      "category": "general"
+    }
+  ]
+}

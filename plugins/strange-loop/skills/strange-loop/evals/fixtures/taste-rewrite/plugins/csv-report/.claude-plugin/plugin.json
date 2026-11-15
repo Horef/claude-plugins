@@ -1,0 +1,6 @@
+{
+  "name": "csv-report",
+  "version": "0.2.0",
+  "description": "Turn a CSV export into a one-page summary. Use when asked to summarise a CSV file.",
+  "license": "MIT"
+}

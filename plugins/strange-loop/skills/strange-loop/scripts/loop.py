@@ -8,21 +8,28 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
   python loop.py where                       which genome (source checkout) this resolves to, and why
   python loop.py note UNIT KIND "TEXT" [--where SECTION] [--harness H] [--context C] [--same O3 | --new]
                                              record an observation; a near-identical open one of the same kind bumps its
-                                             ×count; if other open ones (any kind) are close, lists them and exits 1:
-                                             rerun with --same O3 (recurrence: ×N and a dated detail) or --new
-  python loop.py status [UNIT]               open observations per unit, which are ripe, budget use
+                                             ×count; if other ones (any kind, open or resolved) are close, lists them and
+                                             exits 1: rerun with --same O3 (recurrence: ×N and a dated detail; a resolved
+                                             O3 is reopened as a new open line carrying its count) or --new
+  python loop.py show UNIT O3 [O4 ...]       an observation by id, open or resolved, with the CHANGELOG lines citing it
+  python loop.py status [UNIT]               open observations per unit, which are ripe, budget use (UNIT: wins by section)
   python loop.py digest                      at most a few lines for a session-start hook; silent when nothing is ripe
   python loop.py check [--base REF]          CI gate: manifests, versions, changelogs, learnings format, budgets;
                                              with --base, a plugin changed since REF must have bumped its version
-                                             (LEARNINGS.md, CHANGELOG.md and evals/ changes are exempt)
+                                             (LEARNINGS.md, CHANGELOG.md and evals/ changes are exempt), no commit may
+                                             edit existing eval lines together with the code they grade, and no
+                                             LEARNINGS id or CHANGELOG version may disappear
   python loop.py eval UNIT                   run UNIT's evals/run.py (if present) and list its cases
-  python loop.py bump UNIT patch|minor|major "SUMMARY" [--obs O3,O4]
+  python loop.py judge UNIT CASE --old FILE --new FILE [--out DIR]
+                                             write a blind A/B packet for one judged case; the key goes to a separate file
+  python loop.py bump UNIT patch|minor|major "SUMMARY" [--obs O3,O4] [--obs O5]
                                              bump the version, prepend a CHANGELOG entry, resolve the observations
                                              (`--obs last` = the newest open one)
-  python loop.py new NAME --description "..." --category general|personal [--from DIR] [--mod]
+  python loop.py new NAME --description "..." --category general|personal [--from DIR [--dry-run] [--exclude GLOB]] [--mod]
                                              add a skill (or, with --mod, a hooks-only plugin) to the genome: manifest,
                                              marketplace entry, README row, SKILL.md with the Learning loop section,
                                              LEARNINGS, CHANGELOG, evals; --from DIR copies an existing skill folder in
+                                             (--dry-run lists its files first, --exclude leaves expressions out)
   python loop.py absorb [FILE|-]             move inbox lines, or "Observations for <unit>" blocks pasted from a chat
                                              reply (FILE, or - for stdin), into the genome's LEARNINGS files
   python loop.py sync [--no-push]            close the loop on this machine: absorb the inbox, commit observation-only
@@ -32,9 +39,11 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
   python loop.py pack UNIT [--out DIR]       zip a skill folder for upload (claude.ai), as dist/<unit>-<version>.zip
   python loop.py link TARGET [--only A,B]    symlink the genome's skill folders into a harness's skills folder
 
-Genome resolution, first hit wins: --genome PATH, $STRANGE_LOOP_GENOME, the path in ~/.config/strange-loop/genome,
-the nearest folder above the current directory (then above this script) with .claude-plugin/marketplace.json.
-A git worktree of the configured genome, when it is the current directory, wins over the configured path.
+Genome resolution, first hit wins: --genome PATH, $STRANGE_LOOP_GENOME, the nearest folder above the current
+directory with .claude-plugin/marketplace.json, the path in ~/.config/strange-loop/genome, the marketplace above this
+script. The session-start hook (hook, digest) puts the configured path before the current directory, unless that is a
+git worktree of it. `note` for a unit the current directory's marketplace lacks goes to the configured genome.
+Write commands print the absolute path they wrote.
 Installed plugin copies under ~/.claude/plugins are never treated as the genome (updates overwrite them).
 With no genome, `note` writes to ~/.config/strange-loop/inbox.md and `absorb` moves the lines later.
 """
@@ -55,12 +64,13 @@ RIPE_OPEN = 5                            # or this many open observations in one
 CLOSE_MIN = 0.30                        # `note`: an open observation at least this close (see closeness) is offered as a recurrence
 CLOSE_SHOW = 3                           # how many of the closest are listed
 DETAIL_MAX = 100                         # characters of a recurrence's detail kept on the line
-READING_AFTER = 3                        # later use-based notes after which an unconfirmed reading note is offered
-READING = re.compile(r"\b(from reading|reading|adopting|adoption)\b", re.I)
 STALE_DAYS = 180                         # an open observation older than this is confirmed or rejected
 SKILL_MAX_LINES = 500                    # Agent Skills guidance: keep SKILL.md under ~500 lines
 SKILL_MAX_BYTES = 25_000                 # ... and under ~25 KB: lines can be 1.5 KB long, so bytes measure the real cost
 DESCRIPTION_MAX = 1024                   # Agent Skills spec limit for the description field
+USE_WHEN = re.compile(r"\buse (?:it |this(?: skill)? )?(?:when|whenever|for|to|if|after|before|on|in)\b", re.I)
+PY_FLOOR = (3, 12)                       # the owner's Python floor: unit scripts may use 3.12 syntax, nothing newer
+PY_STATED = re.compile(r"\bPython (3)\.(\d+)\s*(?:\+|or newer|or later|and up)", re.I)
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 OBS = re.compile(r"^- (O\d+) (\d{4}-\d{2}-\d{2}) \[([a-z]+)\] (.+?)(?: ×(\d+))?(?: → (.+?))?\s*$")
@@ -155,24 +165,36 @@ def _same_repo(a: Path, b: Path) -> bool:
     return ca is not None and ca == common(b)
 
 
-def find_genome(explicit: str | None = None) -> tuple[Path | None, str]:
+def configured_genome() -> Path | None:
+    cfg = CONFIG / "genome"
+    text = cfg.read_text(encoding="utf-8").strip() if cfg.is_file() else ""
+    return Path(text).expanduser() if text else None
+
+
+CWD_WHY = ("git worktree of the configured genome (current directory)", "marketplace above the current directory")
+
+
+def find_genome(explicit: str | None = None, prefer_cwd: bool = True) -> tuple[Path | None, str]:
+    """The genome to work on and why. A marketplace above the current directory wins over the configured clone
+    (O24: a fixture or scratch genome must never send writes to the real one); prefer_cwd=False (the session-start
+    hook, a machine routine) keeps the configured clone unless the current directory is a worktree of it."""
     if explicit:
         return Path(explicit).expanduser(), "--genome"
     env = os.environ.get("STRANGE_LOOP_GENOME")
     if env:
         return Path(env).expanduser(), "$STRANGE_LOOP_GENOME"
-    cfg = CONFIG / "genome"
-    if cfg.is_file() and cfg.read_text(encoding="utf-8").strip():
-        configured = Path(cfg.read_text(encoding="utf-8").strip()).expanduser()
-        here = _marketplace_root(Path.cwd())
-        if here and here.resolve() != configured.resolve() and _same_repo(here, configured):
-            return here, "git worktree of the configured genome (current directory)"
-        return configured, str(cfg)
-    for start, why in ((Path.cwd(), "current directory"), (Path(__file__).resolve().parent, "this script's location")):
-        root = _marketplace_root(start)
-        if root:
-            return root, f"marketplace above the {why}"
-    return None, "not found"
+    configured = configured_genome()
+    here = _marketplace_root(Path.cwd())
+    if here and configured and here.resolve() == configured.resolve():
+        return configured, str(CONFIG / "genome")
+    if here:
+        same = configured is not None and _same_repo(here, configured)
+        if prefer_cwd or configured is None or same:
+            return here, CWD_WHY[0] if same else CWD_WHY[1]
+    if configured:
+        return configured, str(CONFIG / "genome")
+    root = _marketplace_root(Path(__file__).resolve().parent)
+    return (root, "marketplace above this script's location") if root else (None, "not found")
 
 
 def plugin_dirs(genome: Path) -> list[Path]:
@@ -253,9 +275,27 @@ class Learnings:
         return f"O{max(ids, default=0) + 1}"
 
     def close(self, text: str, limit: int = CLOSE_SHOW, threshold: float = CLOSE_MIN) -> list[tuple[float, re.Match]]:
-        """The open observations (any kind) closest to `text`, best first, at or above `threshold`."""
-        scored = sorted(((closeness(m.group(4), text), m) for _, m in self.entries("open")), key=lambda t: -t[0])
+        """The observations (any kind, open or resolved) closest to `text`, best first, at or above `threshold`.
+        A resolved one that comes back is a recurrence too (O26): `--same` reopens it."""
+        lines = [m for t in ("open", "resolved") for _, m in self.entries(t)]
+        scored = sorted(((closeness(m.group(4), text), m) for m in lines), key=lambda t: -t[0])
         return [(sc, m) for sc, m in scored[:limit] if sc >= threshold]
+
+    def reopened_as(self, oid: str) -> str | None:
+        """The open line that reopened the resolved observation `oid`, if any."""
+        return next((m.group(1) for _, m in self.entries("open") if re.search(rf"\breopens {oid}\b", m.group(4))), None)
+
+    def reopen(self, m: re.Match, text: str) -> tuple[str, int]:
+        """A resolved lesson recurs: a new open line carries its text, count + 1 and `reopens O<n>`; the resolved
+        line stays as it is (history is append-only)."""
+        n = int(m.group(5) or 1) + 1
+        oid = self.next_id()
+        _, e = self.section("open")
+        while e > 0 and not self.lines[e - 1].strip():
+            e -= 1
+        self.lines.insert(e, f"- {oid} {TODAY} [{m.group(3)}] {m.group(4)} [+{TODAY} {detail(text)}; reopens {m.group(1)}] ×{n}")
+        self.save()
+        return oid, n
 
     def duplicate(self, kind: str, text: str) -> str | None:
         """Id of an open observation of the same kind that is a near-identical restatement of `text`."""
@@ -383,29 +423,27 @@ def detail(text: str) -> str:
     return t[:DETAIL_MAX].rsplit(" ", 1)[0] + "..."
 
 
-def from_reading(m: re.Match) -> bool:
-    """A note written from reading a skill (adopting, reviewing), not from using it."""
-    tail = re.search(r"\(([^()]*)\)\s*$", m.group(4))
-    return bool(READING.search(tail.group(1) if tail else "") or re.search(r"\bfrom reading\b", m.group(4), re.I))
-
-
-def reading_to_offer(opened: list[re.Match], resolved: list[re.Match] = ()) -> list[re.Match]:
-    """Open reading notes that use has not confirmed (no ×N) after READING_AFTER later use-based notes
-    (open or resolved: each is evidence the unit was used).
-
-    They are offered to the owner as possible restructures, never dropped automatically (owner, 2026-11-06)."""
-    used = [m for m in list(opened) + list(resolved) if not from_reading(m)]
-    return [m for m in opened if from_reading(m) and not m.group(5)
-            and sum(u.group(2) > m.group(2) for u in used) >= READING_AFTER]
+def wins_by_section(learn: "Learnings") -> list[tuple[str, int]]:
+    """`win` observations (open and resolved, with their ×N) counted per section, most first (O3): the rules that
+    earned their place, for the forgetting step (section 6)."""
+    counts: dict[str, int] = {}
+    for t in ("open", "resolved"):
+        for _, m in learn.entries(t):
+            if m.group(3) == "win":
+                head, sep, _ = m.group(4).partition(":")
+                sec = head.strip() if sep and len(head) <= 40 else "(no section)"
+                counts[sec] = counts.get(sec, 0) + int(m.group(5) or 1)
+    return sorted(counts.items(), key=lambda kv: -kv[1])
 
 
 def is_ripe(m: re.Match) -> bool:
+    """Notes from reading count like notes from use (owner, 2026-11-15)."""
     return m.group(3) in RIPE_KINDS or int(m.group(5) or 1) >= RIPE_COUNT
 
 
 # ---------------------------------------------------------------- commands
 def need_genome(args) -> Path:
-    g, why = find_genome(args.genome)
+    g, why = find_genome(args.genome, prefer_cwd=not getattr(args, "configured_first", False))
     if not g or not g.is_dir():
         sys.exit(f"strange-loop: no genome found ({why}); set $STRANGE_LOOP_GENOME or write its path to {CONFIG / 'genome'}")
     return g
@@ -420,7 +458,10 @@ def need_unit(genome: Path, name: str) -> Path:
 
 def cmd_where(args):
     g, why = find_genome(args.genome)
-    print(f"genome: {g} ({why})" if g else f"genome: none ({why}); notes go to {INBOX}")
+    print(f"genome: {g.resolve()} ({why})" if g else f"genome: none ({why}); notes go to {INBOX}")
+    configured = configured_genome()
+    if g and configured and g.resolve() != configured.resolve() and why != CWD_WHY[0]:
+        print(f"  not the configured genome {configured} ({CONFIG / 'genome'}); the session-start hook still syncs that one")
     if g and g.is_dir():
         for name, d in units(g).items():
             print(f"  {name}: {d.relative_to(g)}")
@@ -435,24 +476,39 @@ def cmd_note(args):
     ctx = ", ".join(x for x in (args.harness, args.context) if x)
     if ctx:
         text += f" ({ctx})"
-    g, _ = find_genome(args.genome)
+    g, why = find_genome(args.genome)
+    configured = configured_genome()
+    if why in CWD_WHY and g and args.unit not in units(g) and configured and configured.is_dir() and args.unit in units(configured):
+        g = configured                       # a unit only the person's genome has: its notes go there, not to the inbox
     if g and g.is_dir() and args.unit in units(g):
         d = units(g)[args.unit]
         learn = Learnings(d / "LEARNINGS.md", args.unit)
+        where = (d / "LEARNINGS.md").resolve()
         if args.same and args.new:
             sys.exit("strange-loop: --same and --new exclude each other")
-        if args.same and args.same not in [m.group(1) for _, m in learn.entries("open")]:
-            sys.exit(f"strange-loop: --same {args.same}: no such open observation in {args.unit}")
-        if not (args.same or args.new or learn.duplicate(args.kind, text)):
+        same = args.same
+        if same and same not in [m.group(1) for _, m in learn.entries("open")]:
+            old = next((m for _, m in learn.entries("resolved") if m.group(1) == same), None)
+            if old is None:
+                sys.exit(f"strange-loop: --same {same}: no such observation in {args.unit}")
+            same = learn.reopened_as(same)
+            if same is None:                 # a resolved lesson came back (O26): reopen it, carrying its count
+                oid, n = learn.reopen(old, text)
+                print(f"{args.unit} {oid} reopens resolved {old.group(1)} (×{n}) in {where}")
+                return
+        if not (same or args.new or learn.duplicate(args.kind, text)):
             near = learn.close(text)
             if near:
-                print(f"strange-loop: not written; {args.unit} already has close open observation(s):")
+                print(f"strange-loop: not written; {args.unit} already has close observation(s):")
                 for sc, m in near:
-                    print(f"  {m.group(1)} [{m.group(3)}]{' ×' + m.group(5) if m.group(5) else ''} (closeness {sc:.2f}) {m.group(4)[:140]}")
+                    state = f"resolved → {m.group(6)[:40]}" if m.group(6) else "open"
+                    print(f"  {m.group(1)} [{m.group(3)}]{' ×' + m.group(5) if m.group(5) else ''} ({state}, closeness {sc:.2f}) "
+                          f"{m.group(4)[:140]}")
                 sys.exit("Same lesson again: rerun with --same O<n> (adds ×N and today's date and detail to that line, "
-                         "the evidence the loop acts on). A different lesson: rerun with --new.")
-        oid, n = learn.add(args.kind, text, args.same, args.new)
-        print(f"{args.unit} {oid}" + (f" seen again (×{n})" if n > 1 else " recorded") + f" in {d / 'LEARNINGS.md'}")
+                         "the evidence the loop acts on; on a resolved id it reopens the lesson as a new open line with "
+                         "its count). A different lesson: rerun with --new.")
+        oid, n = learn.add(args.kind, text, same, args.new)
+        print(f"{args.unit} {oid}" + (f" seen again (×{n})" if n > 1 else " recorded") + f" in {where}")
         return
     INBOX.parent.mkdir(parents=True, exist_ok=True)
     with INBOX.open("a", encoding="utf-8") as f:
@@ -471,9 +527,6 @@ def unit_report(genome: Path, name: str, d: Path) -> tuple[list[re.Match], list[
         raw = skill.read_bytes()
         n = len(raw.decode("utf-8").splitlines())
         notes.append(f"SKILL.md {n}/{SKILL_MAX_LINES} lines, {len(raw) / 1000:.1f}/{SKILL_MAX_BYTES / 1000:.1f} KB")
-    offer = reading_to_offer(opened, [m for _, m in learn.entries("resolved")] if learn else [])
-    if offer:
-        notes.append(f"reading notes unconfirmed by use, offer to the owner as restructures: {', '.join(m.group(1) for m in offer)}")
     return opened, ripe, notes
 
 
@@ -487,13 +540,17 @@ def cmd_status(args):
         print(f"{name} [{flag}]: {len(opened)} open, {len(ripe)} ripe; " + "; ".join(notes))
         for m in opened if args.unit else ripe:
             print(f"   {m.group(1)} [{m.group(3)}]{' ×' + m.group(5) if m.group(5) else ''} {m.group(4)[:110]}")
+        if args.unit and (d / "LEARNINGS.md").exists():
+            wins = wins_by_section(Learnings(d / "LEARNINGS.md", name))
+            if wins:
+                print("   wins: " + ", ".join(f"{s} ({n})" for s, n in wins))
     if INBOX.exists() and INBOX.read_text(encoding="utf-8").strip():
         print(f"inbox: {len(INBOX.read_text(encoding='utf-8').splitlines())} line(s) in {INBOX}; run `absorb`")
 
 
 def cmd_digest(args):
     try:
-        g, why = find_genome(args.genome)
+        g, why = find_genome(args.genome, prefer_cwd=False)
         cfg = CONFIG / "genome"
         if cfg.is_file() and why == str(cfg) and not (g / ".claude-plugin" / "marketplace.json").is_file():
             print(f"strange-loop: {cfg} points to {g}, which is not a clone of the genome; notes queue in {INBOX} until it does.")
@@ -504,7 +561,6 @@ def cmd_digest(args):
                 if ripe or len(opened) >= RIPE_OPEN:
                     top = max(opened, key=lambda m: (m.group(3) in RIPE_KINDS, int(m.group(5) or 1)))
                     out.append(f"{name}: {len(opened)} open ({len(ripe)} ripe), e.g. {top.group(1)} {top.group(4)[:80]}")
-                out += [f"{name}: {n}" for n in notes if n.startswith("reading notes")]
         inbox = INBOX.read_text(encoding="utf-8").splitlines() if INBOX.exists() else []
         if inbox:
             out.append(f"{len(inbox)} observation(s) waiting in {INBOX}")
@@ -532,6 +588,90 @@ def is_bookkeeping(path: str) -> bool:
 
 def git(genome: Path, *a: str) -> str:
     return subprocess.run(["git", "-C", str(genome), *a], capture_output=True, text=True).stdout
+
+
+def python_floor_warnings(g: Path, d: Path) -> list[str]:
+    """O23: a unit's Python files must parse at the owner's floor (PY_FLOOR), and at the floor its SKILL.md states,
+    if lower. ast's feature_version catches version-gated syntax (type parameters, t-strings, bare except tuples),
+    not PEP 701 f-string quoting."""
+    import ast
+    import warnings as _w
+    stated = PY_STATED.search((d / "SKILL.md").read_text(encoding="utf-8")) if (d / "SKILL.md").exists() else None
+    floors = [PY_FLOOR] + ([(3, int(stated.group(2)))] if stated and (3, int(stated.group(2))) < PY_FLOOR else [])
+    out = []
+    for f in sorted(d.rglob("*.py")):
+        if "__pycache__" in f.parts:
+            continue
+        try:
+            src = f.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for fv in floors:
+            try:
+                with _w.catch_warnings():
+                    _w.simplefilter("ignore")
+                    ast.parse(src, filename=str(f), feature_version=fv)
+            except SyntaxError as e:
+                rel = f.relative_to(g)
+                if fv == PY_FLOOR:
+                    out.append(f"{rel}: syntax newer than Python {fv[0]}.{fv[1]}, the owner's floor ({e.msg}, line {e.lineno})")
+                else:
+                    out.append(f"{d.relative_to(g)}/SKILL.md: states Python {fv[0]}.{fv[1]}+ but {rel} needs newer syntax "
+                               f"({e.msg}, line {e.lineno}); correct the stated version")
+                break
+    return out
+
+
+def _removed_lines(g: Path, commit: str, path: str) -> list[str]:
+    """Lines a commit removed from `path` and did not add back (moves and no-newline-at-end churn cancel out)."""
+    from collections import Counter
+    diff = git(g, "show", "--format=", "-U0", "--no-color", commit, "--", path).splitlines()
+    removed = Counter(l[1:].rstrip() for l in diff if l.startswith("-") and not l.startswith("---"))
+    added = Counter(l[1:].rstrip() for l in diff if l.startswith("+") and not l.startswith("+++"))
+    return [l for l in (removed - added).elements() if l.strip()]
+
+
+ASSERTION = re.compile(r"\bassert\b|\b(?:assert\w*|check|expect|fail\w*)\s*\(")
+
+
+def history_errors(g: Path, base: str) -> tuple[list[str], list[str]]:
+    """Audit D15, per commit since `base`: an existing eval case or check edited in the same commit as the unit's
+    code or SKILL.md (section 5, graders and graded); and, over the range, LEARNINGS ids or CHANGELOG versions that
+    disappeared (kernel rule 3, history is append-only). Adding cases, and filling `loop.py new` placeholders, is fine.
+    Edited lines of judged cases or assertion lines are errors; other edited lines of eval code (docstrings, runner
+    plumbing, fixture text) are warnings, since they rarely change what is graded. Returns (errors, warnings)."""
+    errs, warns = [], []
+    for c in git(g, "rev-list", "--no-merges", "--reverse", f"{base}..HEAD").split():
+        files = [f for f in git(g, "diff-tree", "--no-commit-id", "-r", "--name-only", c).splitlines() if f.startswith("plugins/")]
+        by_plugin: dict[str, list[str]] = {}
+        for f in files:
+            by_plugin.setdefault(f.split("/")[1], []).append(f)
+        for plugin, fs in by_plugin.items():
+            evals = [f for f in fs if "/evals/" in f"/{f}"]
+            code = [f for f in fs if not is_bookkeeping(f) and "/.claude-plugin/" not in f"/{f}"]
+            if not (evals and code):
+                continue
+            for f in evals:
+                edited = [l for l in _removed_lines(g, c, f) if "TODO(new)" not in l]
+                graded = edited if f.endswith(".md") else [l for l in edited if ASSERTION.search(l)]
+                if edited:
+                    (errs if graded else warns).append(
+                        f"commit {c[:9]}: changes {len(graded or edited)} existing {'graded ' if graded else ''}line(s) of {f} "
+                        f"in the same commit as {plugin}'s code or SKILL.md ({code[0]}); edit cases and checks in a commit "
+                        "of their own (strange-loop section 5)")
+    for f in git(g, "ls-tree", "-r", "--name-only", base, "--", "plugins").splitlines():
+        name = Path(f).name
+        if name not in ("LEARNINGS.md", "CHANGELOG.md"):
+            continue
+        old = git(g, "show", f"{base}:{f}")
+        now = (g / f).read_text(encoding="utf-8") if (g / f).is_file() else ""
+        pat = r"^- (O\d+) " if name == "LEARNINGS.md" else r"^## (\d+\.\d+\.\d+)\b"
+        gone = sorted(set(re.findall(pat, old, re.M)) - set(re.findall(pat, now, re.M)))
+        if gone:
+            what = "observation(s)" if name == "LEARNINGS.md" else "version entr(ies)"
+            errs.append(f"{f}: {what} {', '.join(gone)} deleted since {base}; history is append-only "
+                        "(resolve observations instead, never rewrite CHANGELOG entries; kernel rule 3)")
+    return errs, warns
 
 
 def cmd_check(args):
@@ -584,6 +724,9 @@ def cmd_check(args):
             desc = fm.get("description", "")
             if not desc or len(desc) > DESCRIPTION_MAX:
                 errors.append(f"{rel}/SKILL.md: description must be 1-{DESCRIPTION_MAX} characters (has {len(desc)})")
+            elif not USE_WHEN.search(desc):
+                warnings.append(f"{rel}/SKILL.md: the description has no 'Use when ...' clause; say when to use the skill "
+                                "(section 6), and add should-fire/should-not-fire trigger cases")
             n = len(skill.read_text(encoding="utf-8").splitlines())
             if n > SKILL_MAX_LINES:
                 warnings.append(f"{rel}/SKILL.md: {n} lines (> {SKILL_MAX_LINES}); move detail into referenced files")
@@ -596,6 +739,7 @@ def cmd_check(args):
             elif NOTE_CMD not in body:
                 warnings.append(f"{rel}/SKILL.md: the Learning loop section lacks the note command (template: `loop.py new`, "
                                 "strange-loop section 8); without it notes land in installed copies and are lost")
+        warnings += python_floor_warnings(g, d)
         for f in [d / "SKILL.md", d / "evals" / "cases.md"]:
             if f.exists() and "TODO(new):" in f.read_text(encoding="utf-8"):   # the placeholders, not prose about them
                 warnings.append(f"{f.relative_to(g)}: still has TODO(new) placeholders from `loop.py new`")
@@ -637,6 +781,10 @@ def cmd_check(args):
             top = (changelog_versions(cp) or [None])[0]
             if top != v:
                 errors.append(f"{rel}/CHANGELOG.md: newest entry {top} but plugin.json says {v}")
+    if args.base:
+        h_err, h_warn = history_errors(g, args.base)
+        errors += h_err
+        warnings += h_warn
     for e in errors:
         print(f"error: {e}")
     for w in warnings:
@@ -663,6 +811,68 @@ def cmd_eval(args):
         sys.exit(f"{args.unit}: no evals/ yet; write at least one case before changing the skill's behaviour")
 
 
+def cmd_show(args):
+    """Look observations up by id (O26): the line, open or resolved, the CHANGELOG entries citing it, and the open
+    line that reopened it."""
+    g = need_genome(args)
+    d = need_unit(g, args.unit)
+    learn = Learnings(d / "LEARNINGS.md", args.unit)
+    log = (d / "CHANGELOG.md").read_text(encoding="utf-8").splitlines() if (d / "CHANGELOG.md").exists() else []
+    missing = []
+    for oid in args.ids:
+        hit = [(t, m) for t in ("open", "resolved") for _, m in learn.entries(t) if m.group(1) == oid]
+        if not hit:
+            missing.append(oid)
+            continue
+        for t, m in hit:
+            print(f"{oid} [{t}] {m.string}")
+        version = None
+        for line in log:
+            if (h := CHANGE_HEAD.match(line)):
+                version = h.group(1)
+            elif re.search(rf"\b{oid}\b", line):
+                print(f"   CHANGELOG {version}: {line[:300]}")
+        again = learn.reopened_as(oid)
+        if again:
+            print(f"   reopened as {again} (open)")
+    if missing:
+        sys.exit(f"strange-loop: no observation {', '.join(missing)} in {args.unit} ({(d / 'LEARNINGS.md').resolve()})")
+
+
+def cmd_judge(args):
+    """Write the blind A/B packet for one judged case (O1): the case's task and rubric and the two outputs in random
+    order, without saying which is new; the key goes to a separate file the judge never sees (section 4 step 6)."""
+    import random
+    import tempfile
+    g = need_genome(args)
+    d = need_unit(g, args.unit)
+    cases = d / "evals" / "cases.md"
+    if not cases.exists():
+        sys.exit(f"strange-loop: {args.unit} has no evals/cases.md")
+    blocks = re.split(r"(?m)^## ", cases.read_text(encoding="utf-8"))[1:]
+    named = {b.splitlines()[0].strip(): b for b in blocks}
+    want = args.case.lower()
+    hits = [h for h in named if h.lower() == want] or [h for h in named if want in h.lower()]
+    if len(hits) != 1:
+        sys.exit(f"strange-loop: case {args.case!r} matches {len(hits)} of: {'; '.join(named)}")
+    head = hits[0]
+    body = "\n".join(l for l in named[head].splitlines()[1:] if not l.startswith("**Origin:**")).strip()
+    outs = [("old", Path(args.old)), ("new", Path(args.new))]
+    random.Random(args.seed).shuffle(outs)
+    out = Path(args.out).expanduser() if args.out else Path(tempfile.mkdtemp(prefix=f"judge-{args.unit}-"))
+    out.mkdir(parents=True, exist_ok=True)
+    parts = [f"# Blind comparison: {head}\n",
+             "Two outputs for the same task follow, in random order. Judge each against every criterion of the rubric "
+             "(met, partly, missed, with a quote as evidence), then say which output is better per criterion and overall, "
+             "or that they tie.\n", body + "\n"]
+    for i, (_, p) in enumerate(outs, 1):
+        parts.append(f"## Output {i}\n\n{p.read_text(encoding='utf-8').strip()}\n")
+    (out / "packet.md").write_text("\n".join(parts), encoding="utf-8")
+    (out / "key.txt").write_text("".join(f"Output {i} = {label} ({p})\n" for i, (label, p) in enumerate(outs, 1))
+                                 + "Keep this file from the judge.\n", encoding="utf-8")
+    print(f"packet: {(out / 'packet.md').resolve()} (give only this to a fresh judge)\nkey: {(out / 'key.txt').resolve()} (keep aside)")
+
+
 def bump_version(v: str, part: str) -> str:
     a, b, c = (int(x) for x in SEMVER.match(v).groups())
     return {"major": f"{a + 1}.0.0", "minor": f"{a}.{b + 1}.0", "patch": f"{a}.{b}.{c + 1}"}[part]
@@ -677,7 +887,7 @@ def cmd_bump(args):
     new = bump_version(meta.get("version", "0.0.0"), args.part)
     meta["version"] = new
     write_json(pj, meta)
-    ids = [i.strip() for i in (args.obs or "").split(",") if i.strip()]
+    ids = [i.strip() for group in (args.obs or []) for i in group.split(",") if i.strip()]   # --obs may repeat (O22)
     if "last" in ids:
         opened = [m.group(1) for _, m in Learnings(d / "LEARNINGS.md", args.unit).entries("open")]
         if not opened:
@@ -690,7 +900,7 @@ def cmd_bump(args):
     entry = f"## {new} ({TODAY})\n- {args.summary}" + (f" ({', '.join(ids)})" if ids else "") + "\n"
     cp.write_text(head.rstrip() + "\n\n" + entry + (("\n## " + rest) if sep else ""), encoding="utf-8")
     moved = Learnings(d / "LEARNINGS.md", args.unit).resolve(ids, new) if ids else []
-    print(f"{plug.name} {new}; CHANGELOG updated" + (f"; resolved {', '.join(moved)}" if moved else ""))
+    print(f"{plug.name} {new} in {plug.resolve()}; CHANGELOG updated" + (f"; resolved {', '.join(moved)}" if moved else ""))
     missing = set(ids) - set(moved)
     if missing:
         print(f"warning: not open in LEARNINGS.md: {', '.join(sorted(missing))}")
@@ -715,19 +925,41 @@ def cmd_new(args):
             sys.exit(f"strange-loop: {src} is not a folder")
         if not args.mod and not (src / "SKILL.md").is_file():
             sys.exit(f"strange-loop: {src} has no SKILL.md (for a mod folder, add --mod)")
+    import fnmatch
+    patterns = args.exclude or []
+
+    def excluded(rel: Path) -> bool:                                   # a pattern matches the path or one of its folders
+        paths = [rel.as_posix()] + [Path(*rel.parts[:i]).as_posix() for i in range(1, len(rel.parts))]
+        return any(fnmatch.fnmatch(p, pat) for p in paths for pat in patterns)
+
+    files = []
+    if args.source:
+        files = [f for f in sorted(src.rglob("*")) if f.is_file() and "__pycache__" not in f.relative_to(src).parts
+                 and f.suffix != ".pyc" and f.name != ".DS_Store"]
+    if args.dry_run:
+        print(f"dry run: would create {plug.resolve()} ({'mod' if args.mod else 'skill'}, {args.category}); nothing written")
+        if files:
+            print("sort these files (strange-loop section 8: genome, not expressions), then rerun with --exclude GLOB "
+                  "for each expression:")
+            for f in files:
+                rel = f.relative_to(src)
+                print(f"  {f.stat().st_size:>9,d}  {rel}{'  (excluded)' if excluded(rel) else ''}")
+        return
     version = "1.0.0" if args.source else "0.1.0"
     (plug / ".claude-plugin").mkdir(parents=True)
     write_json(plug / ".claude-plugin" / "plugin.json", {"name": name, "version": version, "description": desc, "license": "MIT"})
     unit = plug if args.mod else plug / "skills" / name
     unit.mkdir(parents=True, exist_ok=True)
-    copied = []
+    copied, left_out = [], []
     if args.source:
-        for f in sorted(src.rglob("*")):
+        for f in files:
             rel = f.relative_to(src)
-            if f.is_file() and "__pycache__" not in rel.parts and f.suffix != ".pyc" and f.name != ".DS_Store":
-                (unit / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, unit / rel)
-                copied.append((rel, f.stat().st_size))
+            if excluded(rel):
+                left_out.append(rel)
+                continue
+            (unit / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, unit / rel)
+            copied.append((rel, f.stat().st_size))
         if (unit / "SKILL.md").is_file():
             body = (unit / "SKILL.md").read_text(encoding="utf-8")
             if "## Learning loop" not in body:
@@ -759,10 +991,12 @@ def cmd_new(args):
                 end += 1
             lines.insert(end + 1, f"| [{name}](plugins/{name}) | {desc} |")
             readme.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"created {plug.relative_to(g)} ({'mod' if args.mod else 'skill'} {version}, {args.category}); "
+    print(f"created {plug.resolve()} ({'mod' if args.mod else 'skill'} {version}, {args.category}); "
           f"listed in the marketplace{' and README' if readme.exists() else ''}")
+    if left_out:
+        print(f"excluded {len(left_out)} file(s): {', '.join(str(r) for r in left_out)}")
     if copied:
-        print(f"copied {len(copied)} file(s) - sort them now (strange-loop section 8: genome, not expressions); "
+        print(f"copied {len(copied)} file(s) - check the sort (strange-loop section 8: genome, not expressions); "
               "remove outputs of past tasks before the first commit:")
         for rel, size in copied:
             print(f"  {size:>9,d}  {rel}")
@@ -864,7 +1098,7 @@ def cmd_sync(args) -> int:
     say = (lambda *_: None) if quiet else print
     net = 15 if quiet else 120                      # inside the session-start hook, never stall the session
     if INBOX.exists() and INBOX.read_text(encoding="utf-8").strip():
-        cmd_absorb(argparse_ns(genome=args.genome, file=None))
+        cmd_absorb(argparse_ns(genome=args.genome, file=None, configured_first=getattr(args, "configured_first", False)))
     for name, d in units(g).items():
         if (d / "LEARNINGS.md").exists():
             Learnings(d / "LEARNINGS.md", name).renumber()
@@ -919,10 +1153,10 @@ def cmd_hook(args):
     try:
         flag = CONFIG / "auto_sync"
         if flag.is_file() and flag.read_text(encoding="utf-8").strip().lower() in ("on", "yes", "true", "1"):
-            g, _ = find_genome(args.genome)
+            g, _ = find_genome(args.genome, prefer_cwd=False)
             if g and (g / ".git").exists():
                 before = run_git(g, "rev-parse", "HEAD").stdout.strip()
-                cmd_sync(argparse_ns(genome=args.genome, no_push=False, quiet=True))
+                cmd_sync(argparse_ns(genome=args.genome, no_push=False, quiet=True, configured_first=True))
                 if run_git(g, "rev-parse", "HEAD").stdout.strip() != before:
                     print(f"strange-loop: synced the genome ({g}): this machine's observations shared, others' changes pulled.")
     except Exception:
@@ -945,7 +1179,11 @@ def main(argv: list[str]) -> None:
     p = sub.add_parser("check"); p.add_argument("--base")
     p = sub.add_parser("eval"); p.add_argument("unit")
     p = sub.add_parser("bump"); p.add_argument("unit"); p.add_argument("part", choices=["patch", "minor", "major"])
-    p.add_argument("summary"); p.add_argument("--obs")
+    p.add_argument("summary"); p.add_argument("--obs", action="append")
+    p = sub.add_parser("show"); p.add_argument("unit"); p.add_argument("ids", nargs="+")
+    p = sub.add_parser("judge"); p.add_argument("unit"); p.add_argument("case")
+    p.add_argument("--old", required=True); p.add_argument("--new", required=True); p.add_argument("--out")
+    p.add_argument("--seed", type=int)
     p = sub.add_parser("absorb"); p.add_argument("file", nargs="?")
     p = sub.add_parser("sync"); p.add_argument("--no-push", action="store_true"); p.add_argument("--quiet", action="store_true")
     sub.add_parser("hook")
@@ -954,9 +1192,10 @@ def main(argv: list[str]) -> None:
     p = sub.add_parser("new"); p.add_argument("name"); p.add_argument("--description", required=True)
     p.add_argument("--category", choices=list(CATEGORIES), required=True)
     p.add_argument("--from", dest="source"); p.add_argument("--mod", action="store_true")
+    p.add_argument("--exclude", action="append"); p.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     {"where": cmd_where, "note": cmd_note, "status": cmd_status, "digest": cmd_digest, "check": cmd_check,
-     "eval": cmd_eval, "bump": cmd_bump, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link, "new": cmd_new,
+     "eval": cmd_eval, "bump": cmd_bump, "show": cmd_show, "judge": cmd_judge, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link, "new": cmd_new,
      "sync": lambda a: sys.exit(cmd_sync(a)), "hook": cmd_hook}[args.cmd](args)
 
 

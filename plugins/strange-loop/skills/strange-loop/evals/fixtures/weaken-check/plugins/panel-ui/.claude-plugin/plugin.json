@@ -1,0 +1,6 @@
+{
+  "name": "panel-ui",
+  "version": "0.3.0",
+  "description": "Build small status panels. Use when making a panel or badge.",
+  "license": "MIT"
+}

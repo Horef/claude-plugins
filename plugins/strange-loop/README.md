@@ -81,7 +81,7 @@ git clone git@github.com:Horef/claude-plugins.git ~/code/claude-plugins
 mkdir -p ~/.config/strange-loop && echo ~/code/claude-plugins > ~/.config/strange-loop/genome
 ```
 
-(Or set `STRANGE_LOOP_GENOME`.) Without a genome, observations queue in `~/.config/strange-loop/inbox.md` and `loop.py absorb` moves them in later. Agents working inside the clone need no setup. Then give each harness the skills; `loop.py` below means `python <clone>/plugins/strange-loop/skills/strange-loop/scripts/loop.py`.
+(Or set `STRANGE_LOOP_GENOME`. A marketplace above the current directory, such as a scratch or fixture copy, wins over the configured path; `loop.py where` says which one is used.) Without a genome, observations queue in `~/.config/strange-loop/inbox.md` and `loop.py absorb` moves them in later. Agents working inside the clone need no setup. Then give each harness the skills; `loop.py` below means `python <clone>/plugins/strange-loop/skills/strange-loop/scripts/loop.py`.
 
 | Harness | How it gets the skills | How lessons get back |
 |---|---|---|
@@ -114,12 +114,14 @@ python loop.py status              # every unit: open lessons, which are ripe, b
 python loop.py note scientific-figures friction "§5: lint missed a label under a band" --harness claude-ai --context "L7 notes"
 python loop.py eval project-foundations
 python loop.py bump project-foundations minor "Templates move to templates/*.md" --obs O3
-python loop.py check --base origin/main   # CI: manifests, versions, changelogs, learnings; changed plugins must bump
+python loop.py show strange-loop O24      # an observation by id, open or resolved, and the CHANGELOG lines citing it
+python loop.py check --base origin/main   # CI: manifests, versions, changelogs, learnings; changed plugins must bump; per commit, no eval edit with the code it grades
+python loop.py judge strange-loop "kernel alone" --old a.md --new b.md   # blind A/B packet, key kept aside
 python loop.py pack scientific-figures     # upload zip, for a harness that cannot add a marketplace
 python loop.py link ~/.kiro/skills          # live symlinks for a local harness
-python loop.py new paper-premark --description "..." --category personal --from ~/old/paper-premark   # add a skill
+python loop.py new paper-premark --description "..." --category personal --from ~/old/paper-premark --dry-run   # add a skill: list files, then rerun with --exclude GLOB
 python loop.py sync                         # share this machine's observations, receive everyone else's
 python loop.py absorb reply.txt             # observations from a chat reply
 ```
 
-A lesson is **ripe** when it was seen twice, or is a `failure` or `misled`, or its unit has five open lessons. The thresholds are kernel settings in `loop.py`.
+A lesson is **ripe** when it was seen twice, or is a `failure` or `misled`, or its unit has five open lessons; notes from reading count like notes from use. The thresholds are kernel settings in `loop.py`.
