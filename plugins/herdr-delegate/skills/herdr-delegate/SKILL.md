@@ -39,7 +39,7 @@ Helpers are **templates** named `<provider>-<tier>` (`kiro-standard`, `agy-deep`
 
 ## Which helper
 
-Tiers are the model-router's: light = mechanical with a clear rule, standard = following detailed instructions, deep = open judgment. **Argon** is a second opinion from another model family: use it to review a plan or a result, or to answer the same question independently, not as a cheaper standard. `pick argon` tries agy first, and `pick` skips any template whose model the last `helpers.py models` found not offered (Copilot would silently swap it, e.g. Gemini 4 Argon to Sonnet).
+Tiers: light = mechanical work with a clear rule, standard = following detailed instructions, deep = open judgment. **Argon** is a second opinion from another model family: use it to review a plan or a result, or to answer the same question independently, not as a cheaper standard. `pick argon` tries agy first, and `pick` skips any template whose model the last `helpers.py models` found not offered (Copilot would silently swap it, e.g. Gemini 4 Argon to Sonnet).
 
 **Choosing for model family.** When a step is a review, a read or an independent check, prefer a helper from a different model family than yours if one is available (`agy-standard` is Gemini 4 Hydrogen high, rated by the owner about Sonnet 5.5 high: a different-family standard helper); if none is, use what is available and do not block on it (a Gemini reader via agy caught factual errors that Claude readers missed, three times in research-writing). When a helper is chosen for its model family, check the model it reports at launch (Copilot prints "Model ... not available. Using X instead" and its status bar shows the model) and treat a fallback as the wrong helper: kill it and pick another.
 
