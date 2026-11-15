@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.6.0 (2026-11-15)
+- lint_ui.py checks the rules SKILL.md stated: nested-disclosure, duplicate-text, opt-in --type-scale (off-scale-text), calm-screen note above 3 text colours; documented lint command adds --max-colors 3 (restructure R8, owner-approved 2026-11-15)
+
 ## 0.5.0 (2026-11-15)
 - Allow local file:// iframe linting, enforce density/calmness lint rules, and resolve picker, overlay, profile, and Streamlit height gaps (O15, O16)
 

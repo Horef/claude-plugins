@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rules on purpose</title>
+<!-- Planted so that lint_ui.py can be tested: an expander inside an expander, a fact shown twice, a text size off the type scale,
+     and the same sentence in two buttons (controls repeat legitimately and must not be reported). -->
+<style>
+  body { margin: 0; padding: 16px; font: 16px/1.5 sans-serif; background: #ffffff; color: #111; }
+  .fine { font-size: 17px; }
+  button { font: inherit; }
+</style>
+</head>
+<body>
+  <p>Verified against the reference run at 09:14.</p>
+  <section><p>Verified against the reference run at 09:14.</p></section>
+  <p class="fine">Seventeen pixels is not on the type scale.</p>
+  <details open>
+    <summary>Advanced options</summary>
+    <details open>
+      <summary>Even more options</summary>
+      <p>Inner content.</p>
+    </details>
+  </details>
+  <div><button type="button">Reset this group</button></div>
+  <div><button type="button">Reset this group</button></div>
+</body>
+</html>
