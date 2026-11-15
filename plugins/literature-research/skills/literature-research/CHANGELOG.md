@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.3.0 (2026-11-15)
+- Failed searches are logged (arXiv retried and paced); keys follow the first author after a merge; self-checked ledger label; DEVONthink only through MCP tools (lit.py no longer calls osascript; search --hits); absence, verify-by-author-year and fetch --papers guidance (O2, O3, O4)
+
 ## 0.2.1 (2026-11-14)
 - lit.py text/quote: the cache file name is cut to the 255-byte file-name limit (hash keeps it unique), and a too-long name beside the PDF falls back to the cache folder; a DEVONthink PDF named after a 250-character sentence no longer fails (O1)
 

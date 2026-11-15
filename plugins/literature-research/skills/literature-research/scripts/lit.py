@@ -5,15 +5,17 @@ Manages one folder per research question, `docs/literature/<topic>/`:
   question.md, search_log.md, candidates.jsonl, ledger.md, verify/, synthesis.md, sources.bib, to_fetch.md
 
 Commands: init, search (pubmed | s2 | arxiv | openalex | devonthink), cites, screen, fetch, text, quote,
-check, bib, devonthink-status.  Run `lit.py -h` or `lit.py <command> -h`.
+check, bib.  Run `lit.py -h` or `lit.py <command> -h`.
 
 Exit codes: 0 ok; 1 problems found / bad input; 2 not run (optional tool or DEVONthink unavailable);
 3 full text not found (ask the owner; written to to_fetch.md); 4 network or API failure.
-fetch routes: DEVONthink (DOI or title+year match, identity checked on page 1), papers folder, open-access PDF (must be a real PDF),
+fetch routes: a file you give with --file (e.g. found with the DEVONthink MCP tools; identity checked on page 1), papers folder, open-access PDF (must be a real PDF),
 Europe PMC full text (.xml + .txt with section markers; quote locators are then section headings).
-Optional tools: `pdftotext` (poppler) for text/quote on PDFs; `osascript` + DEVONthink on macOS.
-Environment: NCBI_API_KEY, S2_API_KEY (else the macOS Keychain item S2_API_KEY; LIT_KEYCHAIN=off skips it), OPENALEX_API_KEY (all optional); LIT_DEVONTHINK=off disables DEVONthink.
-Semantic Scholar calls are paced to one per 1.1 s across all lit.py processes on the machine (the keyed limit is 1/s).
+Optional tool: `pdftotext` (poppler) for text/quote on PDFs.
+DEVONthink is never called from here (no osascript): the agent uses the DEVONthink MCP tools and hands the results over with
+`search DIR devonthink QUERY --hits FILE.json` (rows with name, path, uuid, url, doi) or `fetch DIR KEY --file PATH`.
+Environment: NCBI_API_KEY, S2_API_KEY (else the macOS Keychain item S2_API_KEY; LIT_KEYCHAIN=off skips it), OPENALEX_API_KEY (all optional).
+Semantic Scholar calls are paced to one per 1.1 s across all lit.py processes on the machine (the keyed limit is 1/s); arXiv to one per 3 s.
 """
 import argparse
 import bisect
@@ -43,7 +45,7 @@ TEMPLATES = SKILL_DIR / "templates" / "literature"
 QUESTION_TYPES = ("value", "review", "novelty", "verify", "method")
 STATUSES = ("new", "in", "out")
 EVIDENCE = ("measured", "modelled", "cited", "inferred")
-VERIFIED = ("unchecked", "confirmed", "corrected", "not-found", "abstract-only", "indirect")
+VERIFIED = ("unchecked", "confirmed", "corrected", "not-found", "abstract-only", "indirect", "self-checked")
 LEDGER_COLS = ["id", "claim", "value", "conditions", "source", "locator", "quote", "evidence", "verified", "note"]
 LOG_HEADER = "| # | date | source | query | filters | hits | new | note |"
 LOG_SEP = "|---|------|--------|-------|---------|------|-----|------|"
@@ -269,7 +271,7 @@ def split_dt_name(name):
 
 
 def norm_devonthink(row):
-    """row: dict(name, path, uuid, url, doi) from AppleScript."""
+    """row: dict(name, path, uuid, url, doi) from the DEVONthink MCP tools."""
     name = re.sub(r"\.(pdf|txt|md|rtf|html?)$", "", row.get("name", ""), flags=re.I)
     title, authors, year = split_dt_name(name)
     r = mkrec(doi=row.get("doi", ""), title=title, authors=authors, year=year)
@@ -281,15 +283,24 @@ def norm_devonthink(row):
 
 # ---------------------------------------------------------------- candidates
 
+def surname_part(rec):
+    """Key prefix from the first author's surname ('' when the record has no authors)."""
+    first = rec["authors"][0].split(",")[0] if rec["authors"] else ""
+    first = unicodedata.normalize("NFKD", first)
+    first = "".join(c for c in first if c.isalnum() and ord(c) < 128)
+    return first[:1].upper() + first[1:]
+
+
 def make_key(rec, taken):
-    first = (rec["authors"][0].split(",")[0] if rec["authors"] else "")
+    first = surname_part(rec)
     if not first:
         stop = {"the", "a", "an", "on", "of", "and", "using", "towards", "toward", "for", "in"}
         words = re.findall(r"[^\W\d_]{3,}", rec["title"], flags=re.U)
         first = next((w for w in words if w.lower() not in stop), "Anon")  # DEVONthink hits have no authors
-    first = unicodedata.normalize("NFKD", first)
-    first = "".join(c for c in first if c.isalnum() and ord(c) < 128)
-    first = (first[:1].upper() + first[1:]) or "Anon"
+        first = unicodedata.normalize("NFKD", first)
+        first = "".join(c for c in first if c.isalnum() and ord(c) < 128)
+        first = (first[:1].upper() + first[1:]) or "Anon"
+    first = first or "Anon"
     base = f"{first}{rec['year'] or 'NoYear'}"
     key, i = base, 1
     while key in taken:
@@ -385,7 +396,13 @@ def merge_records(existing, incoming):
                         if (not c.get("year") or not n.get("year") or c["year"] == n["year"])
                         and not (c.get("doi") and n.get("doi") and c["doi"] != n["doi"])), None)
         if hit is not None:
+            had_authors = bool(hit.get("authors"))
             merge_into(hit, n)
+            if not had_authors and hit.get("authors") and hit.get("status", "new") == "new":
+                # first seen without authors (a DEVONthink hit): its key came from the title; screened rows keep theirs
+                taken.discard(hit["key"])
+                hit["key"] = make_key(hit, taken)
+                taken.add(hit["key"])
             rec, is_new = hit, False
         else:
             rec, is_new = n, True
@@ -481,7 +498,7 @@ def s2_key():
 S2_INTERVAL = 1.1  # seconds between Semantic Scholar calls: a key allows 1 request per second, all endpoints together
 
 
-def s2_pace(interval=S2_INTERVAL):
+def s2_pace(interval=S2_INTERVAL, name="s2-last-call"):
     """Wait until `interval` has passed since the last Semantic Scholar call made from this machine by any
     lit.py process (parallel helpers and searches share one key), then record this call. The time is kept
     in a small file under a lock; without fcntl (Windows) only this process is paced."""
@@ -489,7 +506,7 @@ def s2_pace(interval=S2_INTERVAL):
     try:
         import fcntl
         base.mkdir(parents=True, exist_ok=True)
-        with open(base / "s2-last-call", "a+") as f:
+        with open(base / name, "a+") as f:
             fcntl.flock(f, fcntl.LOCK_EX)  # held while waiting, so callers go one at a time
             f.seek(0)
             try:
@@ -505,14 +522,14 @@ def s2_pace(interval=S2_INTERVAL):
             return
     except (ImportError, OSError):
         pass
-    global _S2_LAST
-    wait = min(_S2_LAST + interval - time.time(), interval)
+    wait = min(_LAST.get(name, 0.0) + interval - time.time(), interval)
     if wait > 0:
         time.sleep(wait)
-    _S2_LAST = time.time()
+    _LAST[name] = time.time()
 
 
-_S2_LAST = 0.0
+_LAST = {}
+ARXIV_INTERVAL = 3.0  # arXiv's API terms ask for 3 s between calls
 
 
 def s2_get(url, retries=7):
@@ -574,7 +591,9 @@ def arxiv_query(q, since):
 
 def search_arxiv(query, maxn, since):
     p = {"search_query": arxiv_query(query, since), "max_results": min(maxn, 200), "sortBy": "relevance"}
-    return norm_arxiv_feed(http_get("https://export.arxiv.org/api/query?" + qs(p))), ""
+    s2_pace(ARXIV_INTERVAL, "arxiv-last-call")
+    # bursts of 429 are common: back off for about 90 s before giving up (the search is then logged as failed)
+    return norm_arxiv_feed(http_get("https://export.arxiv.org/api/query?" + qs(p), retries=6)), ""
 
 
 def openalex_params(extra):
@@ -591,112 +610,9 @@ def search_openalex(query, maxn, since):
 
 # ---------------------------------------------------------------- DEVONthink
 
-def dt_disabled():
-    return os.environ.get("LIT_DEVONTHINK", "").lower() in ("off", "0", "no", "false")
-
-
-def osa(script, timeout=60):
-    return subprocess.run(["osascript", "-"], input=script, text=True, capture_output=True, timeout=timeout)
-
-
-def dt_reason(stderr):
-    s = stderr or ""
-    if "-1743" in s:
-        return ("not authorised: grant the automation permission in System Settings > Privacy & Security > Automation "
-                "(error -1743)")
-    if "-1728" in s or "Can't get application" in s or "-10814" in s:
-        return "DEVONthink is not installed (no application with id DNtp)"
-    if "-600" in s or "isn't running" in s:
-        return "DEVONthink is not running"
-    return "AppleScript error: " + (s.strip().splitlines() or ["unknown"])[-1][:200]
-
-
-def dt_status():
-    """Return (ok, reason). Never raises."""
-    if dt_disabled():
-        return False, "disabled by LIT_DEVONTHINK=off"
-    if sys.platform != "darwin":
-        return False, "not macOS (DEVONthink needs macOS and osascript)"
-    if not shutil.which("osascript"):
-        return False, "osascript not found on PATH"
-    if shutil.which("mdfind"):  # referring to an uninstalled app by id can raise a "where is it?" dialog
-        found = subprocess.run(["mdfind", "kMDItemCFBundleIdentifier == 'com.devon-technologies.think*'"],
-                               capture_output=True, text=True).stdout.strip()
-        if not found:
-            return False, "DEVONthink is not installed (Spotlight finds no com.devon-technologies.think app)"
-    try:
-        p = osa('return application id "DNtp" is running', 30)
-        if p.returncode != 0:
-            return False, dt_reason(p.stderr)
-        if p.stdout.strip() != "true":
-            return False, "DEVONthink is not running"
-        p = osa('tell application id "DNtp" to return count of databases', 60)
-    except subprocess.TimeoutExpired:
-        return False, "timed out (a permission dialog may be waiting; answer it and retry)"
-    except OSError as e:
-        return False, f"could not run osascript: {e}"
-    if p.returncode != 0:
-        return False, dt_reason(p.stderr)
-    return True, f"DEVONthink reachable, {p.stdout.strip()} database(s) open"
-
-
-def as_quote(s):
-    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
-
-
-def dt_search(query, maxn=25):
-    ok, why = dt_status()
-    if not ok:
-        raise LitError("DEVONthink unavailable: " + why, 2)
-    script = f'''
-set RS to ASCII character 30
-set TB to ASCII character 9
-set out to ""
-tell application id "DNtp"
-  set found to {{}}
-  repeat with d in databases
-    try
-      set found to found & (search "{as_quote(query)}" in root of d)
-    end try
-  end repeat
-  set n to count of found
-  if n > 500 then set n to 500
-  set cnt to 0
-  repeat with i from 1 to n
-    if cnt >= {int(maxn)} then exit repeat
-    set r to item i of found
-    try
-      set p to path of r
-      if p is not missing value and p is not "" then
-        set dv to ""
-        try
-          set dv to (digital object identifier of r) as text
-        end try
-        set out to out & (name of r) & TB & p & TB & (uuid of r) & TB & (reference URL of r) & TB & dv & RS
-        set cnt to cnt + 1
-      end if
-    end try
-  end repeat
-end tell
-return out
-'''
-    try:
-        p = osa(script, 120)
-    except subprocess.TimeoutExpired:
-        raise LitError("DEVONthink search timed out", 2)
-    if p.returncode != 0:
-        raise LitError("DEVONthink unavailable: " + dt_reason(p.stderr), 2)
-    rows = []
-    for rec in p.stdout.split("\x1e"):
-        parts = rec.strip("\n").split("\t")
-        if len(parts) >= 4 and parts[0]:
-            rows.append(dict(name=parts[0], path=parts[1], uuid=parts[2], url=parts[3],
-                             doi=norm_doi(parts[4]) if len(parts) > 4 and parts[4] != "missing value" else ""))
-    return rows
-
-
 def search_devonthink(query, maxn, since):
-    return [norm_devonthink(r) for r in dt_search(query, maxn)], ""
+    raise LitError("DEVONthink unavailable: lit.py never calls osascript; search with the DEVONthink MCP tools and pass "
+                   "the hits with --hits FILE.json (rows with name, path, uuid, url, doi)", 2)
 
 
 SOURCES = {"pubmed": search_pubmed, "s2": search_s2, "arxiv": search_arxiv, "openalex": search_openalex,
@@ -729,6 +645,17 @@ def cmd_init(a):
     return 0
 
 
+def read_dt_hits(path):
+    """Rows the agent got from the DEVONthink MCP tools: a JSON list of {name, path, uuid, url, doi}."""
+    try:
+        rows = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise LitError(f"cannot read --hits {path}: {e}")
+    if not isinstance(rows, list) or not all(isinstance(r, dict) and r.get("name") for r in rows):
+        raise LitError("--hits must be a JSON list of objects with at least a name")
+    return [norm_devonthink({**r, "doi": norm_doi(r.get("doi", ""))}) for r in rows]
+
+
 def cmd_search(a):
     d = Path(a.dir)
     if not d.is_dir():
@@ -736,13 +663,16 @@ def cmd_search(a):
     maxn = max(1, a.max)
     filters = f"max={maxn}" + (f"; since={a.since}" if a.since else "")
     try:
-        records, note = SOURCES[a.source](a.query, maxn, a.since)
+        if a.source == "devonthink" and a.hits:
+            records, note = read_dt_hits(a.hits), ""
+            if a.since:
+                note = "since ignored for devonthink"
+        else:
+            records, note = SOURCES[a.source](a.query, maxn, a.since)
     except NetError as e:
-        if a.source == "s2" and S2_HINT in str(e):
-            append_log(d, a.source, a.query, filters, 0, 0, f"FAILED, nothing searched: {S2_HINT}")
+        # PRISMA-S: a failed search is still a search; report it with 0 hits and the error
+        append_log(d, a.source, a.query, filters, 0, 0, f"FAILED: {S2_HINT if S2_HINT in str(e) else e}")
         raise
-    if a.source == "devonthink" and a.since:
-        note = "since ignored for devonthink"
     if (a.source == "pubmed" and not records and len(a.query.split()) > 4
             and not re.search(r"\b(AND|OR|NOT)\b", a.query)):
         print("hint: " + PUBMED_HINT, file=sys.stderr)
@@ -949,21 +879,6 @@ def is_pdf_file(path):
         return False
 
 
-def dt_accept(rec, row):
-    """Accept a DEVONthink row only on a DOI match, or title similarity >= 0.9 with a compatible year."""
-    if not row["path"].lower().endswith(".pdf") or not Path(row["path"]).exists():
-        return False
-    if rec.get("doi") and row.get("doi"):
-        return rec["doi"] == row["doi"]
-    name = re.sub(r"\.pdf$", "", row["name"], flags=re.I)
-    row_title, _, row_year = split_dt_name(name)
-    rec_title, _, rec_year = split_dt_name(rec.get("title", ""))
-    rec_year = rec.get("year") or rec_year
-    if row_year and rec_year and row_year != rec_year:
-        return False
-    return difflib.SequenceMatcher(None, norm_title(row_title), norm_title(rec_title)).ratio() >= 0.9
-
-
 def check_candidate_pdf(rec, path, route, notes):
     """Return (path, route) when `path` is a real PDF of this paper, else None (reason appended to notes)."""
     if not is_pdf_file(path):
@@ -976,20 +891,6 @@ def check_candidate_pdf(rec, path, route, notes):
     if why.startswith("identity not checked"):
         notes.append(f"{route}: {why}")
     return path, route
-
-
-def fetch_devonthink(rec, notes):
-    tries = ([("doi", rec["doi"])] if rec.get("doi") else []) + ([("title", split_dt_name(rec["title"])[0])] if rec.get("title") else [])
-    seen = set()
-    for how, q in tries:
-        for row in dt_search(q, 15):
-            if row["path"] in seen or not dt_accept(rec, row):
-                continue
-            seen.add(row["path"])
-            hit = check_candidate_pdf(rec, row["path"], f"devonthink ({how})", notes)
-            if hit:
-                return hit
-    return None
 
 
 def fetch_papers_dir(rec, papers, notes):
@@ -1191,17 +1092,7 @@ def cmd_fetch(a):
         if hit:
             print(f"{hit[0]}\nroute: {hit[1]}")
             return 0
-    if dt_disabled():
-        notes.append("devonthink: disabled")
-    else:
-        try:
-            hit = fetch_devonthink(rec, notes)
-            if hit:
-                print(f"{hit[0]}\nroute: {hit[1]}")
-                return 0
-            notes.append("devonthink: no matching PDF")
-        except LitError as e:
-            notes.append(f"devonthink: skipped ({e})")
+    notes.append("devonthink: not searched here (use its MCP tools, then fetch --file PATH)")
     hit = fetch_papers_dir(rec, papers, notes)
     if hit:
         print(f"{hit[0]}\nroute: {hit[1]}")
@@ -1570,8 +1461,14 @@ def lint(d):
                 warns.append(f"synthesis.md cites {i} which is abstract-only (full text not read)")
             elif ids[i].get("verified") == "indirect":
                 warns.append(f"synthesis.md cites {i} which is indirect (the source cites another paper for it)")
+            elif ids[i].get("verified") == "self-checked":
+                warns.append(f"synthesis.md cites {i} which is self-checked (re-read by its extractor, not by a fresh checker)")
     else:
         warns.append("synthesis.md not found; citations not checked")
+    for c in cands:
+        sn = surname_part(c)
+        if sn and not c["key"].startswith(sn):
+            warns.append(f"candidate {c['key']}: key does not start with the first author's surname ({sn})")
     for c in cands:
         if c.get("status") == "in" and c["key"] not in used:
             warns.append(f"candidate {c['key']} is 'in' but no ledger row uses it")
@@ -1629,12 +1526,6 @@ def cmd_bib(a):
     return 0
 
 
-def cmd_dt_status(a):
-    ok, why = dt_status()
-    print(("OK: " if ok else "unavailable: ") + why)
-    return 0 if ok else 2
-
-
 # ---------------------------------------------------------------- cli
 
 def build_parser():
@@ -1654,6 +1545,7 @@ def build_parser():
     s.add_argument("query")
     s.add_argument("--max", type=int, default=25)
     s.add_argument("--since", type=int, metavar="YEAR")
+    s.add_argument("--hits", metavar="FILE", help="devonthink only: JSON rows from the DEVONthink MCP tools")
     s.set_defaults(fn=cmd_search)
 
     s = sp.add_parser("cites", help="citation chasing (Semantic Scholar, fallback OpenAlex)")
@@ -1674,7 +1566,7 @@ def build_parser():
     s.add_argument("--rest", nargs=2, metavar=("STATUS", "REASON"), help="mark every candidate still 'new' (after --from)")
     s.set_defaults(fn=cmd_screen)
 
-    s = sp.add_parser("fetch", help="find or download the full text (DEVONthink, papers folder, open access)")
+    s = sp.add_parser("fetch", help="find or download the full text (a given file, papers folder, open access)")
     s.add_argument("dir")
     s.add_argument("key")
     s.add_argument("--papers", help="folder of PDFs (default <repo>/references/papers)")
@@ -1702,8 +1594,6 @@ def build_parser():
     s.add_argument("dir")
     s.set_defaults(fn=cmd_bib)
 
-    s = sp.add_parser("devonthink-status", help="is DEVONthink reachable?")
-    s.set_defaults(fn=cmd_dt_status)
     return ap
 
 

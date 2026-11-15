@@ -44,7 +44,7 @@ Concrete form:
 - Value or parameter lookup: wants primary measurements with conditions (E); stop when several independent primary data sets under matching conditions agree or clearly disagree.
 - Mechanism or state-of-field review: start from existing reviews (A9), then read primary papers on the points that are contested or load-bearing.
 - Novelty or prior-art check: the answer is "not found in sources S on date D with queries Q", never "does not exist" (H4). Needs the widest search.
-- Verifying a claim or citation: no search; open the cited source and run section F.
+- Verifying a claim or citation: no search when the reference is complete (DOI, title or file); open the cited source and run section F. An author-year reference ("Chen et al. 2026") is resolved first: search, check identity on page 1, ask the person if two papers fit.
 - Finding a method: PICO-style concepts fit poorly (A3); expect more iteration and more citation chasing (B6, C4).
 Source: Coch 4.4.2 (PICO unsuited to methods and other non-intervention questions; "tailored approach"); Pau13 Rule 4 (choose the review type from the material and the time).
 
