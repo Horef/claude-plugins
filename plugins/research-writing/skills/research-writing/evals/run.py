@@ -515,6 +515,61 @@ def fact_lifecycle_checks() -> list[str]:
     return fails
 
 
+def pilot_checks() -> list[str]:
+    """From the section-split pilot (O23-O26): figure files input from section files are followed and count as placed
+    where they are input; lettered claim ids (C1a); own runs are not unsourced literature; accepted check results."""
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t) / "w"
+        run("init", str(d))
+        (d / "ledger.md").write_text(
+            "# L\n\n## Message\nWe found X.\n\n## Claims\n| id | claim | status | evidence | figure | condition |\n"
+            "|---|---|---|---|---|---|\n| C1a | X rises | established | R1 | fig:a | all |\n"
+            "| C1b | X stays | plausible | R2 | none | all |\n\n## Out of scope\n")
+        (d / "sections").mkdir()
+        (d / "figures").mkdir(exist_ok=True)
+        (d / "sections" / "01-x.tex").write_text(
+            "\\section{X rises}\n\\claim{C1a}\nX rises (\\figref{fig:a}); spikes were measured on the same 16 trials "
+            "of input.\n\\input{figures/fa}\n\n\\claim{C1b}\nX stays.\n")
+        (d / "figures" / "fa.tex").write_text(
+            "% figure file\n\\begin{figure}[tbp]\\centering\\rule{2cm}{1cm}\\caption{\\textbf{X rises.} Mean.}"
+            "\\label{fig:a}\\end{figure}\n")
+        m = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(m[:m.index("\\begin{inshort}")] + "\\begin{inshort}We found X.\\end{inshort}\n"
+                                    "\\input{sections/01-x}\n" + m[m.index("\\printbibliography"):])
+        r = run("check", str(d))
+        if r.returncode != 0 or "placement:" in r.stdout or "never cited" in r.stdout or "C1a" in r.stdout \
+                or "source:" in r.stdout:
+            fails.append("figure file input from a section, lettered ids, own trials: no problem expected:\n" + r.stdout)
+        # unsplit: main.tex cites the figure and inputs its file at that paragraph (the pilot's 18 false notes)
+        main_split = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(main_split.replace("\\input{sections/01-x}", (d / "sections" / "01-x.tex").read_text()))
+        (d / "sections" / "01-x.tex").unlink()
+        r = run("check", str(d))
+        if r.returncode != 0 or "placement:" in r.stdout:
+            fails.append("figure file input where main.tex cites it counts as placed there:\n" + r.stdout)
+        (d / "sections" / "01-x.tex").write_text((d / "main.tex").read_text().split("\\begin{inshort}We found X.\\end{inshort}\n")[1]
+                                                  .split("\\printbibliography")[0])
+        (d / "main.tex").write_text(main_split)
+        (d / "figures" / "fa.tex").write_text((d / "figures" / "fa.tex").read_text().replace("\\textbf{X rises.}", "X rises."))
+        if "fig:a: caption does not start with a bold title" not in run("check", str(d)).stdout:
+            fails.append("figure checks must see a figure input two levels down")
+        r = run("where", str(d), "C1a", "fig:a")
+        if r.returncode or "marked at: sections/01-x.tex:2" not in r.stdout or "defined at figures/fa.tex:2" not in r.stdout:
+            fails.append("where C1a and fig:a:\n" + r.stdout)
+        # accepted check results: not counted, listed; a stale entry is noted
+        (d / "sections" / "01-x.tex").write_text((d / "sections" / "01-x.tex").read_text() + "\n" + "word " * 240 + "\n")
+        if run("check", str(d)).returncode != 1:
+            fails.append("a 240-word paragraph should be a problem before it is accepted")
+        (d / "ledger.md").write_text((d / "ledger.md").read_text() + "\n## Accepted\n- `a paragraph of 240 words` long by "
+                                     "design (owner)\n- `no such text` old\n")
+        r = run("check", str(d))
+        if r.returncode != 1 or "accepted in ledger.md (1" not in r.stdout or "`no such text` in ledger.md matches nothing" \
+                not in r.stdout or "- a paragraph of" in r.stdout:
+            fails.append("accepted paragraph not counted, stale entry noted (the caption problem remains):\n" + r.stdout)
+    return fails
+
+
 def main() -> int:
     fails = []
     with tempfile.TemporaryDirectory() as t:
@@ -566,6 +621,7 @@ def main() -> int:
     fails += reader_checks()
     fails += facts_values_checks()
     fails += fact_lifecycle_checks()
+    fails += pilot_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")
