@@ -35,3 +35,9 @@
 
 ## Out of scope
 <!-- Results that exist but do not serve the message; say where they live instead. -->
+
+## Accepted
+<!-- Check results the person has accepted, so `wr.py check` stops counting them: one line each, a piece of the
+     problem's or note's text in backticks, then why and who decided. Example:
+     - `the inshort box has` the summary runs long by design (owner, 2026-11-16)
+     check lists them as accepted and notes an entry that no longer matches anything. -->

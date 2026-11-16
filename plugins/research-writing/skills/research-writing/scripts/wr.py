@@ -194,34 +194,81 @@ def _blank_comments(tex: str) -> str:
     return re.sub(r"(?<!\\)%.*", lambda m: " " * len(m.group(0)), tex)
 
 
+_CID, _FID = r"C\d+[a-z]*", r"F\d+[a-z]*"  # claim and fact ids; a letter suffix (C1a) splits one claim (O25)
+
+
+def _first(cell: str) -> str:
+    """A status cell's first word, so 'established (2x and native); plausible (mechanism)' counts as established."""
+    return (re.findall(r"[a-z]+", cell.lower()) or [""])[0]
+
+
+def _labels(cell: str) -> list[str]:
+    """The labels a figure cell names ('fig:seed (a)', 'fig:spread, fig:placement'); none for 'none (text)'."""
+    return re.findall(r"[A-Za-z]+:[\w:.\-]*[\w]", cell.replace("`", ""))
+
+
+def _idkey(s: str) -> tuple:
+    """Sort key for C3, C3a, C12."""
+    m = re.match(r"[A-Z](\d+)(.*)", s)
+    return (int(m.group(1)), m.group(2)) if m else (0, s)
+
+
 _INPUT = re.compile(r"\\(input|include)\{([^}]+)\}")
 
 
+_MAX_DEPTH = 8
+
+
+def _walk(d: Path) -> tuple[list[tuple[str, int, str]], dict[str, str]]:
+    """(segments, {file: the file that inputs it}): main.tex with \\input/\\include files inlined at any depth (a section
+    file that inputs a figure file), as (relative path, first line number in that file, text) in document order. Inputs
+    of preamble* files and of files that do not exist are dropped; \\input lines in comments are not followed."""
+    segs, parents = [], {}
+
+    def walk(rel: str, text: str, chain: tuple) -> None:
+        cur, start, pos, emitted = "", 0, 0, False
+        for m in _INPUT.finditer(_blank_comments(text)):
+            sub = Path(m.group(2) if m.group(2).endswith(".tex") else m.group(2) + ".tex").as_posix()
+            cur += text[pos:m.start()]
+            pos = m.end()
+            p = d / sub
+            if p.name.startswith("preamble") or not p.is_file() or sub in chain or len(chain) > _MAX_DEPTH:
+                continue
+            if cur:
+                segs.append((rel, 1 + text.count("\n", 0, start), cur))
+                emitted = True
+            parents.setdefault(sub, rel)
+            walk(sub, p.read_text(), chain + (sub,))
+            cur, start = "", pos
+        cur += text[pos:]
+        if cur or not emitted:
+            segs.append((rel, 1 + text.count("\n", 0, start), cur))
+    walk("main.tex", (d / "main.tex").read_text(), ("main.tex",))
+    return segs, parents
+
+
 def _segments(d: Path) -> list[tuple[str, int, str]]:
-    """main.tex with \\input/\\include files inlined (one level deep is enough for a write-up), as (relative path,
-    first line number in that file, text) in document order. Inputs of preamble* files and of files that do not exist
-    are dropped; \\input lines in comments are not followed."""
-    main = (d / "main.tex").read_text()
-    segs, cur, start, pos = [], "", 0, 0
-    for m in _INPUT.finditer(_blank_comments(main)):
-        rel = m.group(2) if m.group(2).endswith(".tex") else m.group(2) + ".tex"
-        cur += main[pos:m.start()]
-        pos = m.end()
-        p = d / rel
-        if p.name.startswith("preamble") or not p.exists():
-            continue
-        if cur:
-            segs.append(("main.tex", 1 + main.count("\n", 0, start), cur))
-        segs.append((Path(rel).as_posix(), 1, p.read_text()))
-        cur, start = "", pos
-    cur += main[pos:]
-    if cur or not segs:
-        segs.append(("main.tex", 1 + main.count("\n", 0, start), cur))
-    return segs
+    """main.tex with \\input/\\include files inlined at any depth, as (relative path, first line, text) in order."""
+    return _walk(d)[0]
+
+
+def _homes(d: Path) -> dict[str, str]:
+    """{file: the file it belongs to}: a file holding only figures or tables (figures/fig_x.tex) belongs to the file
+    that inputs it, so a figure input at the paragraph that cites it counts as placed there (O23)."""
+    segs, parents = _walk(d)
+    text = {}
+    for rel, _, s in segs:
+        text[rel] = text.get(rel, "") + s
+    only_floats = {rel for rel, s in text.items() if rel != "main.tex" and not re.sub(
+        r"\\begin\{(figure|table)\*?\}.*?\\end\{\1\*?\}", "", _strip_comments(s), flags=re.S).strip()}
+
+    def home(rel, n=0):
+        return home(parents[rel], n + 1) if rel in only_floats and rel in parents and n < _MAX_DEPTH else rel
+    return {rel: home(rel) for rel in text}
 
 
 def _tex_sources(d: Path) -> str:
-    """main.tex with \\input/\\include files inlined (one level deep is enough for a write-up)."""
+    """main.tex with \\input/\\include files inlined (at any depth)."""
     return "".join(t for _, _, t in _segments(d))
 
 
@@ -268,7 +315,7 @@ def _ledger(d: Path) -> dict:
     "facts": {id: {fact, values: [names], test, status, condition, evidence}}, "has_condition", "has_facts"}. Each table
     is read inside its own `## Claims` / `## Facts` section; a fully empty Facts row is the template's and is ignored."""
     p = d / "ledger.md"
-    out = {"claims": {}, "facts": {}, "message": "", "has_condition": False, "has_facts": False}
+    out = {"claims": {}, "facts": {}, "message": "", "has_condition": False, "has_facts": False, "accepted": []}
     if not p.exists():
         return out
     t = p.read_text()
@@ -278,17 +325,21 @@ def _ledger(d: Path) -> dict:
     for part in re.split(r"(?m)^## ", t)[1:]:
         head, _, rest = part.partition("\n")
         secs[(head.split() or [""])[0].lower()] = rest
-    cols, rows = _md_table(secs.get("claims", t), r"C\d+", ("claim", "status", "evidence", "figure", "condition", "facts"),
+    cols, rows = _md_table(secs.get("claims", t), _CID, ("claim", "status", "evidence", "figure", "condition", "facts"),
                            {"claim": 0, "status": 1, "evidence": 2, "figure": 3})
     out["has_condition"] = "condition" in cols
     for cid, cells in rows.items():
         c = {n: (cells[k] if k < len(cells) else "") for n, k in cols.items()}
         c.setdefault("condition", "")
-        c["facts"] = re.findall(r"F\d+", c.get("facts", "").replace("`", ""))
+        c["facts"] = re.findall(_FID, c.get("facts", "").replace("`", ""))
         out["claims"][cid] = c
+    # ## Accepted: one line per accepted check result, `text it contains` and why (O26)
+    out["accepted"] = [(m.group(1), m.group(2).strip(" -:—"))
+                       for m in re.finditer(r"^\s*-\s*`([^`]+)`(.*)$", re.sub(r"<!--.*?-->", "", secs.get("accepted", ""),
+                                                                                flags=re.S), re.M)]
     if "facts" in secs:
         out["has_facts"] = True
-        cols, rows = _md_table(secs["facts"], r"F\d+", ("fact", "values", "test", "status", "condition", "evidence"),
+        cols, rows = _md_table(secs["facts"], _FID, ("fact", "values", "test", "status", "condition", "evidence"),
                                {"fact": 0, "values": 1, "test": 2, "status": 3, "condition": 4, "evidence": 5})
         for fid, cells in rows.items():
             f = {n: (cells[k] if k < len(cells) else "").replace("`", "").strip() for n, k in cols.items()}
@@ -651,7 +702,7 @@ def check_values_facts(V: dict, led: dict, segs: list) -> list[str]:
                 why = led["facts"][fid]["status"] if _status(led["facts"][fid]) == "superseded" else "no longer holds"
                 probs.append(f"ledger.md {cid} rests on {fid}, which {'is ' + why if why != 'no longer holds' else why}: "
                              "revise the claim (or point it at the new fact) or its status")
-            elif c["status"] == "established" and led["facts"][fid]["status"] == "open":
+            elif _first(c["status"]) == "established" and _status(led["facts"][fid]) == "open":
                 probs.append(f"ledger.md {cid} is established but rests on {fid}, which is open: settle {fid} or make "
                              f"{cid} plausible")
     return probs
@@ -741,19 +792,31 @@ def bare_numbers(segs: list, V: dict, limit: int = 20) -> list[str]:
     return found[:limit] + ([f"... and {len(found) - limit} more"] if len(found) > limit else [])
 
 
-def figure_files(segs: list) -> list[str]:
-    """Figures whose \\label is in another file than their first citation (the figure goes with the section that cites it)."""
+def figure_files(segs: list, homes: dict | None = None) -> list[str]:
+    """Figures whose \\label is in another file than their first citation (the figure goes with the section that cites
+    it); a figure file belongs to the file that inputs it (homes)."""
+    homes = homes or {}
     where, first = {}, {}
     for rel, l0, text in segs:
         s = _strip_comments(text)
         for f in _FIGENV.finditer(s):
             for lab in re.findall(r"\\label\{(fig:[^}]+)\}", f.group(0)):
                 where.setdefault(lab, rel)
-    for h in _hits(segs, _REF):
-        for name in h[2].group(1).split(","):
-            first.setdefault(name.strip(), h)
+    inside = []  # a citation in another figure's caption counts only when the text never cites the figure
+    for rel, l0, text in segs:
+        s = _strip_comments(text)
+        spans = [m.span() for m in _FIGENV.finditer(s)]
+        for m in _REF.finditer(s):
+            h = (rel, l0 + s.count("\n", 0, m.start()))
+            for name in m.group(1).split(","):
+                if any(x <= m.start() < y for x, y in spans):
+                    inside.append((name.strip(), h))
+                else:
+                    first.setdefault(name.strip(), h)
+    for name, h in inside:
+        first.setdefault(name, h)
     return [f"{lab}: is in {rel} but first cited at {first[lab][0]}:{first[lab][1]}: move it to the section that cites it first"
-            for lab, rel in where.items() if lab in first and first[lab][0] != rel]
+            for lab, rel in where.items() if lab in first and homes.get(first[lab][0], first[lab][0]) != homes.get(rel, rel)]
 
 
 EDGE_BAND_MM, EDGE_SHARE, EDGE_INK = 0.8, 0.01, 200  # band along each edge; share of its length inked; grey < 200
@@ -830,7 +893,7 @@ def check(d: Path) -> list[str]:
         if not c["claim"]:
             probs.append(f"ledger.md {cid}: empty claim")
             continue
-        if c["status"] not in ("established", "plausible", "open"):
+        if _first(c["status"]) not in ("established", "plausible", "open"):
             probs.append(f"ledger.md {cid}: status '{c['status']}' is not established, plausible or open")
         if not c["evidence"]:
             probs.append(f"ledger.md {cid}: no evidence (a result entry or run id)")
@@ -840,10 +903,10 @@ def check(d: Path) -> list[str]:
         if f"\\claim{{{cid}}}" not in body:
             probs.append(f"ledger.md {cid} is not carried by any paragraph (add \\claim{{{cid}}} where it is made, or "
                          "move it to Out of scope)")
-        fig = c["figure"].strip("` ")
-        if fig and fig != "none" and f"\\label{{{fig}}}" not in body:
-            probs.append(f"ledger.md {cid}: figure {fig} has no \\label in the text")
-    for cid in sorted(set(re.findall(r"\\claim\{(C\d+)\}", body)) - set(led["claims"]), key=lambda s: int(s[1:])):
+        for fig in _labels(c["figure"]):
+            if f"\\label{{{fig}}}" not in body:
+                probs.append(f"ledger.md {cid}: figure {fig} has no \\label in the text")
+    for cid in sorted(set(re.findall(r"\\claim\{(" + _CID + r")\}", body)) - set(led["claims"]), key=_idkey):
         probs.append(f"\\claim{{{cid}}} in the text is not in ledger.md")
 
     # named values, facts, claims resting on facts, values changed since confirmed, section files
@@ -1050,7 +1113,9 @@ def figure_number_misses(d: Path, body: str, figs: list[str]) -> list[str]:
 # Words that point at someone else's finding; a sentence that uses one names its source (owner preference, 2026-11-09).
 _SOURCE_WORDS = re.compile(r"\b(measured|reported|observed|recorded|published|known|the literature|studies|in vivo|in vitro|"
                            r"experiments?|demonstrated|estimated by)\b", re.I)
-_CITED = re.compile(r"\\(?:paren|text|foot)?cite|\\cref|\\ref|\\figref|\\S|§|RESULTS|Section~|\b(?:we|our|here|this (?:model|cell|work))\b", re.I)
+_CITED = re.compile(r"\\(?:paren|text|foot)?cite|\\cref|\\ref|\\figref|\\val\{|\\fact\{|\\S|§|RESULTS|Section~|"
+                    r"\b(?:we|our|here|this (?:model|cell|work|write-up|report|study)|runs?|simulat\w*|trials?|sweeps?)\b",
+                    re.I)  # own work: our runs, simulations, trials, sweeps (O26)
 
 
 def unsourced_sentences(body: str, limit: int = 12) -> list[str]:
@@ -1111,7 +1176,7 @@ def notes(d: Path) -> list[str]:
     if V["vals"] and _snapshot(d)[0] is None:
         out.append("values: no values confirmed yet: after reading the text, run wr.py confirm DIR")
     out += ["value in text: " + x for x in bare_numbers(segs, V)]
-    out += ["placement: " + x for x in figure_files(segs)]
+    out += ["placement: " + x for x in figure_files(segs, _homes(d))]
     if led["facts"]:
         out += [f"facts: {cid} names no facts it rests on" for cid, c in led["claims"].items() if not c["facts"]]
         used = {f for c in led["claims"].values() for f in c["facts"]}
@@ -1135,14 +1200,23 @@ def cmd_check(a) -> int:
     if not (d / "main.tex").exists():
         print(f"no {d}/main.tex")
         return 1
-    probs = check(d)
+    probs, ns = check(d), notes(d)
+    acc = _ledger(d)["accepted"]
+    took = lambda x: next((k for k, _ in acc if k in x), None)
+    accepted = [(x, took(x)) for x in probs + ns if took(x)]
+    probs, ns = [x for x in probs if not took(x)], [x for x in ns if not took(x)]
+    ns += [f"accepted: `{k}` in ledger.md matches nothing now; remove it" for k, _ in acc
+           if not any(k == a for _, a in accepted)]
     for p in probs:
         print("- " + p)
-    ns = notes(d)
     if ns:
         print("notes (reported, they do not fail the check):")
         for n in ns:
             print("  " + n)
+    if accepted:
+        print(f"accepted in ledger.md ({len(accepted)}, not counted):")
+        for x, k in accepted:
+            print(f"  [{k}] {x[:110]}")
     if not (d / "build" / "main.aux").exists():
         print("(not built: figure-page checks skipped; run build)")
     print(f"{len(probs)} problem(s)")
@@ -1281,7 +1355,7 @@ def cmd_confirm(a) -> int:
     name facts, other names values."""
     d = Path(a.dir).resolve()
     led, fsnap = _ledger(d), _fact_snapshot(d) or {}
-    fids = [n for n in a.names if re.fullmatch(r"F\d+", n) and (n in led["facts"] or n in fsnap)]
+    fids = [n for n in a.names if re.fullmatch(_FID, n) and (n in led["facts"] or n in fsnap)]
     names, rc = [n for n in a.names if n not in fids], 0
     if names or (not fids and (d / "values").is_dir()):
         a.names = names
@@ -1374,14 +1448,14 @@ def cmd_where(a) -> int:
         return 0
     rest, rc = _rests_on(led), 0
     for item in a.items:
-        if re.fullmatch(r"C\d+", item):
+        if re.fullmatch(_CID, item):
             hs, c = [_at(h) for h in _hits(segs, _CLAIM) if h[2].group(1) == item], led["claims"].get(item)
             print(f"{item}: " + (f"{c['claim']} [{c['status']}]" if c else "not in ledger.md"))
             print("  marked at: " + (", ".join(hs) or "nowhere in the text"))
             if c and c["facts"]:
                 print("  rests on: " + ", ".join(f"{f} ({led['facts'][f]['status']})" if f in led["facts"] else f"{f} (unknown)"
                                                  for f in c["facts"]))
-        elif re.fullmatch(r"F\d+", item):
+        elif re.fullmatch(_FID, item):
             hs, f = [_at(h) for h in _hits(segs, _FACT) if h[2].group(1) == item], led["facts"].get(item)
             print(f"{item}: " + (f"{f['fact']} [{f['status']}]" if f else "not in ledger.md"))
             print("  stated at: " + (", ".join(hs) or "nowhere in the text"))
@@ -1401,7 +1475,7 @@ def cmd_where(a) -> int:
             defs = [_at(h) for h in _hits(segs, re.compile(r"\\label\{" + re.escape(item) + r"\}"))]
             cites = [_at(h) for h in _hits(segs, _REF) if item in [n.strip() for n in h[2].group(1).split(",")]]
             print(f"{item}: defined at {', '.join(defs) or 'nowhere'}; cited at {', '.join(cites) or 'nowhere'}")
-            cl = [c for c, v in led["claims"].items() if v["figure"].strip("` ") == item]
+            cl = [c for c, v in led["claims"].items() if item in _labels(v["figure"])]
             if cl:
                 print("  claims: " + ", ".join(cl))
         else:
