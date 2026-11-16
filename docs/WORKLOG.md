@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-16 - research-writing 0.10.0: retrofit, number words, ledger values, reword
+
+- From the values pilot on cell1542_mel1998 (O28, O29, helper's order 1-4). `wr.py upgrade DIR [--dry-run]` adds only what an older write-up lacks (preamble `\fact`/`\val`/`\valw`, values.tex input, ledger Values/Facts/Accepted + facts column, values.tex in .gitignore; backups in build/upgrade-*); `check` now says to run it when the text uses a mark no preamble defines. `\valw`/`\Valw` print values 0-20 as words. The number scan (`check` notes, full list in new `wr.py numbers`) now covers counts below 10 and number words when there is evidence: "N of <value>" (also flags a count no value equals any more), or the next word matches the value's other places, name or unit; likely notes first. `{{name}}` in ledger claim and fact rows: expanded by `where`, unknown names a problem, rows listed when the value changes. `wr.py reword DIR` writes review/reword-<date>.md: one task per sentence using a changed value, tagged number-only (light), words (standard) or conclusion (deep: false fact test, In short, title, ledger claim), derived values naming their cause.
+- Verified: `loop.py eval research-writing` exit 0 (new `retrofit_reword_checks` fails on 0.9.1), including a real LuaLaTeX build of an upgraded write-up with `\valw` ("Of the eight that fail"); `upgrade` tried on a write-up made from the 0.8 template; `numbers` on a copy of the pilot (pilot/mel-values): 59 likely, 383 same-digit notes (was 299 undifferentiated, small counts invisible). `loop.py check --base origin/main` 0/0, docmap check 0 errors.
+- Unverified: not run on the real pilot write-up (owner to try `upgrade`, `numbers`, `reword` there); reword tasks never handed to a light model. Left open as O30: grouping derived changes in `check`, per-value source.
+
 ## 2026-11-16 - course-lecture-notes 1.9.0: reading-first guides
 
 - The owner found the 769001 guides "very dense mathematical lists" (Anki-first rules: where: list after every equation, bold label per paragraph, equation before idea). Pilot on 769001 Tutorial 3 Part 3 approved ("reads much better, simpler and cleaner"; "the short symbol line really helps"; level "maybe a bit on the higher end", acceptable).

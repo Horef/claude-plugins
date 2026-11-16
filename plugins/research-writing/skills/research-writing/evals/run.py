@@ -570,6 +570,128 @@ def pilot_checks() -> list[str]:
     return fails
 
 
+def retrofit_reword_checks() -> list[str]:
+    """O28/O29: upgrade an old write-up, number words (\\valw), small counts and words in the number scan, {{name}} in
+    ledger rows, reword tasks with a tier per sentence."""
+    fails = []
+    sys.path.insert(0, str(WR.parent))
+    import wr  # noqa: E402
+    pre = (WR.parent.parent / "templates" / "writeup" / "preamble.tex").read_text()
+    for _, snip in wr.UPGRADE_PREAMBLE:
+        for ln in snip.splitlines():
+            if ln not in pre.splitlines():
+                fails.append(f"upgrade snippet line not in the template preamble: {ln}")
+    with tempfile.TemporaryDirectory() as t:
+        d = _vf_fixture(Path(t), "old")
+        # an older write-up: no \fact/\val/\valw in its preamble, no Facts/Accepted, no facts column, no values.tex ignore
+        p = d / "preamble.tex"
+        old = re.sub(r"\\newcommand\{\\fact\}\[1\]\{\}\n", "", p.read_text())
+        old = re.sub(r"\\makeatletter\n\\newcommand\{\\wrsetval\}.*?\\makeatother\n% \\valw.*?\\makeatother\n", "", old,
+                     flags=re.S).replace("\\IfFileExists{values.tex}{\\input{values}}{}\n", "")
+        p.write_text(old)
+        led = (d / "ledger.md").read_text()
+        led = re.sub(r"## Facts\n.*?\n\n", "", led, flags=re.S).replace(" facts |\n", "\n").replace("|---|\n| C1", "\n| C1")
+        led = led.replace("| 10x | F1 |", "| 10x |").replace("| all | F2 |", "| all |")
+        (d / "ledger.md").write_text(led)
+        (d / ".gitignore").write_text("build/\n")
+        m = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(m.replace("\\fact{F1} ", "").replace("\\fact{F2} ", ""))
+        out = run("check", str(d)).stdout
+        if "\\val is used in the text but no preamble defines it: run `wr.py upgrade DIR`" not in out:
+            fails.append("check should send an old preamble to upgrade:\n" + out)
+        r = run("upgrade", str(d), "--dry-run")
+        if "would: preamble.tex: added \\fact, \\val, \\valw and \\Valw" not in r.stdout or "DeclareRobustCommand{\\val}" in p.read_text():
+            fails.append("upgrade --dry-run lists without writing:\n" + r.stdout)
+        r = run("upgrade", str(d))
+        new = p.read_text()
+        for want in ("\\newcommand{\\fact}[1]{}", "\\DeclareRobustCommand{\\val}", "\\DeclareRobustCommand{\\Valw}"):
+            if want not in new:
+                fails.append(f"upgraded preamble lacks {want}")
+        if new.rfind("\\IfFileExists{values.tex}") < new.rfind("\\wrsetvalw"):
+            fails.append("values.tex must be input after the definitions it uses")
+        lt = (d / "ledger.md").read_text()
+        if "## Facts" not in lt or "## Accepted" not in lt or "| condition | facts |" not in lt or "values.tex" not in \
+                (d / ".gitignore").read_text() or not list((d / "build").glob("upgrade-*/preamble.tex")):
+            fails.append("upgrade: ledger sections, facts column, .gitignore, backup:\n" + r.stdout + lt)
+        if "up to date" not in run("upgrade", str(d)).stdout:
+            fails.append("a second upgrade should change nothing")
+        if any("no preamble defines" in x for x in _probs(run("check", str(d)).stdout)):
+            fails.append("check still asks for upgrade after upgrade")
+        # number words and small counts: only with evidence (a count out of a value, or the word after it)
+        (d / "values" / "c.json").write_text(json.dumps({"n_draws": 13, "n_pass": 7, "n_fail": {"expr": "n_draws - n_pass"}}))
+        m = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(m.replace("\\section{Y holds}", "\\section{Y holds}\nThen \\val{n_pass} of \\val{n_draws} "
+                                    "placements pass. Of the six that fail, one is close. Only 7 of 13 pass, 5 of 13 tie, "
+                                    "and all 13 placements count. One reason is 7 days.\n"))
+        ln = _lineof(d / "main.tex", "Of the six that fail")
+        out = run("numbers", str(d)).stdout
+        for want in (f"main.tex:{ln}: 'six that fail, one...' is likely the value n_fail", "write \\valw{n_fail}",
+                     f"main.tex:{ln}: '7 of 13' counts out of n_draws; 7 is the value n_pass: write \\val{{n_pass}}",
+                     f"main.tex:{ln}: '5 of 13' counts out of n_draws, but no value equals 5",
+                     f"main.tex:{ln}: 13 is the value n_draws"):
+            if want not in out:
+                fails.append(f"numbers: missing {want}:\n{out}")
+        if "'One reason" in out or "7 days" in out or "'one is" in out:
+            fails.append("numbers: a number word or small count without evidence was noted:\n" + out)
+        # {{name}} in the ledger: expanded by where, an unknown one a problem, a typed count noted
+        lt = (d / "ledger.md").read_text().replace("| C2 | Y holds |", "| C2 | {{n_pass}} of {{n_draws}} hold, 7 of 13 |")
+        (d / "ledger.md").write_text(lt.replace("| C1 | X rises |", "| C1 | X rises {{ghost}} |"))
+        if "C2: 7 of 13 hold" not in run("where", str(d), "C2").stdout:
+            fails.append("where should expand {{name}} in a claim")
+        out = run("check", str(d)).stdout
+        if "ledger.md C1: {{ghost}} is not a defined value" not in out or "'7 of 13' counts out of n_draws; 7 is the value " \
+                "n_pass: write {{n_pass}}" not in out:
+            fails.append("ledger values in check:\n" + out)
+        (d / "ledger.md").write_text(lt)
+        # reword: confirm, change, one task per sentence with its tier
+        if "no values confirmed yet" not in run("reword", str(d)).stdout:
+            fails.append("reword before any confirm should say so")
+        run("confirm", str(d))
+        if "nothing to reword" not in run("reword", str(d)).stdout:
+            fails.append("reword with nothing changed")
+        (d / "values" / "c.json").write_text(json.dumps({"n_draws": 13, "n_pass": 5, "n_fail": {"expr": "n_draws - n_pass"}}))
+        m = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(m.replace("Of the six that fail,", "Of the \\valw{n_fail} that fail, one is close. "
+                                              "We kept \\val{n_pass} draws.") .replace("one is close. Only", "Only"))
+        if "\\wrsetvalw{n_fail}{eight}{Eight}" not in (run("values", str(d)) and (d / "values.tex").read_text()):
+            fails.append("values.tex lacks the number word of n_fail")
+        r = run("reword", str(d), "--json")
+        try:
+            tasks = json.loads(r.stdout)
+        except ValueError:
+            tasks = []
+            fails.append("reword --json:\n" + r.stdout + r.stderr)
+        by = {x["sentence"]: x for x in tasks}
+        exp = {"Then \\val{n_pass} of \\val{n_draws} placements pass.": "number-only",
+               "We kept \\val{n_pass} draws.": "number-only",
+               "Of the \\valw{n_fail} that fail, one is close.": "words",
+               "{{n_pass}} of {{n_draws}} hold, 7 of 13": "conclusion"}
+        for sent, kind in exp.items():
+            if sent not in by or by[sent]["kind"] != kind:
+                fails.append(f"reword: '{sent}' should be {kind}:\n{json.dumps(tasks, indent=1)}")
+        t = by.get("Of the \\valw{n_fail} that fail, one is close.", {})
+        if t and not any("n_fail 6 -> 8 (derived from n_pass)" == c for c in t["changed"]):
+            fails.append(f"reword: a derived value names its cause: {t}")
+        r = run("reword", str(d))
+        files = list((d / "review").glob("reword-*.md"))
+        if not files or not files[0].read_text().startswith("Status: ") or "1 conclusion" not in r.stdout:
+            fails.append("reword writes review/reword-<date>.md with a Status line:\n" + r.stdout)
+        # the fact test turned false: the sentence carrying the value becomes a conclusion task
+        (d / "ledger.md").write_text((d / "ledger.md").read_text().replace("| F1 | | | | | | |", "| F2 | Every good "
+                                     "placement keeps a share. | min_site_share_pass | `min_site_share_pass >= 0.23` | "
+                                     "holds | all | R2 |"))
+        (d / "values" / "run.json").write_text((d / "values" / "run.json").read_text().replace("0.28", "0.16"))
+        r = run("reword", str(d), "--json")
+        if not any(x["kind"] == "conclusion" and any("F2" in w for w in x["why"]) for x in json.loads(r.stdout or "[]")):
+            fails.append("reword: a false fact test makes a conclusion task:\n" + r.stdout)
+        if shutil.which("latexmk") and shutil.which("lualatex") and shutil.which("pdftotext"):
+            r = run("build", str(d))
+            txt = subprocess.run(["pdftotext", str(d / "old.pdf"), "-"], capture_output=True, text=True).stdout
+            if r.returncode or "Of the eight that fail" not in " ".join(txt.split()):
+                fails.append("build with \\valw after upgrade:\n" + r.stdout[-600:] + txt[-400:])
+    return fails
+
+
 def main() -> int:
     fails = []
     with tempfile.TemporaryDirectory() as t:
@@ -622,6 +744,7 @@ def main() -> int:
     fails += facts_values_checks()
     fails += fact_lifecycle_checks()
     fails += pilot_checks()
+    fails += retrofit_reword_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")

@@ -39,6 +39,14 @@
 \newcommand{\wrvalof}[1]{\ifcsname wrval@#1\endcsname\csname wrval@#1\endcsname\else ??\detokenize{#1}\fi}
 \pdfstringdefDisableCommands{\let\val\wrvalof}
 \makeatother
+% \valw{name}, \Valw{name}: the value as a number word ("six", "Six" at a sentence start) for whole numbers 0-20, so
+% the words around a result follow it too; any other value prints as \val does
+\makeatletter
+\newcommand{\wrsetvalw}[3]{\expandafter\def\csname wrvalw@#1\endcsname{#2}\expandafter\def\csname wrvalW@#1\endcsname{#3}}
+\DeclareRobustCommand{\valw}[1]{\ifcsname wrvalw@#1\endcsname\csname wrvalw@#1\endcsname\else\val{#1}\fi}
+\DeclareRobustCommand{\Valw}[1]{\ifcsname wrvalW@#1\endcsname\csname wrvalW@#1\endcsname\else\val{#1}\fi}
+\pdfstringdefDisableCommands{\let\valw\wrvalof\let\Valw\wrvalof}
+\makeatother
 % \figref{fig:x}: cite a figure; records the page of the first citation for wr.py (page of figure vs of its first mention).
 % Robust, so it also works inside a \caption (a moving argument; a plain \newcommand is fatal there).
 \makeatletter
