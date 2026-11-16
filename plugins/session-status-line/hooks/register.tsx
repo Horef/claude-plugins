@@ -681,19 +681,41 @@ async function readExtra($: EngineInterface, now: number): Promise<Quota | null>
   }
 }
 
+/** Programs a CLI may call to open a login page in the browser (macOS, Linux desktops, WSL). */
+const BROWSER_OPENERS = ['open', 'xdg-open', 'x-www-browser', 'www-browser', 'sensible-browser', 'gio', 'wslview']
+
+/**
+ * The argv prefix that runs `cmd` with no browser opener on its PATH, or null when `cmd` is not installed.
+ * When agy cannot refresh its login (offline, DNS down, login expired), `agy -p` starts a browser login with
+ * `open`, even without a terminal: every poll of every session opened a Safari window (issue #89, 2026-11-16:
+ * 87 of 168 reads in one morning). Without an opener the read just fails and the next poll tries again; a
+ * working login reads as before. `cmd` is found on this process's PATH, then in `extra` (the installer's
+ * spot, for a GUI launch whose PATH lacks it), and run by its full path with the same PATH minus every
+ * folder that holds an opener (on macOS that is /usr/bin, whose tools agy calls by full path).
+ */
+async function noBrowserRun($: EngineInterface, cmd: string, extra: string[]): Promise<string[] | null> {
+  const dirs = [...((await $.env.get('PATH')) ?? '').split(':'), ...extra].filter(d => d.startsWith('/'))
+  const has = (p: string) => $.fs.exists(p).catch(() => false)
+  let exe: string | null = null
+  for (const d of dirs) if (await has(`${d}/${cmd}`)) { exe = `${d}/${cmd}`; break }
+  if (!exe) return null
+  const keep: string[] = []
+  for (const d of [...new Set(dirs)]) {
+    const opener = await Promise.all(BROWSER_OPENERS.map(o => has(`${d}/${o}`)))
+    if (!opener.some(Boolean)) keep.push(d)
+  }
+  return ['/usr/bin/env', `PATH=${keep.join(':')}`, exe]
+}
+
 /**
  * Antigravity: each model group's 5h and weekly remaining share, from `agy -p /usage`
  * (a local command that answers without a model turn; measured 2026-11-09).
  */
 async function readAgy($: EngineInterface, now: number): Promise<Quota | null> {
   const home = await $.env.get('HOME')
-  const args = ['-p', '/usage', '--output-format', 'json']
-  let r = await $.process.run(['agy', ...args], { timeoutMs: 60_000 }).catch(() => null)
-  // Not on the PATH of this process (a GUI launch): the installer's default spot, only if it is there.
-  const fallback = home ? `${home}/.local/bin/agy` : undefined
-  if ((!r || r.exitCode !== 0) && fallback && (await $.fs.exists(fallback).catch(() => false))) {
-    r = await $.process.run([fallback, ...args], { timeoutMs: 60_000 }).catch(() => null)
-  }
+  const run = await noBrowserRun($, 'agy', home ? [`${home}/.local/bin`] : [])
+  if (!run) return miss('agy', 'agy not installed')
+  const r = await $.process.run([...run, '-p', '/usage', '--output-format', 'json'], { timeoutMs: 60_000 }).catch(() => null)
   if (!r || r.exitCode !== 0) return miss('agy', `agy exit ${r?.exitCode ?? 'none'}`)
   const groups = ((JSON.parse(r.stdout) as Json).command?.data?.groups ?? []) as Json[]
   if (!groups.length) return miss('agy', 'no usage groups')

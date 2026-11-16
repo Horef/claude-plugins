@@ -68,15 +68,23 @@ test('renders and drops segments when narrow', async ($, on) => {
 // Outside budgets: Kiro over its limit with overage, Copilot used up, Claude's
 // 5h window full so its extra usage shows. The test's hooks stand for sqlite3,
 // gh and the two HTTP services; no real call leaves the test.
-const quotaEngine = (on: any, opts: { kiroStatus?: number; whoamiFails?: boolean; tokenExpired?: boolean } = {}) => {
+const quotaEngine = (on: any, opts: { kiroStatus?: number; whoamiFails?: boolean; tokenExpired?: boolean; path?: string;
+  agyMissing?: boolean; runs?: string[][] } = {}) => {
   const now = Date.parse('2026-10-31T12:00:00Z')
   mock.clock(on, { now })
   mock.store(on)
   on('session.measure', ($: any, e: any) => ({ changed: e.changed }))
-  on('env.get', ($: any, e: any) => ({ value: e.name === 'HOME' ? '/Users/test' : undefined }))
+  const envs: Record<string, string | undefined> = { HOME: '/Users/test', PATH: opts.path ?? '/opt/test/bin:/usr/bin:/bin' }
+  on('env.get', ($: any, e: any) => ({ value: envs[e.name] }))
+  // agy lives in /opt/test/bin; /usr/bin holds `open`, so the agy read must run without it on its PATH.
+  const files = new Set(opts.agyMissing ? ['/usr/bin/open'] : ['/opt/test/bin/agy', '/usr/bin/open'])
+  on('fs.exists', ($: any, e: any) => ({ value: files.has(e.path) }))
   on('session.authorize', () => ({ value: { handle: 'h1', kind: 'bearer' } }))
   const run = (e: any): any => {
-    const [cmd, , , sql] = e.argv
+    opts.runs?.push(e.argv)
+    // `/usr/bin/env PATH=... /full/path/agy ...`: the agy read, run without a browser opener on its PATH
+    const argv = e.argv[0] === '/usr/bin/env' && e.argv[2] === '/opt/test/bin/agy' ? ['agy', ...e.argv.slice(3)] : e.argv
+    const [cmd, , , sql] = argv
     if (cmd === 'sqlite3' && String(sql).includes('auth_kv')) {
       const expires = new Date(now + (opts.tokenExpired ? -60_000 : 3_600_000)).toISOString()
       return { exitCode: 0, stdout: JSON.stringify({ access_token: 'tok', expires_at: expires }), stderr: '' }
@@ -158,6 +166,25 @@ test('a rejected Kiro token also asks to log in', async ($, on) => {
   quotaEngine(on, { kiroStatus: 403 })
   await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
   expect(await draw($, 'terminal', 220)).toContain('Kiro log in')
+})
+
+// Issue #89: with a login it cannot refresh, `agy -p` opened a browser login page through `open` on every poll.
+test('the agy read runs by full path with no browser opener on its PATH', async ($, on) => {
+  const runs: string[][] = []
+  quotaEngine(on, { runs })
+  await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
+  expect(await draw($, 'terminal', 400)).toContain('agy 5h 21%')
+  const agy = runs.filter(a => a.includes('/usage'))
+  expect(agy.length).toBe(1)
+  expect(agy[0].slice(0, 3)).toEqual(['/usr/bin/env', 'PATH=/opt/test/bin:/bin:/Users/test/.local/bin', '/opt/test/bin/agy'])
+})
+
+test('no agy installed: no agy read at all', async ($, on) => {
+  const runs: string[][] = []
+  quotaEngine(on, { runs, agyMissing: true })
+  await $.command.run({ command: 'status-line', args: 'quotas on' } as any)
+  expect(runs.some(a => a.includes('/usage'))).toBe(false)
+  expect(await draw($, 'terminal', 400)).not.toContain('agy 5h')
 })
 
 test('Antigravity limits and the grouped rows', async ($, on) => {

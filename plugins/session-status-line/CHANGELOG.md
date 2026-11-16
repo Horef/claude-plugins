@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.8.1 (2026-11-16)
+- agy quota read runs agy by full path with no browser opener (open, xdg-open, ...) on its PATH: with a login it could not refresh, every poll opened a browser login page (issue #89, fix by unzim; agy resolved once instead of a second fallback run)
+
 ## 0.8.0 (2026-11-15)
 - README matches the code on context colour under 50% and states the 3:1 contrast bar (4.5:1 is unreachable on off-white and dark together); tests/behaviour.test.tsx checks the compaction counter (subagent exclusion, resume), a saved layout loading at the start, and the colours' contrast (O2)
 
