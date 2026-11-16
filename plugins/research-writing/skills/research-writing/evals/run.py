@@ -692,6 +692,44 @@ def retrofit_reword_checks() -> list[str]:
     return fails
 
 
+def grouped_source_checks() -> list[str]:
+    """O30: a derived value changed by a stored one is listed inside that value's entry; sources shown by where,
+    check and reword, and a note for values in use without one."""
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        d = _vf_fixture(Path(t), "g")
+        m = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(m.replace("\\section{Y holds}", "\\section{Y holds}\nAs a share, \\val{weight_pct}.\n"))
+        ln = _lineof(d / "main.tex", "As a share")
+        out = run("check", str(d)).stdout
+        if "values: 2 in use without a source" not in out or "weight_10x_mean, weight_pct\n" not in out:
+            fails.append("note for values in use without a source (a derived value of unsourced values counts):\n" + out)
+        run("confirm", str(d))
+        j = d / "values" / "run.json"
+        j.write_text(j.read_text().replace("0.035", "0.04").replace('"min_site_share_pass": {"value": 0.28',
+                                                                    '"min_site_share_pass": {"value": 0.30'))
+        ps = _probs(run("check", str(d)).stdout)
+        w = [p for p in ps if "value weight_10x_mean changed" in p]
+        if any("value weight_pct changed" in p for p in ps) or len(w) != 1 or \
+                f"with it weight_pct (now 1.33, was 1.17) in: main.tex:{ln}" not in w[0] or \
+                "`wr.py confirm DIR weight_10x_mean weight_pct`" not in w[0]:
+            fails.append("a derived change is listed with its cause:\n" + "\n".join(ps))
+        if not any("value min_site_share_pass changed" in p and "(source: sweep.py)" in p for p in ps):
+            fails.append("a changed value shows its source:\n" + "\n".join(ps))
+        r = json.loads(run("reword", str(d), "--json").stdout or "[]")
+        if not any("min_site_share_pass 28\\% -> 30\\% (source: sweep.py)" in c for x in r for c in x["changed"]):
+            fails.append(f"reword shows the source: {r}")
+        out = run("where", str(d), "C2").stdout
+        if "min_site_share_pass = 30% (values/run.json; source: sweep.py)" not in out:
+            fails.append("where C2 lists the values behind it with sources:\n" + out)
+        # confirmed apart: the derived value gets its own entry again
+        run("confirm", str(d), "weight_10x_mean")
+        ps = _probs(run("check", str(d)).stdout)
+        if not any(p.startswith("- value weight_pct changed") for p in ps):
+            fails.append("a derived value whose cause is confirmed is listed by itself:\n" + "\n".join(ps))
+    return fails
+
+
 def main() -> int:
     fails = []
     with tempfile.TemporaryDirectory() as t:
@@ -745,6 +783,7 @@ def main() -> int:
     fails += fact_lifecycle_checks()
     fails += pilot_checks()
     fails += retrofit_reword_checks()
+    fails += grouped_source_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")

@@ -660,28 +660,64 @@ def _uses(name: str, V: dict, led: dict, hits: list) -> tuple[list[str], list[st
     return places, facts, claims
 
 
+def _src(v: dict | None) -> str:
+    """' (source: X)' for a value that names one, else ''."""
+    return f" (source: {v['source']})" if v and v.get("source") else ""
+
+
+def changed_values(d: Path, V: dict) -> tuple[dict[str, tuple[str, str | None]], str | None]:
+    """({name: (confirmed text, text now or None)} of the values that differ from values.confirmed.json, a problem
+    message); values with an error are left out (reported with the value errors)."""
+    snap, bad = _snapshot(d)
+    if bad or snap is None:
+        return {}, bad
+    return {n: (old, V["vals"][n]["text"] if n in V["vals"] else None) for n, old in snap.items()
+            if V["vals"].get(n, {}).get("text") != old and not (n in V["names"] and n not in V["vals"])}, None
+
+
+def _causes(changed: dict, V: dict) -> dict[str, list[str]]:
+    """{changed derived value: the changed stored values it is computed from}; empty list when none of them changed
+    (its expression changed, or it was confirmed apart)."""
+    return {n: sorted(r for r in _depends(n, V) if r != n and r in changed) for n in changed
+            if V["vals"].get(n, {}).get("derived")}
+
+
 def value_changes(d: Path, V: dict, led: dict, segs: list) -> tuple[list[str], bool]:
-    """(problems, whether a snapshot exists): every value that differs from values.confirmed.json or has disappeared,
-    with each place that uses it."""
+    """(problems, whether a snapshot exists): one entry per changed value with each place that uses it; a derived
+    value that changed because a value it is computed from changed is listed inside that value's entry (one cause,
+    one entry), with its own places."""
     snap, bad = _snapshot(d)
     if bad:
         return [bad], False
     if snap is None:
         return [], False
+    changed, _ = changed_values(d, V)
+    causes = _causes(changed, V)
     hits = _hits(segs, _VAL)
-    out = []
-    for name, old in snap.items():
-        v = V["vals"].get(name)
-        if v is not None and v["text"] == old:
-            continue
-        if name in V["names"] and v is None:
-            continue  # has an error: reported with the value errors
+
+    def uses(name):
         places, facts, claims = _uses(name, V, led, hits)
-        where = "; ".join(x for x in (", ".join(places), "facts " + ", ".join(facts) if facts else "",
-                                      "claims " + ", ".join(claims) + " (through those facts)" if claims else "") if x)
-        what = f"now {v['text']}, was {old}" if v else f"no longer defined, was {old}"
-        out.append(f"value {name} changed since it was confirmed ({what}); " + (f"used in: {where}: re-read them, then"
-                   if where else "nothing uses it yet:") + f" `wr.py confirm DIR {name}`")
+        return "; ".join(x for x in (", ".join(places), "facts " + ", ".join(facts) if facts else "",
+                                     "claims " + ", ".join(claims) + " (through those facts)" if claims else "") if x)
+
+    def what(name):
+        old, new = changed[name]
+        return f"now {new}, was {old}" if new is not None else f"no longer defined, was {old}"
+    out = []
+    for name in changed:
+        if causes.get(name):
+            continue  # listed with the first value that caused it
+        followers = [n for n, c in causes.items() if c and c[0] == name]
+        where = uses(name)
+        line = (f"value {name} changed since it was confirmed ({what(name)}){_src(V['vals'].get(name))}; "
+                + (f"used in: {where}" if where else "nothing uses it directly"))
+        for f in followers:
+            fw = uses(f)
+            also = [c for c in causes[f] if c != name]
+            line += (f"; with it {f} ({what(f)}" + (f", also from {', '.join(also)}" if also else "") + ")"
+                     + (f" in: {fw}" if fw else ", used nowhere"))
+        busy = where or any(uses(f) for f in followers)
+        out.append(line + (": re-read them, then" if busy else ":") + f" `wr.py confirm DIR {' '.join([name] + followers)}`")
     return out, True
 
 
@@ -1357,6 +1393,11 @@ def notes(d: Path) -> list[str]:
                  | {n for f in led["facts"].values() for n in f["values"] + _expr_names(f["test"])}
                  | {n for _, t in _led_rows(led) for n in _LEDVAL.findall(t)}
                  | {n for v in V["vals"].values() for n in _expr_names(v["expr"])})
+        nosrc = [n for n, v in V["vals"].items() if n in named and not v["source"] and not (
+            v["derived"] and all(V["vals"].get(r, {}).get("source") for r in _depends(n, V) if r != n))]
+        if nosrc:
+            out.append(f"values: {len(nosrc)} in use without a source (the run or analysis output the number comes from; "
+                       f"`where` shows it for each claim and fact): {', '.join(nosrc[:10])}" + (" ..." if len(nosrc) > 10 else ""))
         idle = [n for n in V["vals"] if n not in named]
         if idle:
             out.append(f"values: {len(idle)} used nowhere (text, facts or other values): {', '.join(idle[:15])}"
@@ -1624,12 +1665,15 @@ def cmd_where(a) -> int:
             if c and c["facts"]:
                 print("  rests on: " + ", ".join(f"{f} ({led['facts'][f]['status']})" if f in led["facts"] else f"{f} (unknown)"
                                                  for f in c["facts"]))
+            if c:
+                _print_sources(_uniq(_LEDVAL.findall(c["claim"]) + [n for f in c["facts"] if f in led["facts"]
+                                                                    for n in _fact_values(led["facts"][f])]), V)
         elif re.fullmatch(_FID, item):
             hs, f = [_at(h) for h in _hits(segs, _FACT) if h[2].group(1) == item], led["facts"].get(item)
             print(f"{item}: " + (f"{_expand(f['fact'], V)} [{f['status']}]" if f else "not in ledger.md"))
             print("  stated at: " + (", ".join(hs) or "nowhere in the text"))
-            if f and f["values"]:
-                print("  values: " + ", ".join(f["values"]))
+            if f:
+                _print_sources(_fact_values(f), V)
             print("  claims resting on it: " + (", ".join(rest.get(item, [])) or "none"))
         elif item in V["names"]:
             hits = _hits(segs, _VAL)
@@ -1878,8 +1922,7 @@ def reword_tasks(d: Path) -> tuple[list[dict], str | None]:
         return [], bad
     if snap is None:
         return [], "no values confirmed yet: run `wr.py confirm DIR` once the text is right, so later changes can be listed"
-    changed = {n: (old, V["vals"][n]["text"] if n in V["vals"] else None) for n, old in snap.items()
-               if V["vals"].get(n, {}).get("text") != old and not (n in V["names"] and n not in V["vals"])}
+    changed, _ = changed_values(d, V)
     if not changed:
         return [], None
     false_facts = {fid for fid, f in led["facts"].items() if _status(f) == "holds" and _fact_test(f, V)[0] is False}
@@ -1925,7 +1968,7 @@ def reword_tasks(d: Path) -> tuple[list[dict], str | None]:
             old, new = changed[n]
             roots = sorted(r for r in _depends(n, V) if r != n and r in changed)
             causes.append(f"{n} {old} -> {new if new is not None else '(no longer defined)'}"
-                          + (f" (derived from {', '.join(roots)})" if roots else ""))
+                          + (f" (derived from {', '.join(roots)})" if roots else "") + _src(V["vals"].get(n)))
         tests = [f"{f}: `{led['facts'][f]['test']}` is {'false' if f in false_facts else 'true'} now"
                  for f in facts if led["facts"][f]["test"]]
         out.append({"where": t["where"], "kind": kind, "tier": {"number-only": "light", "words": "standard",
@@ -1979,6 +2022,27 @@ def cmd_reword(a) -> int:
     print(f"{len(tasks)} sentence(s) to reread: {n['number-only']} number-only (light), {n['words']} words (standard), "
           f"{n['conclusion']} conclusion (deep or the person); tasks in {out}")
     return 0
+
+
+def _fact_values(f: dict) -> list[str]:
+    """Value names a fact uses: its values column, its test and {{name}} in its sentence."""
+    return _uniq(f["values"] + _expr_names(f["test"]) + _LEDVAL.findall(f["fact"]))
+
+
+def _print_sources(names: list[str], V: dict) -> None:
+    """The values behind a claim or fact, each with its number now and its source (stored values a derived one is
+    computed from, when it has no source of its own)."""
+    if not names:
+        return
+    print("  values:")
+    for n in names:
+        v = V["vals"].get(n)
+        if not v:
+            print(f"    {n}: " + ("has an error" if n in V["names"] else "not defined"))
+            continue
+        src = v["source"] or ", ".join(_uniq(f"{r}: {V['vals'][r]['source']}" for r in sorted(_depends(n, V))
+                                             if r != n and V["vals"].get(r, {}).get("source")))
+        print(f"    {n} = {_plain(v['text'])} ({v['file']}; source: {src or 'not given'})")
 
 
 def _brace_arg(s: str, i: int) -> str:
