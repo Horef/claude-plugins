@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.10.1 (2026-11-16)
+- check lists a derived value inside the entry of the value that changed it (one cause, one entry); sources read: shown in check's change entries, reword tasks and where for claims and facts, note for values in use without a source (O30)
+
 ## 0.10.0 (2026-11-16)
 - retrofit (wr.py upgrade), number words (\valw) and small counts in the number scan (wr.py numbers), {{name}} values in ledger rows, wr.py reword: per-sentence tasks tagged by model tier (O28, O29)
 

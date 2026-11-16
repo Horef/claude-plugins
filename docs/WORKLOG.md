@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-16 - research-writing 0.10.1: one cause, one entry; sources read (O30)
+
+- `check` lists a derived value inside the entry of the stored value that changed it ("with it h3_2x_pass_dm_n (now 2, was 4) in: ...", confirm line names both); a derived value whose cause was confirmed separately gets its own entry again. Sources: shown in change entries and reword tasks; `where C3`/`F2` lists the values behind it with number, file and source (a derived value falls back to its inputs' sources); a note names values in use without a source.
+- Verified: `loop.py eval research-writing` exit 0 (new `grouped_source_checks` fails on 0.10.0); on a copy of the cell1542_mel1998 values pilot, h3_2x_pass_n 7 -> 5 now gives one entry with h3_2x_pass_dm_n folded in (was two), and `where C1` lists its four values with sources. `loop.py check --base origin/main` 0/0, docmap 0 errors.
+
 ## 2026-11-16 - research-writing 0.10.0: retrofit, number words, ledger values, reword
 
 - From the values pilot on cell1542_mel1998 (O28, O29, helper's order 1-4). `wr.py upgrade DIR [--dry-run]` adds only what an older write-up lacks (preamble `\fact`/`\val`/`\valw`, values.tex input, ledger Values/Facts/Accepted + facts column, values.tex in .gitignore; backups in build/upgrade-*); `check` now says to run it when the text uses a mark no preamble defines. `\valw`/`\Valw` print values 0-20 as words. The number scan (`check` notes, full list in new `wr.py numbers`) now covers counts below 10 and number words when there is evidence: "N of <value>" (also flags a count no value equals any more), or the next word matches the value's other places, name or unit; likely notes first. `{{name}}` in ledger claim and fact rows: expanded by `where`, unknown names a problem, rows listed when the value changes. `wr.py reword DIR` writes review/reword-<date>.md: one task per sentence using a changed value, tagged number-only (light), words (standard) or conclusion (deep: false fact test, In short, title, ledger claim), derived values naming their cause.
