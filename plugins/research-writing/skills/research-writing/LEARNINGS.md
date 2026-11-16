@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O27 2026-11-16 [win] 5 Build, check: 0.9.1 on cell1542_mel1998, unsplit and the pilot/mel-sections split: identical problem lists (4 real two-page figure lags, In short, 5 long paragraphs), figure checks survive the split, where resolves C1a/C1b, ## Accepted removes the In short from the count; only new item after the split is a fair note that fig:tools sits in Methods while section 02 cites it first. The split is now safe to adopt for helper-per-section work (claude-code, simple_complex_v1, cell1542_mel1998)
 
 ## Resolved
 - O26 2026-11-16 [friction] 5 check: 'source: names no source' fires on our own runs ('measured on the same 16 trials of input spikes'); paragraph-length and In-short limits keep flagging lengths the owner accepted, with no way to record an accepted exception (claude-code, simple_complex_v1) → 0.9.1
