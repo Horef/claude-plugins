@@ -24,9 +24,11 @@ Rules with sources: `references/writing-rules.md` (by stage; its "Most important
 |---|---|---|
 | **New** | a body of results and no document | step 2 |
 | **Revise** | a draft exists and reads like a lab report or leaves questions | step 2, built from the draft: its numbers stay, its order goes |
-| **Add** | a new result arrives for an existing write-up | step 2's ledger: add or change claims, then only the sections and figures they touch; never append a section at the end (a "Questions from <date>" section is the symptom) |
+| **Add** | a new result arrives for an existing write-up | rerun the analysis that writes `values/` and run `wr.py check`: it lists every changed value with the sentences, facts and claims that use it (step 5); then step 2's ledger: add or change facts and claims, then only the sections and figures they touch (`wr.py where`); never append a section at the end (a "Questions from <date>" section is the symptom) |
 
-The document lives in its own folder (`wr.py init DIR --title "..."`): `ledger.md`, `main.tex`, `preamble.tex`, `refs.bib`, `figures/`, `review/`. Figure scripts live with the project's other analysis code and write PDFs into `figures/`.
+The document lives in its own folder (`wr.py init DIR --title "..."`): `ledger.md`, `main.tex`, `preamble.tex`, `refs.bib`, `figures/`, `review/`, and `values/` once results have numbers. Figure scripts live with the project's other analysis code and write PDFs into `figures/`; the same scripts write the numbers the text quotes into `values/` (step 2).
+
+**One file or section files.** One `main.tex` serves most write-ups: targeted edits work by search and replace. Use section files when the write-up will pass about 15 pages or helpers will write sections in parallel: `wr.py init DIR --sections`, or `wr.py split DIR` for an existing one, puts each section in `sections/NN-slug.tex` and leaves the title, In short and the order in `main.tex`. `wr.py where DIR` maps each file to the claims, facts, figures and values in it, so Add mode knows which files a change touches; `check` adds that each section file is input once and each claim is made in one section.
 
 ## 2. Message, reader and claims ledger (before any prose)
 
@@ -34,6 +36,7 @@ Fill `ledger.md`:
 - **Message**: one paragraph: the larger problem, the specific question, two or three results, what was learned, which answers the question and speaks to the problem (Schimel ch. 2; Mensh & Kording rule 1). If it will not fit one paragraph, there are two documents.
 - **Reader**: who, what they know, and the questions they arrive with.
 - **Claims**: one row per claim, in the order of the argument: the claim as one sentence that states a finding, its status (`established`: shown in our runs or a cited paper; `plausible`: argued, not tested; `open`), its evidence (the results entry or run id), the figure that shows it, and its **condition**: what it was tested under (a parameter strength, a dataset, a regime; `all` when none applies). A write-up that mixes a headline condition with follow-ups at others misleads unless every claim says which.
+- **Facts and values** (for anything whose results will be rerun or extended; a one-off short report may skip them). Every number from an analysis is a **named value**: the analysis script writes it to `values/<script>.json` (`{"weight_10x_mean": {"value": 0.0351, "fmt": ".3f", "source": "runs/r12"}}`; a derived value is `{"expr": "a / b"}`), and the text, captions and In short say `\val{weight_10x_mean}`, so a rerun changes every place at once. A **fact** is one result in one sentence ("every passing placement keeps at least 23% at each site"), in the ledger's Facts table with the values it uses, an optional **test** over them that must stay true (`min_site_share_pass >= 0.23`), its status (`holds`, `fails`, `open`, or `superseded by F7` when a new fact replaces it: the old row stays, so the ledger keeps how the result changed), condition and evidence. Each fact is stated once in the text, marked `\fact{Fn}`; other places refer back to it rather than restate it. Claims list the facts they rest on (`facts` column): a claim is only as current as its facts, and `check` flags one whose fact fails or whose test turned false with new values.
 - **Figures**: one message each, named by the claim it carries.
 - **Out of scope**: results that exist but do not serve the message, with where they live instead. Leaving them out is the point (Schimel 8.2.2).
 
@@ -65,7 +68,7 @@ Shape the skeleton with these (details and exemplars in `references/story.md`, T
 - **Text**: replace each `% DO:` with its paragraph: the question it answers, the evidence (with `\figref`, which records where the figure is first cited), the answer. Point in the first sentence; data before inference; every term defined where first needed; project-private labels (run ids, stage numbers, internal names) replaced by what they are; amounts with their uncertainty; each claim's status shown with `\status{...}` where a reader could mistake a plausible claim for an established one; each section stating the condition of its claims (the ledger's column). Place each figure right after the paragraph that first cites it.
 - **Voice.** The rules for short sentences and points first are about clarity, not compression: write full sentences with subject and verb, never fragments ("Partly, in a narrow regime."); link each sentence to the last (old information first, new at the end; connectives such as *but*, *so*, *because*, *in contrast*: `writing-rules.md` C3, C9, C12); let a question introduce a test ("Is the selectivity inherited from the inputs?") and a sentence close a paragraph with what it established. Give each paragraph of a long section a bold run-in head that names its point (`\lead{The members were wrong.}`), and long sections subsections. A writer who gets only the skeleton gets these rules in the brief, and the lead reads the first two pages before anything else is judged.
 - **Name every outside source where it is used** (owner preference): who found it, in what preparation, with the citation in the same sentence: "the ratio Kloc and Maffei (2014) measured at thalamocortical synapses onto mouse V1 layer 4 cells", never "the measured ratio" or "the literature". `wr.py check` notes sentences that say measured, reported, known, in vivo and the like without a citation.
-- Every number comes from the evidence named in the ledger. A number you cannot trace is left out and listed for the person.
+- Every number comes from the evidence named in the ledger, as `\val{name}` when it is a named value (`check` notes a bare number that equals one, or rounds to one). A number you cannot trace is left out and listed for the person.
 
 ## 5. Build, check, look
 
@@ -73,7 +76,10 @@ Shape the skeleton with these (details and exemplars in `references/story.md`, T
 python3 SKILL/scripts/wr.py build DIR    # latexmk; undefined references, citations, missing files, overfull lines
 python3 SKILL/scripts/wr.py check DIR    # ledger vs text, figures cited before they appear and on the same or next page, bold caption titles, ledger conditions, acronyms, long paragraphs, placeholders; then notes that do not fail it (figure heights; decimals in a figure PDF that differ by rounding from the text near it)
 python3 SKILL/scripts/wr.py pages DIR    # PNG per page and a contact sheet
+python3 SKILL/scripts/wr.py where DIR [C3 F2 fig:x name]   # which file and line holds each claim, fact, figure, value
 ```
+
+`build` and `check` regenerate `values.tex` from `values/*.json` first. **When results change** (a rerun, Add mode), `check` lists each value that differs from the last confirmed one with every sentence that uses it (marked when it is in the In short), the facts that name it and the claims resting on them, and each fact whose test is now false. `\val` already updated the number; read each sentence for the words around it ("every draw", "always", "twice as large") and rewrite what no longer fits, set a failed fact to `fails` and revise its claims, then `wr.py confirm DIR <name>` (or `confirm DIR` for all, after reading the whole text). `confirm` also records each fact's sentence and test, so a fact reworded later is listed with the claims resting on it until `confirm DIR F<n>`: a claim written for the old wording may no longer follow. The notes list values and facts that nothing uses.
 
 Fix until `check` reports no problems, read its notes (a figure over the height budget; a number in a figure that the text gives differently), then look at every page: is each figure near its first citation, readable at print size, saying what its title says? Section F of `writing-rules.md` lists the checks a script cannot do; the readers in step 6 do most of them.
 
@@ -102,7 +108,7 @@ Tiers: **light** is mechanical work with a clear rule (a small, cheap model), **
 | Step | Suggested tier | Why |
 |---|---|---|
 | 2 Message and ledger, 3 skeleton | deep, with the person | the story is decided here |
-| 4 Figures and text to the skeleton | standard | detailed instructions exist by now |
+| 4 Figures and text to the skeleton | standard | detailed instructions exist by now; with section files, one helper per section in parallel, each briefed with its section's ledger rows (`wr.py where`), then the lead reads the whole for flow |
 | 5 Checks | script, plus light for number tracing | mechanical |
 | 6 Readers | standard or above, mixed families | a weak reader asks shallow questions |
 | 6 Sorting and revising | deep; a light pre-pass may cluster the questions by quoted page and keyword first | judgement about what the document must answer |

@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.9.0 (2026-11-16)
+- Named values (values/*.json written by the analysis, \val{name} in text, captions, titles and the In short; derived values; a note for bare numbers that equal or round to a value), atomic facts stated once (\fact{Fn}, optional test over values, status holds/fails/open/superseded by Fn), claims resting on facts (flagged when a fact fails, its test turns false or it is superseded), wr.py confirm: changed values and reworded facts list every sentence, fact and claim using them until confirmed; optional section files (init --sections, split, where; each file input once, a claim in one section); notes for unused values and facts. Owner wishes 2026-11-15; prior art: dataref, OpenFastTrace outdated links, nanopublication supersede (O19, O20, O21, O22)
+
 ## 0.8.2 (2026-11-15)
 - Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
 

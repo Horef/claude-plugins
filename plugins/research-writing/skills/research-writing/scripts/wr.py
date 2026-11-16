@@ -4,7 +4,8 @@
 Standard library only; needs latexmk (with lualatex or pdflatex, and biber) for `build`, and pdftoppm (poppler) for
 `pages`; pdftotext and pdfinfo (poppler) are optional, for two of the check's notes. Every command takes the write-up folder (the one holding main.tex and ledger.md).
 
-  wr.py init DIR [--title T]          copy the template (main.tex, preamble.tex, ledger.md, refs.bib, figures/, review/)
+  wr.py init DIR [--title T] [--sections]   copy the template (main.tex, preamble.tex, ledger.md, refs.bib, figures/,
+                                      review/); --sections then splits main.tex into sections/NN-slug.tex (see split)
   wr.py build DIR                     latexmk; copies the PDF to DIR/<DIR name>.pdf; prints undefined references and
                                       citations, overfull boxes, missing files
   wr.py pages DIR [--first N --last M --dpi 60]   PNG per page in DIR/build/pages, plus a contact sheet when Pillow is there
@@ -14,14 +15,31 @@ Standard library only; needs latexmk (with lualatex or pdflatex, and biber) for 
   wr.py readers DIR --round N [--roles pi,reviewer,newcomer,outsider,editor] [--role NAME=DESCRIPTION ...]
                                       write one brief per fresh reader into review/round-N/; a role that is not one of
                                       these needs its description from --role (refused otherwise)
-  wr.py status DIR                    claims, figures and the reader questions still open
+  wr.py status DIR                    claims, facts, values and the reader questions still open
+  wr.py values DIR                    regenerate values.tex from values/*.json (build and check do it too); counts, errors,
+                                      and the values changed since the last confirm
+  wr.py confirm DIR [NAME|Fn ...]     record the current values in values.confirmed.json and the facts' sentences and
+                                      tests in facts.confirmed.json (all, or the named ones): "I re-read every sentence
+                                      that uses them"; check then lists what changed since
+  wr.py where DIR [ID_OR_NAME ...]    no arguments: per file (input order) the claims, facts, figures and values it holds,
+                                      i.e. which files a change touches; with C3, F2, fig:x or a value name: file:line of
+                                      each place and the ledger links
+  wr.py split DIR                     main.tex -> \\input{sections/NN-slug} per \\section (supplementary ones sNN-); the old
+                                      main.tex is kept in build/main.before-split.tex
+
+Optional files of a write-up (without them it behaves as before): values/*.json (named numbers written by the analysis
+scripts: a number, {"value","fmt","source","unit"} or {"expr","fmt","source"}), the ledger's `## Facts` table and a
+`facts` column in Claims, `\\val{name}` and `\\fact{F3}` in the text, sections/*.tex under main.tex.
 
 Exit codes: 0 ok, 1 problems found, 2 a tool is missing (not checked: never report that as clean).
 """
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime
+import json
+import operator
 import re
 import shutil
 import subprocess
@@ -52,7 +70,7 @@ def cmd_init(a) -> int:
         m.write_text(m.read_text().replace("TITLE: the answer, not the topic", a.title))
     (d / ".gitignore").write_text("build/\n")
     print(f"started {d}: fill ledger.md first (message, reader, claims), then the skeleton in main.tex")
-    return 0
+    return cmd_split(argparse.Namespace(dir=str(d))) if a.sections else 0
 
 
 # ------------------------------------------------------------------ build
@@ -65,6 +83,10 @@ def _engine() -> str | None:
 
 def cmd_build(a) -> int:
     d = Path(a.dir).resolve()
+    V = _sync_values(d)
+    if V["errors"]:
+        print("values have errors, not built:\n" + "\n".join("  - " + e for e in V["errors"]))
+        return 1
     eng = _engine()
     if not shutil.which("latexmk") or eng is None:
         print("latexmk or a LaTeX engine is missing: not built")
@@ -107,6 +129,8 @@ def _log_problems(log: str) -> list[str]:
     for m in re.finditer(r"Overfull \\hbox \((\d+(?:\.\d+)?)pt too wide\)[^\n]*lines (\d+)--(\d+)", log):
         if float(m.group(1)) > 2:
             out.append(f"overfull line by {m.group(1)} pt (source lines {m.group(2)}-{m.group(3)})")
+    for m in re.finditer(r"Package wr Warning: value (\S+) undefined", log):
+        out.append(f"undefined value {m.group(1)}: define it in values/*.json")
     if "Float too large" in log:
         out.append("a float is too large for the page")
     return list(dict.fromkeys(out))
@@ -165,40 +189,571 @@ def _strip_comments(tex: str) -> str:
     return re.sub(r"(?<!\\)%.*", "", tex)
 
 
+def _blank_comments(tex: str) -> str:
+    """tex with every comment replaced by spaces of the same length: positions and line numbers stay."""
+    return re.sub(r"(?<!\\)%.*", lambda m: " " * len(m.group(0)), tex)
+
+
+_INPUT = re.compile(r"\\(input|include)\{([^}]+)\}")
+
+
+def _segments(d: Path) -> list[tuple[str, int, str]]:
+    """main.tex with \\input/\\include files inlined (one level deep is enough for a write-up), as (relative path,
+    first line number in that file, text) in document order. Inputs of preamble* files and of files that do not exist
+    are dropped; \\input lines in comments are not followed."""
+    main = (d / "main.tex").read_text()
+    segs, cur, start, pos = [], "", 0, 0
+    for m in _INPUT.finditer(_blank_comments(main)):
+        rel = m.group(2) if m.group(2).endswith(".tex") else m.group(2) + ".tex"
+        cur += main[pos:m.start()]
+        pos = m.end()
+        p = d / rel
+        if p.name.startswith("preamble") or not p.exists():
+            continue
+        if cur:
+            segs.append(("main.tex", 1 + main.count("\n", 0, start), cur))
+        segs.append((Path(rel).as_posix(), 1, p.read_text()))
+        cur, start = "", pos
+    cur += main[pos:]
+    if cur or not segs:
+        segs.append(("main.tex", 1 + main.count("\n", 0, start), cur))
+    return segs
+
+
 def _tex_sources(d: Path) -> str:
     """main.tex with \\input/\\include files inlined (one level deep is enough for a write-up)."""
-    main = (d / "main.tex").read_text()
+    return "".join(t for _, _, t in _segments(d))
 
-    def inc(m):
-        p = d / (m.group(2) if m.group(2).endswith(".tex") else m.group(2) + ".tex")
-        if p.name.startswith("preamble"):
-            return ""
-        return p.read_text() if p.exists() else ""
-    return re.sub(r"\\(input|include)\{([^}]+)\}", inc, main)
+
+def _source_files(d: Path) -> list[tuple[str, str]]:
+    """(relative path, text) of main.tex and then of each inlined file, in input order: the files a problem or a
+    `where` answer can name as file:line."""
+    return [("main.tex", (d / "main.tex").read_text())] + [(r, t) for r, _, t in _segments(d) if r != "main.tex"]
+
+
+def _hits(segs, rx) -> list[tuple[str, int, re.Match, bool]]:
+    """(file, line, match, inside the In short box) of rx in the comment-stripped text of each segment, in document order."""
+    out = []
+    for rel, l0, text in segs:
+        s = _strip_comments(text)
+        spans = [m.span() for m in re.finditer(r"\\begin\{(inshort|abstract)\}.*?\\end\{\1\}", s, re.S)]
+        for m in rx.finditer(s):
+            out.append((rel, l0 + s.count("\n", 0, m.start()), m, any(a <= m.start() < b for a, b in spans)))
+    return out
+
+
+def _at(h) -> str:
+    """file:line of a _hits entry, with '(In short)' when it is inside the summary box."""
+    return f"{h[0]}:{h[1]}" + (" (In short)" if h[3] else "")
+
+
+def _md_table(text: str, id_re: str, names: tuple, default: dict):
+    """(columns, rows) of the table in text whose header starts '| id |': columns by header name (prefix match, after the
+    id column, so older ledgers with fewer columns still parse), rows {id: cells} for the lines starting with an id."""
+    cols = dict(default)
+    h = re.search(r"^\|\s*id\s*\|(.*)$", text, re.M | re.I)
+    if h:
+        for k, c in enumerate(x.strip().lower() for x in h.group(1).split("|")):
+            for name in names:
+                if c.startswith(name):
+                    cols[name] = k
+    rows = {}
+    for row in re.finditer(r"^\|\s*(" + id_re + r")\s*\|(.*)$", text, re.M):
+        rows[row.group(1)] = [c.strip() for c in row.group(2).split("|")]
+    return cols, rows
 
 
 def _ledger(d: Path) -> dict:
+    """ledger.md as {"message", "claims": {id: {claim, status, evidence, figure, condition, facts: [F ids]}},
+    "facts": {id: {fact, values: [names], test, status, condition, evidence}}, "has_condition", "has_facts"}. Each table
+    is read inside its own `## Claims` / `## Facts` section; a fully empty Facts row is the template's and is ignored."""
     p = d / "ledger.md"
-    out = {"claims": {}, "message": "", "has_condition": False}
+    out = {"claims": {}, "facts": {}, "message": "", "has_condition": False, "has_facts": False}
     if not p.exists():
         return out
     t = p.read_text()
     m = re.search(r"## Message\s*(.*?)(?=\n## )", t, re.S)
     out["message"] = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.S).strip() if m else ""
-    # columns are found by header name (after the id column), so older ledgers without a condition column still parse
-    cols = {"claim": 0, "status": 1, "evidence": 2, "figure": 3}
-    h = re.search(r"^\|\s*id\s*\|(.*)$", t, re.M | re.I)
-    if h:
-        for k, c in enumerate(x.strip().lower() for x in h.group(1).split("|")):
-            for name in ("claim", "status", "evidence", "figure", "condition"):
-                if c.startswith(name):
-                    cols[name] = k
+    secs = {}
+    for part in re.split(r"(?m)^## ", t)[1:]:
+        head, _, rest = part.partition("\n")
+        secs[(head.split() or [""])[0].lower()] = rest
+    cols, rows = _md_table(secs.get("claims", t), r"C\d+", ("claim", "status", "evidence", "figure", "condition", "facts"),
+                           {"claim": 0, "status": 1, "evidence": 2, "figure": 3})
     out["has_condition"] = "condition" in cols
-    for row in re.finditer(r"^\|\s*(C\d+)\s*\|(.*)$", t, re.M):
-        cells = [c.strip() for c in row.group(2).split("|")]
-        out["claims"][row.group(1)] = {n: (cells[k] if k < len(cells) else "") for n, k in cols.items()}
-        out["claims"][row.group(1)].setdefault("condition", "")
+    for cid, cells in rows.items():
+        c = {n: (cells[k] if k < len(cells) else "") for n, k in cols.items()}
+        c.setdefault("condition", "")
+        c["facts"] = re.findall(r"F\d+", c.get("facts", "").replace("`", ""))
+        out["claims"][cid] = c
+    if "facts" in secs:
+        out["has_facts"] = True
+        cols, rows = _md_table(secs["facts"], r"F\d+", ("fact", "values", "test", "status", "condition", "evidence"),
+                               {"fact": 0, "values": 1, "test": 2, "status": 3, "condition": 4, "evidence": 5})
+        for fid, cells in rows.items():
+            f = {n: (cells[k] if k < len(cells) else "").replace("`", "").strip() for n, k in cols.items()}
+            if any(f.values()):
+                f["values"] = [x for x in re.split(r"[,\s]+", f["values"]) if x]
+                out["facts"][fid] = f
     return out
+
+
+# ------------------------------------------------------------------ values and facts
+_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+_ARITH = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
+          ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow}
+_CMP = {ast.Lt: operator.lt, ast.LtE: operator.le, ast.Gt: operator.gt, ast.GtE: operator.ge, ast.Eq: operator.eq,
+        ast.NotEq: operator.ne}
+_FUNCS = {"abs": abs, "min": min, "max": max, "round": round}
+
+
+class _ExprError(Exception):
+    """An expression that cannot be evaluated: syntax, a name that is not defined, a disallowed construct."""
+
+
+def _eval_expr(text: str, get, logic: bool = False):
+    """Value of an arithmetic expression (numbers, names looked up with get(name), + - * / // % **, unary -, parentheses,
+    abs/min/max/round); with logic=True a test: comparisons (chained too), and/or/not, True/False, giving a bool.
+    Walks the ast and allows nothing else; never uses eval."""
+    try:
+        tree = ast.parse(text.strip(), mode="eval")
+    except (SyntaxError, ValueError):
+        raise _ExprError(f"`{text}` is not a valid expression") from None
+
+    def ev(n):
+        if isinstance(n, ast.Constant):
+            if isinstance(n.value, bool) and logic or isinstance(n.value, (int, float)) and not isinstance(n.value, bool):
+                return n.value
+            raise _ExprError(f"`{ast.unparse(n)}` is not a number")
+        if isinstance(n, ast.Name):
+            return get(n.id)
+        if isinstance(n, ast.BinOp) and type(n.op) in _ARITH:
+            a, b = ev(n.left), ev(n.right)
+            if isinstance(n.op, ast.Pow) and abs(b) > 1000:
+                raise _ExprError("exponent too large")
+            r = _ARITH[type(n.op)](a, b)
+            if isinstance(r, complex):
+                raise _ExprError("result is not a real number")
+            return r
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
+            return -ev(n.operand) if isinstance(n.op, ast.USub) else ev(n.operand)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _FUNCS and not n.keywords:
+            return _FUNCS[n.func.id](*[ev(x) for x in n.args])
+        if logic and isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.Not):
+            return not ev(n.operand)
+        if logic and isinstance(n, ast.BoolOp):
+            vals = [ev(x) for x in n.values]
+            return all(vals) if isinstance(n.op, ast.And) else any(vals)
+        if logic and isinstance(n, ast.Compare) and all(type(o) in _CMP for o in n.ops):
+            left = ev(n.left)
+            for op, right in zip(n.ops, n.comparators):
+                right = ev(right)
+                if not _CMP[type(op)](left, right):
+                    return False
+                left = right
+            return True
+        raise _ExprError(f"`{ast.unparse(n)}` is not allowed here (numbers, names, + - * / // % ** and abs, min, max, round"
+                         + ("; comparisons, and/or/not for a test" if logic else "") + ")")
+    try:
+        r = ev(tree.body)
+    except (ZeroDivisionError, OverflowError, TypeError, ValueError, RecursionError) as e:
+        raise _ExprError(f"{type(e).__name__}: {e}") from None
+    if logic and not isinstance(r, bool):
+        raise _ExprError(f"`{text}` is not a true/false test (use a comparison)")
+    return r
+
+
+def _expr_names(text: str) -> list[str]:
+    """Names an expression mentions, in order."""
+    try:
+        return list(dict.fromkeys(n.id for n in ast.walk(ast.parse(text.strip(), mode="eval")) if isinstance(n, ast.Name)))
+    except (SyntaxError, ValueError):
+        return []
+
+
+def _fmt(num, fmt: str | None, derived: bool) -> str:
+    """A value as LaTeX text: format(num, fmt); without fmt a stored number as str() and a derived one as .3g.
+    An exponent becomes \\ensuremath{1.2\\times10^{-5}}; % # & _ $ are escaped."""
+    s = format(num, fmt) if fmt else (format(num, ".3g") if derived else str(num))
+    m = re.fullmatch(r"(-?[\d.]+)[eE]([+-]?\d+)", s)
+    if m:
+        return "\\ensuremath{%s\\times10^{%d}}" % (m.group(1), int(m.group(2)))
+    for c in "%#&_$":
+        s = s.replace(c, "\\" + c)
+    return s
+
+
+def _plain(text: str) -> str:
+    """A formatted value as typed in running text: \\% and % alike."""
+    return text.replace("\\%", "%")
+
+
+def _values(d: Path) -> dict:
+    """The named values of DIR/values/*.json: {"vals": {name: {num, text, fmt, source, unit, file, derived}}, "errors":
+    [...], "names": every declared name (also those with an error), "dir": whether values/ exists}. Names are unique
+    across files; derived values ({"expr": ...}) are computed from the others; cycles and undefined names are errors."""
+    V = {"vals": {}, "errors": [], "names": set(), "dir": (d / "values").is_dir()}
+    if not V["dir"]:
+        return V
+    err, raw = V["errors"], {}
+    for f in sorted((d / "values").glob("*.json")):
+        rel = f"values/{f.name}"
+        try:
+            data = json.loads(f.read_text())
+        except ValueError as e:
+            err.append(f"{rel}: not valid JSON ({e}): fix the file, or rerun the analysis script that writes it")
+            continue
+        if not isinstance(data, dict):
+            err.append(f"{rel}: must be a JSON object mapping name -> number or {{\"value\": ..., \"fmt\": ...}}")
+            continue
+        for name, e in data.items():
+            if not _NAME.fullmatch(name):
+                err.append(f"{rel}: '{name}' is not a valid name (a letter, then letters, digits or underscores)")
+                continue
+            if name in raw:
+                err.append(f"values: '{name}' is defined in {raw[name]['file']} and in {rel}: keep one definition")
+                continue
+            V["names"].add(name)
+            ent = dict(e) if isinstance(e, dict) else {"value": e}
+            ent["file"] = rel
+            num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
+            if ("value" in ent) == ("expr" in ent):
+                err.append(f"{rel}: {name} needs exactly one of \"value\" (a number) or \"expr\" (over other names)")
+            elif "value" in ent and not num(ent["value"]):
+                err.append(f"{rel}: {name}: \"value\" must be a number, not {json.dumps(ent['value'])}")
+            elif "expr" in ent and not isinstance(ent["expr"], str):
+                err.append(f"{rel}: {name}: \"expr\" must be a string")
+            elif not isinstance(ent.get("fmt", ""), str):
+                err.append(f"{rel}: {name}: \"fmt\" must be a string such as \".3f\" or \".0%\"")
+            else:
+                raw[name] = ent
+    done, bad = {}, set()
+
+    def get(name, stack):
+        if name in done:
+            return done[name]
+        if name in bad:
+            raise _ExprError(f"{name} has an error (reported above)")
+        if name not in raw:
+            raise _ExprError(f"{name} is not a defined value")
+        if name in stack:
+            raise _ExprError("cycle " + " -> ".join(stack[stack.index(name):] + [name]))
+        e = raw[name]
+        if "expr" not in e:
+            done[name] = e["value"]
+            return done[name]
+        try:
+            done[name] = _eval_expr(e["expr"], lambda n: get(n, stack + [name]))
+        except _ExprError as x:
+            if not getattr(x, "reported", False):
+                err.append(f"{e['file']}: {name} = `{e['expr']}`: {x}")
+                x.reported = True
+            bad.add(name)
+            raise
+        return done[name]
+    for name in raw:
+        try:
+            get(name, [])
+        except _ExprError:
+            pass
+    for name, e in raw.items():
+        if name not in done:
+            continue
+        try:
+            text = _fmt(done[name], e.get("fmt") or None, "expr" in e)
+        except (ValueError, TypeError, OverflowError) as x:
+            err.append(f"{e['file']}: {name}: fmt '{e.get('fmt')}' fails ({x}): use a Python format spec such as .3f, .0% or .2g")
+            continue
+        V["vals"][name] = {"num": done[name], "text": text, "fmt": e.get("fmt", ""), "source": e.get("source", ""),
+                           "unit": e.get("unit", ""), "file": e["file"], "derived": "expr" in e,
+                           "expr": e.get("expr", "")}
+    return V
+
+
+def _write_values_tex(d: Path, V: dict) -> None:
+    """DIR/values.tex: one \\wrsetval{name}{text} per value (rewritten only when it changes, so latexmk is not disturbed)."""
+    new = "".join(["% generated by wr.py values from values/*.json; do not edit\n"]
+                  + [f"\\wrsetval{{{n}}}{{{v['text']}}}\n" for n, v in V["vals"].items()])
+    p = d / "values.tex"
+    if not p.exists() or p.read_text() != new:
+        p.write_text(new)
+
+
+def _sync_values(d: Path) -> dict:
+    """Read values/*.json and regenerate values.tex when values/ exists (called at the start of build and check)."""
+    V = _values(d)
+    if V["dir"]:
+        _write_values_tex(d, V)
+    return V
+
+
+def _snapshot(d: Path) -> tuple[dict | None, str | None]:
+    """(values.confirmed.json as {name: text} or None when absent, a problem message when it is unreadable)."""
+    p = d / "values.confirmed.json"
+    if not p.exists():
+        return None, None
+    try:
+        s = json.loads(p.read_text())
+        if isinstance(s, dict):
+            return {k: str(v) for k, v in s.items()}, None
+    except ValueError:
+        pass
+    return None, "values.confirmed.json is not a JSON object {name: text}: delete it and run wr.py confirm DIR again"
+
+
+_VAL, _FACT, _CLAIM = re.compile(r"\\val\{([^{}]*)\}"), re.compile(r"\\fact\{([^{}]*)\}"), re.compile(r"\\claim\{([^{}]*)\}")
+_REF = re.compile(r"\\(?:[cC]ref|ref|[fF]igref|autoref)\{([^}]*)\}")
+_FIGENV = re.compile(r"\\begin\{figure\*?\}.*?\\end\{figure\*?\}", re.S)
+
+
+def _fact_test(f: dict, V: dict) -> tuple[bool | None, str | None]:
+    """(result of the fact's test, why it could not be evaluated); (None, None) when it has no test."""
+    if not f["test"]:
+        return None, None
+    nums = {n: v["num"] for n, v in V["vals"].items()}
+
+    def get(n):
+        if n not in nums:
+            raise _ExprError(f"{n} is not a defined value")
+        return nums[n]
+    try:
+        return _eval_expr(f["test"], get, logic=True), None
+    except _ExprError as x:
+        return None, str(x)
+
+
+def _status(f: dict) -> str:
+    """A fact's status word: holds, fails, open or superseded (the cell may say 'superseded by F7')."""
+    return (f["status"].split() or [""])[0].lower()
+
+
+def _fact_text(f: dict) -> str:
+    """A fact's sentence and test, normalised (case, spaces, final full stop) so only a real change counts."""
+    return " ".join(f["fact"].lower().split()).rstrip(" .") + " | " + " ".join(f["test"].split())
+
+
+def _fact_snapshot(d: Path) -> dict | None:
+    """facts.confirmed.json as {fact id: normalised sentence and test}, or None when absent or unreadable."""
+    try:
+        s = json.loads((d / "facts.confirmed.json").read_text())
+        return {k: str(v) for k, v in s.items()} if isinstance(s, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def fact_changes(d: Path, led: dict) -> list[str]:
+    """Facts whose sentence or test changed since `wr.py confirm` (requirement tracing's 'outdated' link: a claim
+    resting on a reworded fact may still assume the old meaning)."""
+    snap, rest, out = _fact_snapshot(d), _rests_on(led), []
+    for fid, f in (led["facts"].items() if snap else []):
+        if fid in snap and snap[fid] != _fact_text(f) and _status(f) != "superseded":
+            on = rest.get(fid, [])
+            out.append(f"ledger.md {fid} changed since it was confirmed (was: {snap[fid]}): re-read the sentence marked "
+                       f"\\fact{{{fid}}}" + (f" and the claims resting on it ({', '.join(on)})" if on else "")
+                       + f", then `wr.py confirm DIR {fid}`")
+    return out
+
+
+def _rests_on(led: dict) -> dict[str, list[str]]:
+    """{fact id: [claim ids resting on it]}."""
+    out: dict[str, list[str]] = {}
+    for cid, c in led["claims"].items():
+        for fid in c["facts"]:
+            out.setdefault(fid, []).append(cid)
+    return out
+
+
+def _uses(name: str, V: dict, led: dict, hits: list) -> tuple[list[str], list[str], list[str]]:
+    """(places of \\val{name} in the text, facts using the value, claims resting on those facts)."""
+    places = [_at(h) for h in hits if h[2].group(1) == name]
+    facts = [fid for fid, f in led["facts"].items() if name in f["values"] or name in _expr_names(f["test"])]
+    rest = _rests_on(led)
+    claims = list(dict.fromkeys(c for fid in facts for c in rest.get(fid, [])))
+    return places, facts, claims
+
+
+def value_changes(d: Path, V: dict, led: dict, segs: list) -> tuple[list[str], bool]:
+    """(problems, whether a snapshot exists): every value that differs from values.confirmed.json or has disappeared,
+    with each place that uses it."""
+    snap, bad = _snapshot(d)
+    if bad:
+        return [bad], False
+    if snap is None:
+        return [], False
+    hits = _hits(segs, _VAL)
+    out = []
+    for name, old in snap.items():
+        v = V["vals"].get(name)
+        if v is not None and v["text"] == old:
+            continue
+        if name in V["names"] and v is None:
+            continue  # has an error: reported with the value errors
+        places, facts, claims = _uses(name, V, led, hits)
+        where = "; ".join(x for x in (", ".join(places), "facts " + ", ".join(facts) if facts else "",
+                                      "claims " + ", ".join(claims) + " (through those facts)" if claims else "") if x)
+        what = f"now {v['text']}, was {old}" if v else f"no longer defined, was {old}"
+        out.append(f"value {name} changed since it was confirmed ({what}); " + (f"used in: {where}: re-read them, then"
+                   if where else "nothing uses it yet:") + f" `wr.py confirm DIR {name}`")
+    return out, True
+
+
+def check_values_facts(V: dict, led: dict, segs: list) -> list[str]:
+    """Problems of values/*.json, \\val in the text, the ledger's Facts and the claims resting on them."""
+    probs = list(V["errors"])
+    for h in _hits(segs, _VAL):
+        if h[2].group(1) not in V["names"]:
+            probs.append(f"{_at(h)}: \\val{{{h[2].group(1)}}} is not a defined value: define it in values/*.json (the "
+                         "analysis script writes it) or fix the name")
+    marks: dict[str, list[str]] = {}
+    for h in _hits(segs, _FACT):
+        marks.setdefault(h[2].group(1), []).append(_at(h))
+    for fid, locs in marks.items():
+        if fid not in led["facts"]:
+            probs.append(f"{locs[0]}: \\fact{{{fid}}} is not in ledger.md: add the fact to the Facts table or fix the id")
+    rest = _rests_on(led)
+    nums = {n: v["num"] for n, v in V["vals"].items()}
+    dead = set()
+    for fid, f in led["facts"].items():
+        if not f["fact"]:
+            probs.append(f"ledger.md {fid}: empty fact: state the result in one sentence")
+            continue
+        if _status(f) == "superseded":
+            dead.add(fid)
+            if marks.get(fid):
+                probs.append(f"ledger.md {fid} is {f['status']} but still stated at {', '.join(marks[fid])}: state the "
+                             "fact that replaces it instead")
+            continue
+        if _status(f) not in ("holds", "fails", "open"):
+            probs.append(f"ledger.md {fid}: status '{f['status']}' is not holds, fails, open or 'superseded by Fn'")
+        for n in f["values"]:
+            if n not in V["names"]:
+                probs.append(f"ledger.md {fid}: value '{n}' is not defined: add it to values/*.json or fix the name")
+        res, why = _fact_test(f, V)
+        if why:
+            probs.append(f"ledger.md {fid}: its test `{f['test']}` cannot be evaluated ({why}): fix the test or the value")
+        if res is False and f["status"] == "holds":
+            shown = ", ".join(f"{n} = {format(nums[n], '.6g')}" for n in _expr_names(f["test"]) if n in nums)
+            probs.append(f"ledger.md {fid}: its test `{f['test']}` is false now ({shown}): rewrite the fact or set it to "
+                         "fails" + (f", then recheck {', '.join(rest[fid])}" if fid in rest else ""))
+        if f["status"] == "fails" or res is False:
+            dead.add(fid)
+        n = len(marks.get(fid, []))
+        if n == 0:
+            probs.append(f"ledger.md {fid}: not stated in the text: state it once where it belongs (\\fact{{{fid}}} before "
+                         "the sentence), or drop it from the ledger")
+        elif n > 1:
+            probs.append(f"ledger.md {fid}: stated {n} times ({', '.join(marks[fid])}): state it once and refer back")
+    for cid, c in led["claims"].items():
+        for fid in c["facts"]:
+            if fid not in led["facts"]:
+                probs.append(f"ledger.md {cid}: facts column names {fid}, which is not in the Facts table")
+            elif fid in dead:
+                why = led["facts"][fid]["status"] if _status(led["facts"][fid]) == "superseded" else "no longer holds"
+                probs.append(f"ledger.md {cid} rests on {fid}, which {'is ' + why if why != 'no longer holds' else why}: "
+                             "revise the claim (or point it at the new fact) or its status")
+            elif c["status"] == "established" and led["facts"][fid]["status"] == "open":
+                probs.append(f"ledger.md {cid} is established but rests on {fid}, which is open: settle {fid} or make "
+                             f"{cid} plausible")
+    return probs
+
+
+def _input_targets(d: Path, segs: list) -> list[tuple[str, str]]:
+    """(target file, file:line) of every \\input/\\include: main.tex (also those dropped as missing) and inlined files."""
+    main = (d / "main.tex").read_text()
+    blank = _blank_comments(main)
+    out = []
+    for m in _INPUT.finditer(blank):
+        rel = m.group(2) if m.group(2).endswith(".tex") else m.group(2) + ".tex"
+        out.append((Path(rel).as_posix(), f"main.tex:{1 + main.count(chr(10), 0, m.start())}"))
+    out += [(Path(h[2].group(2) if h[2].group(2).endswith(".tex") else h[2].group(2) + ".tex").as_posix(), _at(h))
+            for h in _hits([s for s in segs if s[0] != "main.tex"], _INPUT)]
+    return out
+
+
+def check_sections(d: Path, segs: list) -> list[str]:
+    """With sections/ in use (main.tex inputs one): each section file input once, every input exists, no orphan file,
+    and a claim marked in one file only."""
+    ins = _input_targets(d, segs)
+    if not any(t.startswith("sections/") and loc.startswith("main.tex") for t, loc in ins):
+        return []
+    probs, where = [], {}
+    for t, loc in ins:
+        if t.startswith("sections/"):
+            where.setdefault(t, []).append(loc)
+    for t, locs in where.items():
+        if len(locs) > 1:
+            probs.append(f"{t} is input {len(locs)} times ({', '.join(locs)}): input each section file once")
+        if not (d / t).exists():
+            probs.append(f"{locs[0]}: \\input of {t}, which does not exist: create it or remove the line")
+    for f in sorted((d / "sections").glob("*.tex")):
+        if f"sections/{f.name}" not in where:
+            probs.append(f"sections/{f.name} is not input anywhere: add \\input{{sections/{f.stem}}} to main.tex where it "
+                         "belongs, or delete the file")
+    claims: dict[str, list] = {}
+    for h in _hits(segs, _CLAIM):
+        claims.setdefault(h[2].group(1), []).append(h)
+    for cid, hs in claims.items():
+        if len({h[0] for h in hs}) > 1:
+            probs.append(f"{cid} is marked in {', '.join(_at(h) for h in hs)}: a claim is made in one section, the others "
+                         "refer to it; remove the \\claim marker from all but one")
+    return probs
+
+
+_MASK = re.compile(r"\\(?:val|label|[cC]ref|ref|eqref|pageref|[fF]igref|autoref|(?:paren|text|foot)?cite\w*|fact|claim|input|"
+                   r"include|includegraphics\*?)\*?(?:\[[^\]]*\])*\{[^}]*\}")
+_NUM = re.compile(r"(?<![\w.\\])(\d+(?:\.\d+)?)(\\?%)?(?![\w\\])")
+
+
+def bare_numbers(segs: list, V: dict, limit: int = 20) -> list[str]:
+    """Numbers typed in the body text that equal a defined value (or its rounding): they should be \\val{name} so they
+    follow the results. Skips arguments of \\val, \\label, \\ref, \\cite and the like, and integers below 10."""
+    if not V["vals"]:
+        return []
+    found, seen_doc = [], False
+    for rel, l0, text in segs:
+        if not seen_doc:
+            i = text.find("\\begin{document}")
+            if i < 0 and rel == "main.tex":
+                continue
+            seen_doc = True
+            text = re.sub(r"[^\n]", " ", text[:max(i, 0) + 16]) + text[max(i, 0) + 16:] if i >= 0 else text
+        s = _MASK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), _strip_comments(text))
+        for m in _NUM.finditer(s):
+            tok, pct = m.group(1), bool(m.group(2))
+            if "." not in tok and int(tok) < 10:
+                continue
+            plain = tok + ("%" if pct else "")
+            line = l0 + s.count("\n", 0, m.start())
+            exact = [n for n, v in V["vals"].items() if _plain(v["text"]) == plain]
+            if exact:
+                more = f" (or {', '.join(exact[1:])})" if len(exact) > 1 else ""
+                found.append(f"{rel}:{line}: {plain} is the value {exact[0]}{more}: write \\val{{{exact[0]}}} so it follows "
+                             "the results")
+                continue
+            p = len(tok.split(".")[1]) if "." in tok else 0
+            if p and len(tok.replace(".", "").lstrip("0")) >= 2:
+                q = Decimal(1).scaleb(-p)
+                near = [n for n, v in V["vals"].items() if "ensuremath" not in v["text"]
+                        and (Decimal(repr(v["num"])) * (100 if pct else 1)).quantize(q, ROUND_HALF_UP) == Decimal(tok)]
+                if near:
+                    found.append(f"{rel}:{line}: {plain} may be {near[0]} ({format(V['vals'][near[0]]['num'], '.6g')}) "
+                                 f"rounded: write \\val{{{near[0]}}}, or ignore if it is another quantity")
+    return found[:limit] + ([f"... and {len(found) - limit} more"] if len(found) > limit else [])
+
+
+def figure_files(segs: list) -> list[str]:
+    """Figures whose \\label is in another file than their first citation (the figure goes with the section that cites it)."""
+    where, first = {}, {}
+    for rel, l0, text in segs:
+        s = _strip_comments(text)
+        for f in _FIGENV.finditer(s):
+            for lab in re.findall(r"\\label\{(fig:[^}]+)\}", f.group(0)):
+                where.setdefault(lab, rel)
+    for h in _hits(segs, _REF):
+        for name in h[2].group(1).split(","):
+            first.setdefault(name.strip(), h)
+    return [f"{lab}: is in {rel} but first cited at {first[lab][0]}:{first[lab][1]}: move it to the section that cites it first"
+            for lab, rel in where.items() if lab in first and first[lab][0] != rel]
 
 
 EDGE_BAND_MM, EDGE_SHARE, EDGE_INK = 0.8, 0.01, 200  # band along each edge; share of its length inked; grey < 200
@@ -261,9 +816,11 @@ def figure_edges(d: Path, figs: list[str]) -> list[str]:
 def check(d: Path) -> list[str]:
     """Problems a script can find; each one names where it is and what to do."""
     probs: list[str] = []
-    raw = _tex_sources(d)
+    segs = _segments(d)
+    raw = "".join(t for _, _, t in segs)
     tex = _strip_comments(raw)
     led = _ledger(d)
+    V = _sync_values(d)
     body = tex.split("\\begin{document}", 1)[-1]
 
     # ledger
@@ -288,6 +845,12 @@ def check(d: Path) -> list[str]:
             probs.append(f"ledger.md {cid}: figure {fig} has no \\label in the text")
     for cid in sorted(set(re.findall(r"\\claim\{(C\d+)\}", body)) - set(led["claims"]), key=lambda s: int(s[1:])):
         probs.append(f"\\claim{{{cid}}} in the text is not in ledger.md")
+
+    # named values, facts, claims resting on facts, values changed since confirmed, section files
+    probs += check_values_facts(V, led, segs)
+    probs += value_changes(d, V, led, segs)[0]
+    probs += fact_changes(d, led)
+    probs += check_sections(d, segs)
 
     # figures: every figure cited, cited before it appears in the source, its caption starts with a bold title
     figs = [(m.start(), m.group(0)) for m in re.finditer(r"\\begin\{figure\*?\}.*?\\end\{figure\*?\}", body, re.S)]
@@ -532,7 +1095,8 @@ def grey_figures(d: Path, figs: list[str]) -> list[str]:
 
 def notes(d: Path) -> list[str]:
     """Reports that never fail the check: figure heights against the page, figure numbers against the text."""
-    body = _strip_comments(_tex_sources(d)).split("\\begin{document}", 1)[-1]
+    segs = _segments(d)
+    body = _strip_comments("".join(t for _, _, t in segs)).split("\\begin{document}", 1)[-1]
     figs = [m.group(0) for m in re.finditer(r"\\begin\{figure\*?\}.*?\\end\{figure\*?\}", body, re.S)]
     out = ["height " + x for x in figure_heights(d, figs)]
     out += ["numbers " + x for x in figure_number_misses(d, body, figs)]
@@ -540,8 +1104,29 @@ def notes(d: Path) -> list[str]:
         out.append("edge check skipped: pdftoppm (poppler) is missing, so figures cut off at their edge are not detected")
     out += ["colour " + x for x in grey_figures(d, figs)]
     out += [f"source: names no source (who measured it, in what): '{x}'" for x in unsourced_sentences(body)]
-    if not _ledger(d)["has_condition"] and _ledger(d)["claims"]:
+    led = _ledger(d)
+    if not led["has_condition"] and led["claims"]:
         out.append("ledger.md has no condition column; add one (what each claim was tested under)")
+    V = _values(d)
+    if V["vals"] and _snapshot(d)[0] is None:
+        out.append("values: no values confirmed yet: after reading the text, run wr.py confirm DIR")
+    out += ["value in text: " + x for x in bare_numbers(segs, V)]
+    out += ["placement: " + x for x in figure_files(segs)]
+    if led["facts"]:
+        out += [f"facts: {cid} names no facts it rests on" for cid, c in led["claims"].items() if not c["facts"]]
+        used = {f for c in led["claims"].values() for f in c["facts"]}
+        idle = [fid for fid, f in led["facts"].items() if fid not in used and _status(f) != "superseded"]
+        if idle and used:
+            out.append(f"facts: no claim rests on {', '.join(idle)}: name them in a claim's facts column, or move them "
+                       "to Out of scope")
+    if V["vals"]:
+        named = ({h[2].group(1) for h in _hits(segs, _VAL)}
+                 | {n for f in led["facts"].values() for n in f["values"] + _expr_names(f["test"])}
+                 | {n for v in V["vals"].values() for n in _expr_names(v["expr"])})
+        idle = [n for n in V["vals"] if n not in named]
+        if idle:
+            out.append(f"values: {len(idle)} used nowhere (text, facts or other values): {', '.join(idle[:15])}"
+                       + (" ..." if len(idle) > 15 else "") + "; fine for values kept for later, else drop them")
     return out
 
 
@@ -639,6 +1224,15 @@ def cmd_status(a) -> int:
     for c in led["claims"].values():
         st[c["status"] or "?"] = st.get(c["status"] or "?", 0) + 1
     print(f"claims: {len(led['claims'])} " + " ".join(f"{k} {v}" for k, v in sorted(st.items())))
+    if led["facts"]:
+        fs = {}
+        for f in led["facts"].values():
+            fs[f["status"] or "?"] = fs.get(f["status"] or "?", 0) + 1
+        print(f"facts: {len(led['facts'])} " + " ".join(f"{k} {v}" for k, v in sorted(fs.items())))
+    V = _values(d)
+    if V["dir"]:
+        ch = value_changes(d, V, led, _segments(d))[0] if (d / "main.tex").exists() else []
+        print(f"values: {len(V['vals'])}, {len(ch)} changed since confirmed" + (f", {len(V['errors'])} error(s)" if V["errors"] else ""))
     for r in sorted((d / "review").glob("round-*")):
         qs = [ln for f in r.glob("*.md") if not f.name.startswith("brief-") for ln in f.read_text().splitlines()
               if re.match(r"- Q\d+", ln)]
@@ -660,10 +1254,234 @@ def cmd_status(a) -> int:
     return 0
 
 
+# ------------------------------------------------------------------ values, confirm, where, split
+def cmd_values(a) -> int:
+    d = Path(a.dir).resolve()
+    if not (d / "values").is_dir():
+        print(f"no {d}/values/: nothing to do (values/*.json are written by the analysis scripts)")
+        return 0
+    V = _sync_values(d)
+    for e in V["errors"]:
+        print("- " + e)
+    stored = sum(not v["derived"] for v in V["vals"].values())
+    print(f"values.tex: {len(V['vals'])} values ({stored} stored, {len(V['vals']) - stored} derived), "
+          f"{len(V['errors'])} error(s)")
+    if not (d / "main.tex").exists():
+        return 1 if V["errors"] else 0
+    ch, confirmed = value_changes(d, V, _ledger(d), _segments(d))
+    for c in ch:
+        print("- " + c)
+    if V["vals"] and not confirmed:
+        print("no values confirmed yet: after reading the text, run wr.py confirm DIR")
+    return 1 if V["errors"] else 0
+
+
+def cmd_confirm(a) -> int:
+    """Confirm values (values.confirmed.json) and facts (facts.confirmed.json): all of both with no names; F ids
+    name facts, other names values."""
+    d = Path(a.dir).resolve()
+    led, fsnap = _ledger(d), _fact_snapshot(d) or {}
+    fids = [n for n in a.names if re.fullmatch(r"F\d+", n) and (n in led["facts"] or n in fsnap)]
+    names, rc = [n for n in a.names if n not in fids], 0
+    if names or (not fids and (d / "values").is_dir()):
+        a.names = names
+        rc = _confirm_values(a)
+        if rc:
+            return rc
+    if fids or (not a.names and not names and led["facts"]):
+        for fid in fids or list(dict.fromkeys(list(led["facts"]) + list(fsnap))):
+            if fid in led["facts"]:
+                new = _fact_text(led["facts"][fid])
+                if fsnap.get(fid, new) != new:
+                    print(f"{fid}: {fsnap[fid]} -> {new}")
+                fsnap[fid] = new
+            else:
+                print(f"{fid}: (removed from ledger.md)")
+                fsnap.pop(fid, None)
+        (d / "facts.confirmed.json").write_text(json.dumps(fsnap, indent=1, ensure_ascii=False) + "\n")
+        print(f"confirmed {len(fids) or len(fsnap)} fact(s) in facts.confirmed.json")
+    return rc
+
+
+def _confirm_values(a) -> int:
+    d = Path(a.dir).resolve()
+    V = _sync_values(d)
+    if V["errors"]:
+        print("values have errors (wr.py values DIR shows them); nothing confirmed")
+        return 1
+    snap, bad = _snapshot(d)
+    if bad:
+        print(bad)
+        return 1
+    d_had_snapshot = snap is not None
+    snap = snap or {}
+    names = list(a.names) or list(dict.fromkeys(list(V["vals"]) + list(snap)))
+    unknown = [n for n in names if n not in V["vals"] and n not in snap]
+    if unknown:
+        print(f"not a value: {', '.join(unknown)} (defined: {', '.join(V['vals']) or 'none'}); nothing confirmed")
+        return 1
+    n_same = 0
+    for n in names:
+        old = snap.get(n)
+        if n in V["vals"]:
+            new = V["vals"][n]["text"]
+            if old == new:
+                n_same += 1
+            else:
+                if old is not None or d_had_snapshot:
+                    print(f"{n}: {old if old is not None else '(new)'} -> {new}")
+            snap[n] = new
+        else:
+            print(f"{n}: {old} -> (removed)")
+            del snap[n]
+    (d / "values.confirmed.json").write_text(json.dumps(snap, indent=1, ensure_ascii=False) + "\n")
+    print(f"confirmed {len(names)} value(s) in values.confirmed.json ({n_same} unchanged)")
+    return 0
+
+
+def _uniq(xs) -> list:
+    return list(dict.fromkeys(xs))
+
+
+def cmd_where(a) -> int:
+    d = Path(a.dir).resolve()
+    if not (d / "main.tex").exists():
+        print(f"no {d}/main.tex")
+        return 1
+    segs, led, V = _segments(d), _ledger(d), _values(d)
+    if not a.items:
+        claims, facts, vals = _hits(segs, _CLAIM), _hits(segs, _FACT), _hits(segs, _VAL)
+        for rel in _uniq(r for r, _, _ in segs):
+            part = [s for s in segs if s[0] == rel]
+            got = {"claims": _uniq(h[2].group(1) for h in claims if h[0] == rel),
+                   "facts": _uniq(h[2].group(1) for h in facts if h[0] == rel),
+                   "values": _uniq(h[2].group(1) for h in vals if h[0] == rel)}
+            defined = _uniq(lab for _, _, t in part for f in _FIGENV.finditer(_strip_comments(t))
+                            for lab in re.findall(r"\\label\{(fig:[^}]+)\}", f.group(0)))
+            cited = _uniq(n.strip() for h in _hits(part, _REF) for n in h[2].group(1).split(",")
+                          if n.strip().startswith("fig:"))
+            print(rel)
+            for k in ("claims", "facts"):
+                if got[k]:
+                    print(f"  {k}: {', '.join(got[k])}")
+            if defined or cited:
+                print("  figures: " + "; ".join(x for x in (("defined " + ", ".join(defined)) if defined else "",
+                                                           ("cited " + ", ".join(cited)) if cited else "") if x))
+            if got["values"]:
+                print(f"  values: {', '.join(got['values'])}")
+            if not any(got.values()) and not defined and not cited:
+                print("  (no claims, facts, figures or values)")
+        return 0
+    rest, rc = _rests_on(led), 0
+    for item in a.items:
+        if re.fullmatch(r"C\d+", item):
+            hs, c = [_at(h) for h in _hits(segs, _CLAIM) if h[2].group(1) == item], led["claims"].get(item)
+            print(f"{item}: " + (f"{c['claim']} [{c['status']}]" if c else "not in ledger.md"))
+            print("  marked at: " + (", ".join(hs) or "nowhere in the text"))
+            if c and c["facts"]:
+                print("  rests on: " + ", ".join(f"{f} ({led['facts'][f]['status']})" if f in led["facts"] else f"{f} (unknown)"
+                                                 for f in c["facts"]))
+        elif re.fullmatch(r"F\d+", item):
+            hs, f = [_at(h) for h in _hits(segs, _FACT) if h[2].group(1) == item], led["facts"].get(item)
+            print(f"{item}: " + (f"{f['fact']} [{f['status']}]" if f else "not in ledger.md"))
+            print("  stated at: " + (", ".join(hs) or "nowhere in the text"))
+            if f and f["values"]:
+                print("  values: " + ", ".join(f["values"]))
+            print("  claims resting on it: " + (", ".join(rest.get(item, [])) or "none"))
+        elif item in V["names"]:
+            hits = _hits(segs, _VAL)
+            places, facts, claims = _uses(item, V, led, hits)
+            v = V["vals"].get(item)
+            print(f"{item}: " + (f"{v['text']} (source: {v['source'] or 'not given'}; {v['file']})" if v else "has an error"))
+            print("  used at: " + (", ".join(places) or "nowhere in the text"))
+            print("  facts using it: " + (", ".join(facts) or "none"))
+            if claims:
+                print("  claims resting on those facts: " + ", ".join(claims))
+        elif item.startswith("fig:") or any(item == lab for lab in re.findall(r"\\label\{([^}]+)\}", _tex_sources(d))):
+            defs = [_at(h) for h in _hits(segs, re.compile(r"\\label\{" + re.escape(item) + r"\}"))]
+            cites = [_at(h) for h in _hits(segs, _REF) if item in [n.strip() for n in h[2].group(1).split(",")]]
+            print(f"{item}: defined at {', '.join(defs) or 'nowhere'}; cited at {', '.join(cites) or 'nowhere'}")
+            cl = [c for c, v in led["claims"].items() if v["figure"].strip("` ") == item]
+            if cl:
+                print("  claims: " + ", ".join(cl))
+        else:
+            print(f"{item}: not a claim, fact, figure or value of this write-up")
+            rc = 1
+    return rc
+
+
+def _brace_arg(s: str, i: int) -> str:
+    """Text of the {...} group whose opening brace is at s[i], braces balanced."""
+    depth, j = 0, i
+    while j < len(s):
+        depth += (s[j] == "{" and (j == 0 or s[j - 1] != "\\")) - (s[j] == "}" and s[j - 1] != "\\")
+        if depth == 0:
+            return s[i + 1:j]
+        j += 1
+    return s[i + 1:]
+
+
+def _slug(title: str) -> str:
+    t = re.sub(r"\\[a-zA-Z]+\*?", "", title)
+    return re.sub(r"[^a-z0-9]+", "-", re.sub(r"[{}$]", "", t).lower()).strip("-")[:40].strip("-") or "section"
+
+
+def cmd_split(a) -> int:
+    """main.tex -> main.tex with \\input{sections/NN-slug} for each \\section block, and the blocks in sections/."""
+    d = Path(a.dir).resolve()
+    mp = d / "main.tex"
+    if not mp.exists():
+        print(f"no {mp}")
+        return 1
+    main = mp.read_text()
+    blank = _blank_comments(main)
+    sd = d / "sections"
+    if re.search(r"\\(?:input|include)\{sections/", blank) or (sd.is_dir() and any(sd.glob("*.tex"))):
+        print("main.tex already inputs sections/ or sections/ holds .tex files: not splitting again (nothing changed)")
+        return 1
+    b0, e0 = blank.find("\\begin{document}"), blank.rfind("\\end{document}")
+    if b0 < 0:
+        print("no \\begin{document} in main.tex: nothing to split")
+        return 1
+    e0 = len(main) if e0 < 0 else e0
+    marks = [(m.start(), m.group(1)) for m in re.finditer(r"\\(section\*?|printbibliography|supplementary|appendix)(?![a-zA-Z])",
+                                                          blank[b0:e0])]
+    marks = [(b0 + i, k) for i, k in marks] + [(e0, "end")]
+    out, pos, n, supp, files = main[:0], 0, {False: 0, True: 0}, False, []
+    for k, (start, kind) in enumerate(marks[:-1]):
+        if kind in ("supplementary", "appendix"):
+            supp = True
+        if not kind.startswith("section"):
+            continue
+        block = main[start:marks[k + 1][0]]
+        i = block.find("{", len(kind) + 1)
+        n[supp] += 1
+        name = f"sections/{'s' if supp else ''}{n[supp]:02d}-{_slug(_brace_arg(block, i) if i >= 0 else '')}"
+        body = block.rstrip()
+        ws = block[len(body):]
+        out += main[pos:start] + f"\\input{{{name}}}" + (ws[1:] if len(ws) > 1 and ws.startswith("\n") else "\n")
+        pos = marks[k + 1][0]
+        files.append((name + ".tex", body + "\n"))
+    if not files:
+        print("no \\section in the document body: nothing to split")
+        return 1
+    new = "".join(out) + main[pos:]
+    (d / "build").mkdir(exist_ok=True)
+    (d / "build" / "main.before-split.tex").write_text(main)
+    sd.mkdir(exist_ok=True)
+    for rel, text in files:
+        (d / rel).write_text(text)
+    mp.write_text(new)
+    print(f"split main.tex into {len(files)} section file(s); the old main.tex is build/main.before-split.tex")
+    for rel, _ in files:
+        print("  " + rel)
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("init"); s.add_argument("dir"); s.add_argument("--title")
+    s = sub.add_parser("init"); s.add_argument("dir"); s.add_argument("--title"); s.add_argument("--sections", action="store_true")
     s = sub.add_parser("build"); s.add_argument("dir")
     s = sub.add_parser("pages"); s.add_argument("dir"); s.add_argument("--first", type=int); s.add_argument("--last", type=int)
     s.add_argument("--dpi", type=int, default=60)
@@ -672,9 +1490,14 @@ def main(argv=None) -> int:
     s.add_argument("--role", action="append", help="NAME=DESCRIPTION for a role that is not a default one (repeatable)")
     s.add_argument("--roles", default="pi,reviewer,newcomer,outsider,editor")
     s = sub.add_parser("status"); s.add_argument("dir")
+    s = sub.add_parser("values"); s.add_argument("dir")
+    s = sub.add_parser("confirm"); s.add_argument("dir"); s.add_argument("names", nargs="*", metavar="NAME")
+    s = sub.add_parser("where"); s.add_argument("dir"); s.add_argument("items", nargs="*", metavar="ID_OR_NAME")
+    s = sub.add_parser("split"); s.add_argument("dir")
     a = p.parse_args(argv)
     return {"init": cmd_init, "build": cmd_build, "pages": cmd_pages, "check": cmd_check, "readers": cmd_readers,
-            "status": cmd_status}[a.cmd](a)
+            "status": cmd_status, "values": cmd_values, "confirm": cmd_confirm, "where": cmd_where,
+            "split": cmd_split}[a.cmd](a)
 
 
 if __name__ == "__main__":
