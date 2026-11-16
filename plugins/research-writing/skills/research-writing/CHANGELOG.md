@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.10.0 (2026-11-16)
+- retrofit (wr.py upgrade), number words (\valw) and small counts in the number scan (wr.py numbers), {{name}} values in ledger rows, wr.py reword: per-sentence tasks tagged by model tier (O28, O29)
+
 ## 0.9.1 (2026-11-16)
 - wr.py follows \input at any depth and treats a figure file as placed in the file that inputs it (O23: 18 false placement notes; after a split figure checks vanished); lettered ids C1a/F2b in the ledger, check and where (O25); own runs, trials, simulations and sweeps count as a source; accepted check results in the ledger's ## Accepted section are listed, not counted, and a stale entry is noted (O26). Status cells count by their first word ('established (2x); plausible (mechanism)') and figure cells by the labels in them ('fig:seed (a)', 'none (text)'), so the lettered rows the ledger now reads raise no false problems; a citation in another figure's caption counts for placement only when the text never cites the figure. Checked on a copy of the pilot (pilot/mel-sections and main): 20/26 problems with 0.9.0, 6 with 0.9.1 (the accepted lengths). From the section-split pilot on cell1542_mel1998 (O24) (O23, O24, O25, O26)
 
