@@ -6,7 +6,7 @@ Judge against the skill's Goals, Math rules and Workflow step 7. The DEVONthink 
 **Task:** A 30-slide lecture on a two-population rate model (E-I network) with its transcript and the textbook chapter. Produce the study guide.
 **Good looks like:**
 - Parts and numbered blocks with `---` between them; every block makes sense pasted alone (no "see block", "as above", "in the figure").
-- Every formula in LaTeX (`$...$`, `$$...$$`), each display equation followed by "where:" with symbols and units and one intuitive sentence; at least one worked numerical example per major formula, computed by the same `model.py` the figures import.
+- Every formula in LaTeX (`$...$`, `$$...$$`), each key display equation followed by a one-line italic symbol gloss (symbols and units) and one intuitive sentence; each Part opens with an overview and a symbols table; at least one worked numerical example per major formula, computed by the same `model.py` the figures import.
 - A visual plan before the blocks; about one figure per two blocks for dynamics; each figure in exactly one block, its content described in prose.
 - Lecture-only material and "beyond the lecture" blocks are marked.
 - The reply names the chat, the counts, what to spot-check, and what comes next.
