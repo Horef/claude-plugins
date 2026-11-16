@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-16 - research-writing 0.9.1 from the section-split pilot
+
+- The owner's simple_complex_v1 session piloted 0.9.0 on cell1542_mel1998 (branch pilot/mel-sections): split faithful (PDF word-identical), Add mode and ledger worked; but O23-O26: figure files input from section files vanished from check/where (one-level \input), 18 false placement notes for figure files, lettered ids (C1a) refused by where and silently skipped in the ledger, own runs flagged as unsourced, no way to record accepted lengths.
+- 0.9.1 (PR #93): \input followed at any depth, a floats-only file is placed where it is input, caption citations count only when the text never cites the figure; lettered ids; tolerant status and figure cells; own runs/trials/simulations count as sources; `## Accepted` ledger section (listed, not counted; stale entries noted).
+- Verified: `loop.py eval research-writing` exit 0, new `pilot_checks` fail on 0.9.0 (4); copies of the pilot branch and main via `git archive`: 20/26 problems with 0.9.0 -> 6 (the accepted lengths) with 0.9.1, one real placement note left (fig:tools in Methods, cited first in section 2); CI green; plugin updated in both accounts.
+
 ## 2026-11-16 - agy browser-login fix; research-writing 0.9.0 (values, facts, sections)
 
 - Issue #89 (owner's father): with a login agy cannot refresh, `agy -p /usage` opens a browser login through `open`; the status line polled it in every session. session-status-line 0.8.1 and herdr-delegate 0.14.3 run agy by full path with PATH minus every folder holding a browser opener (adapted from the issue's fixed PATH); the status line runs it once instead of retrying; `agy_weekly` returns {} on failure. PR #90, issue closed.
