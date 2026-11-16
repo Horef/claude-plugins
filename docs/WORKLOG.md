@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-16 - agy browser-login fix; research-writing 0.9.0 (values, facts, sections)
+
+- Issue #89 (owner's father): with a login agy cannot refresh, `agy -p /usage` opens a browser login through `open`; the status line polled it in every session. session-status-line 0.8.1 and herdr-delegate 0.14.3 run agy by full path with PATH minus every folder holding a browser opener (adapted from the issue's fixed PATH); the status line runs it once instead of retrying; `agy_weekly` returns {} on failure. PR #90, issue closed.
+- research-writing 0.9.0 (O19-O22, owner wishes 2026-11-15): named values (`values/*.json`, `\val`), facts stated once with tests, claims resting on facts, `wr.py confirm` lists sentences/facts/claims using a changed value or reworded fact, superseded facts, optional section files (`init --sections`, `split`, `where`). Code by a Sonnet subagent to a spec, reviewed; prior-art survey by a Copilot Sonnet helper (59.42 AIC: dataref, OpenFastTrace, nanopublications) added the fact snapshot, superseded status and unused-value notes. PR #91.
+- Verified: `claude plugin test plugins/session-status-line` 22 pass; herdr-delegate and research-writing `evals/run.py` exit 0, new cases fail on the old code; `loop.py check --base origin/main` 0 errors on each branch; CI green on #90 and #91 before merge; plugins updated in both accounts (~/.claude, ~/.claude-uni).
+- Unverified: agy offline case on this machine; values/facts/sections on a real write-up.
+
 ## 2026-11-15 - Restructures R1-R8, blind judged run, ledger check
 
 - Owner-approved restructures, each on its own branch and PR: R1 research rule files reviewed (65->51 and 85->51 rules, binding vs guidance, evidence in *-sources.md, ids prefixed RR-/SR- after simple_complex_v1's tag style, id check, D5 step, fallbacks; #80); R3 project-foundations, scientific-figures, strange-loop under 25 KB (#79); R4 herdr-delegate references, R6 course-lecture-notes self-contained (#81); R5 research-writing repetition (#82); R7 self-contained tier text (#83); R8 stated rules become script checks in paper-premark, scientific-figures, gui-design (#84); R2 short self-contained learning-loop footer in all skills, check compares copies, size-exception front matter (#87).
