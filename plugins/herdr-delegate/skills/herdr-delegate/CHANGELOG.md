@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.14.3 (2026-11-16)
+- agy_weekly runs agy by full path with no browser opener on its PATH (issue #89: a broken login opened a browser window on every pick/usage read); a failed read returns {} as documented instead of raising
+
 ## 0.14.2 (2026-11-15)
 - Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
 

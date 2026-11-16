@@ -115,6 +115,31 @@ ok = helpers.agy_usage("agy-argon") is None
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} agy usage is None when /usage can't be read")
 helpers.agy_weekly, helpers.templates_dir, helpers.agy_snapshot_file = _saved
+# Issue #89: with a login it cannot refresh, `agy -p /usage` opened a browser login through `open` on every read.
+# A fake agy calls `open` when it is on PATH (as the real one does then); the read must run without it.
+import os as _os
+_bin, _opener = _tmp / "bin", _tmp / "opener"
+_bin.mkdir(); _opener.mkdir()
+(_opener / "open").write_text(f"#!/bin/sh\ntouch '{_tmp}/browser-opened'\n")
+(_bin / "agy").write_text('#!/bin/sh\nif command -v open >/dev/null 2>&1; then open https://accounts.google.com; exit 3; fi\n'
+                          'echo \'{"command": {"data": {"groups": [{"name": "Gemini Models", "buckets": '
+                          '[{"window": "weekly", "remaining_fraction": 0.5}]}]}}}\'\n')
+for _f in (_opener / "open", _bin / "agy"):
+    _f.chmod(0o755)
+_old_path = _os.environ.get("PATH", "")
+_os.environ["PATH"] = f"{_opener}:{_bin}:{_old_path}"
+try:
+    exe, env = helpers.no_browser_cmd("agy")
+    got = helpers.agy_weekly()
+finally:
+    _os.environ["PATH"] = _old_path
+ok = (exe == [f"{_bin}/agy"] and str(_opener) not in env["PATH"].split(":") and got == {"Gemini Models": 0.5}
+      and not (_tmp / "browser-opened").exists())
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} agy /usage runs by full path with no browser opener on PATH: {exe} {got}")
+ok = helpers.no_browser_cmd("no-such-cli-xyz", path=str(_bin)) == (None, None)
+failures += not ok
+print(f"{'OK  ' if ok else 'FAIL'} a CLI that is not installed is not run")
 print(f"{failures} failure(s)")
 # Claude-account helpers, readings-based quota, usage delta and Codex quota: own process, temp HOME/XDG, fake CLIs.
 acc = subprocess.run([sys.executable, str(HERE / "account_cases.py")], capture_output=True, text=True)

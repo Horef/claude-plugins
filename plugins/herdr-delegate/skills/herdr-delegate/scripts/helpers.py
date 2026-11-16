@@ -603,9 +603,34 @@ def agy_snapshot_file():
     return cfg_home() / "herdr-delegate" / "agy-usage.json"
 
 
+BROWSER_OPENERS = ("open", "xdg-open", "x-www-browser", "www-browser", "sensible-browser", "gio", "wslview")
+
+
+def no_browser_cmd(cmd, path=None):
+    """(argv start, env) that run `cmd` by its full path with no browser opener on PATH, or (None, None) if absent.
+
+    When agy cannot refresh its login (offline, DNS down, login expired), `agy -p` starts a browser login with
+    `open` even without a terminal: every read opened a Safari window (issue #89, 2026-11-16). Without an opener
+    the read just fails; a working login reads as before. PATH keeps every folder except those holding an opener
+    (on macOS /usr/bin, whose tools agy calls by full path); the installer's ~/.local/bin is searched too."""
+    dirs = [d for d in (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep)
+            + [os.path.expanduser("~/.local/bin")] if os.path.isabs(d)]
+    exe = next((f"{d}/{cmd}" for d in dirs if os.access(f"{d}/{cmd}", os.X_OK)), None)
+    if not exe:
+        return None, None
+    keep = [d for d in dict.fromkeys(dirs) if not any(os.path.exists(f"{d}/{o}") for o in BROWSER_OPENERS)]
+    return [exe], {**os.environ, "PATH": os.pathsep.join(keep)}
+
+
 def agy_weekly():
     """{group name: remaining weekly fraction} from agy's /usage, or {} when it can't be read."""
-    out = run_text(["agy", "-p", "/usage", "--output-format", "json"], timeout=90)
+    exe, env = no_browser_cmd("agy")
+    if not exe:
+        return {}
+    try:
+        out = run_text(exe + ["-p", "/usage", "--output-format", "json"], timeout=90, env=env)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        return {}
     try:
         groups = json.loads(out)["command"]["data"]["groups"]
     except (ValueError, KeyError, TypeError):
@@ -897,8 +922,8 @@ def drift_summary(cfg):
 
 # ---------------------------------------------------------------- models
 
-def run_text(cmd, timeout=30):
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def run_text(cmd, timeout=30, env=None):
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
     if r.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)} exited {r.returncode}: {(r.stderr or r.stdout).strip()[:200]}")
     return r.stdout
