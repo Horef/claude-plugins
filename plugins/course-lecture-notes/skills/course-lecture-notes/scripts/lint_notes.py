@@ -8,11 +8,12 @@ level or at a `---` line), against SKILL.md "Goals" item 2 and the "Math" sectio
   cross-reference            "see block", "as above", "in the figure", "previous block"... (CROSS_REFS below)
   unicode-math               Greek letters, arrows, math operators, ×, ·, ±, superscript digits... (write LaTeX)
   single-backslash-display   `\\[` or `\\]` with one backslash: Markdown strips it and MathJax never sees it
-  missing-where              a display equation (`$$...$$`) whose next paragraph does not start with "where:"
+  missing-where              a display equation (`$$...$$`) whose next paragraph is neither a symbol gloss (an
+                             italic line starting `*(`, the reading-first style) nor a "where:" list
   missing-separator          a block with no `---` line between it and the previous block
 
 A display equation that is followed, after at most two short lines of reason, by another display equation is
-treated as a derivation step and is exempt; the last equation of the chain still needs its "where:".
+treated as a derivation step and is exempt; the last equation of the chain still needs its gloss.
 Text outside blocks (title, lecture map, Part headings, self-test) is not checked. Skipped everywhere: code
 fences, inline code, inline SVG, link targets.
 
@@ -63,6 +64,7 @@ MATH_RANGES = [
 
 SINGLE_BACKSLASH_DISPLAY = re.compile(r"(?<!\\)\\[\[\]]")  # \[ or \] that is not the tail of \\[2pt]
 WHERE = re.compile(r"^\W*where\s*:", re.I)
+GLOSS = re.compile(r"^\*\(")  # *($a_n$: ...; $J_0$: ...)*  one-line symbol gloss
 SVG_OPEN = re.compile(r"<svg\b", re.I)
 
 
@@ -126,17 +128,21 @@ def display_equations(body):
     return out
 
 
+def is_gloss(text: str) -> bool:
+    return bool(WHERE.match(text) or GLOSS.match(text))
+
+
 def check_where(body, equations):
     problems = []
     for k, (s, e) in enumerate(equations):
         nxt = [j for j in range(e + 1, len(body)) if body[j][1].strip()]
-        if nxt and WHERE.match(body[nxt[0]][1].strip()):
+        if nxt and is_gloss(body[nxt[0]][1].strip()):
             continue
         if k + 1 < len(equations):
             between = [j for j in nxt if j < equations[k + 1][0]]
-            if len(between) <= 2 and not any(WHERE.match(body[j][1].strip()) for j in between):
+            if len(between) <= 2 and not any(is_gloss(body[j][1].strip()) for j in between):
                 continue  # derivation step: equation, short reason, next equation
-        problems.append((body[s][0], "missing-where", "display equation not followed by a 'where:' line"))
+        problems.append((body[s][0], "missing-where", "display equation not followed by a symbol gloss '*(...)*' or 'where:'"))
     return problems
 
 

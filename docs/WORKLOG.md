@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-16 - course-lecture-notes 1.9.0: reading-first guides
+
+- The owner found the 769001 guides "very dense mathematical lists" (Anki-first rules: where: list after every equation, bold label per paragraph, equation before idea). Pilot on 769001 Tutorial 3 Part 3 approved ("reads much better, simpler and cleaner"; "the short symbol line really helps"; level "maybe a bit on the higher end", acceptable).
+- 1.9.0 (O9): new Goal 3 "Readable first" (Part overview with question/idea/answer and a symbols table outside the blocks, takeaway-first blocks, connected prose, meaning and examples, asides as blockquotes); Math: one-line italic symbol gloss replaces the where: list; Goal 2 keeps blocks self-contained for Anki (context in the opening sentence, glosses inside the block, no heading or --- inside a block). lint_notes.py accepts a `*(...)*` gloss or a where: list (rule name unchanged so existing eval expectations hold); new fixture gloss.md; new judged case.
+- Verified: `loop.py eval course-lecture-notes` exit 0; `loop.py check --base origin/main` 0 errors; lint on the pilot guide 0 problems.
+- Unverified: judged case for the new style; judged case 1 still says where: (eval-only follow-up commit).
+
 ## 2026-11-16 - research-writing 0.9.1 from the section-split pilot
 
 - The owner's simple_complex_v1 session piloted 0.9.0 on cell1542_mel1998 (branch pilot/mel-sections): split faithful (PDF word-identical), Add mode and ledger worked; but O23-O26: figure files input from section files vanished from check/where (one-level \input), 18 false placement notes for figure files, lettered ids (C1a) refused by where and silently skipped in the ledger, own runs flagged as unsourced, no way to record accepted lengths.

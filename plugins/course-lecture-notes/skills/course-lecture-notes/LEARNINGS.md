@@ -5,8 +5,10 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O8 2026-11-16 [workaround] Workflow 6: DEVONthink update_record_content patch mode applies zero-context pure-insertion hunks (@@ -N,0 +M,k @@) one line early; deletions/replacements with zero context are fine. Write insertions as replacements of the preceding line; -U0 is needed because context lines next to inline SVGs are 20-70k chars. Verify by export_record + cmp (claude-code, 769001)
 
 ## Resolved
+- O9 2026-11-16 [misled] Goals 2 / Math: owner found guides 'very dense mathematical lists' that are hard to read (Tutorial 3 + bonus hour); Anki-first rules (self-contained blocks, where: list after every display equation, bold label per paragraph, equation before idea) cost readability. Pilot 2026-11-16: Part intro (question/trick/answer), per-Part symbol table (owner wants to keep some where-list), takeaway-first blocks, one-line symbol glosses, analogies and meaning, asides as blockquotes. Pending owner review before changing goals/lint (claude-code, 769001) → 1.9.0
 - O7 2026-11-14 [friction] Check for an existing study guide sits in step 6 (SKILL.md:80), after the writing; should be step 1 (eval grading 2026-11-14) → 1.7.0
 - O6 2026-11-08 [friction] Workflow 6: a transcript-only session (no slides PDF) has no PDF to annotate, and step 1 assumes slides exist; say what to do when only a transcript is given (link the book section instead, record 'none' in SOURCES) (claude-code, 769001) → 1.7.0
 - O5 2026-11-06 [friction] Workflow 7: anki_blocks.py stopped 3 times on Gemini MAX_TOKENS (blocks 1.6, 5.5, 8.7, all >2.2k chars, after a rejected first attempt); rerun always succeeded. An automatic retry on MAX_TOKENS, or splitting long blocks, would let the batch finish unattended. (claude-code, 76901 Lecture 4) → 1.7.0

@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 1.9.0 (2026-11-16)
+- reading-first guides (owner request 2026-11-16): Goal 3 Part overviews with symbol tables, takeaway-first blocks, connected prose, meaning and examples, asides as blockquotes; one-line italic symbol gloss replaces the where: list (lint accepts either); blocks still self-contained for Anki (O9)
+
 ## 1.8.1 (2026-11-15)
 - Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
 

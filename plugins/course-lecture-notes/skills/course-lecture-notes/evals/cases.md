@@ -40,3 +40,13 @@ Judge against the skill's Goals, Math rules and Workflow step 7. The DEVONthink 
 **Task:** "Make study notes for lecture 3." A "Lecture 3 - … - Study Guide" record already exists in the Lectures group.
 **Good looks like:** the lookup happens in step 1, before any block is written; he is asked whether to update or extend it.
 **Origin:** O7; grading 2026-11-14.
+
+## A guide reads well from start to finish
+**Task:** Write the guide for a math-heavy tutorial (e.g. the ring model in the continuum limit: $1/N$ scaling, Fourier modes, decoupled mode equations).
+**Good looks like:**
+- Each Part opens, before its first block, with the question, the idea and the answer in plain words and a "Symbols in this Part" table.
+- Each block opens with its takeaway; the idea comes before the equation; prose is connected, with few bold labels.
+- Key display equations carry a one-line italic symbol gloss, not a bulleted "where:" list; each block still glosses every symbol it uses (it goes to Anki alone).
+- The math is given meaning (what a coefficient means for the neurons, a worked example, an analogy); students' questions and corrected slips sit in blockquote asides.
+- The lint exits 0.
+**Origin:** owner request 2026-11-16 (769001 Tutorial 3 pilot: "reads much better, simpler and cleaner"; "the short symbol line really helps"); O9.
