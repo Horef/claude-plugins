@@ -55,12 +55,16 @@ def main() -> int:
     other = [l for l in out if not l.startswith("block 1.1 ")]
     if code != 1 or len(soft) < 6 or other:
         failures.append(f"soft-refs.md: expected at least 6 cross-reference problems in block 1.1 and none elsewhere, got exit {code}, {len(soft)} in 1.1, other: {other[:3]}")
+    # Reading-first glosses (owner preference 2026-11-16): a one-line *(...)* gloss satisfies missing-where; 1.3 has none.
+    code, out = lint(HERE / "fixtures" / "gloss.md")
+    if code != 1 or out != ["block 1.3 line 41: missing-where: display equation not followed by a symbol gloss '*(...)*' or 'where:'"]:
+        failures.append(f"gloss.md: expected exactly one missing-where at block 1.3 line 41, got exit {code}: {out[:3]}")
     code, _ = lint(HERE / "fixtures" / "does-not-exist.md")
     if code != 2:
         failures.append(f"missing file should exit 2, got {code}")
     for f in failures:
         print("FAIL:", f)
-    print(f"course-lecture-notes evals: {'FAIL' if failures else 'pass'} (lint_notes.py on 2 fixtures)")
+    print(f"course-lecture-notes evals: {'FAIL' if failures else 'pass'} (lint_notes.py on 4 fixtures)")
     return 1 if failures else 0
 
 
