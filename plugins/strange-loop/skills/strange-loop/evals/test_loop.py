@@ -877,3 +877,85 @@ class UsageBlindSpotsTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertRegex(out, r"tool\.py list\s+1\b")
         self.assertNotRegex(out, r"never run:.*tool\.py list")
+
+
+def _varint(n: int) -> bytes:
+    out = b""
+    while True:
+        b, n = n & 0x7F, n >> 7
+        out += bytes([b | (0x80 if n else 0)])
+        if not n:
+            return out
+
+
+def _pb(*fields) -> bytes:
+    """Protobuf wire bytes from (field number, int | bytes | str) pairs (varint or length-delimited)."""
+    out = b""
+    for num, v in fields:
+        if isinstance(v, int):
+            out += _varint(num << 3) + _varint(v)
+        else:
+            v = v.encode() if isinstance(v, str) else v
+            out += _varint(num << 3 | 2) + _varint(len(v)) + v
+    return out
+
+
+class UsageOtherHarnessesTest(unittest.TestCase):
+    """usage reads the helpers' own logs (owner, 2026-11-17): Codex, Copilot CLI, Kiro CLI and agy, tool calls only."""
+    setUp, tearDown, g_run = PassTest.setUp, PassTest.tearDown, PassTest.g_run
+    usage_fixture = HeldAndUsageTest.usage_fixture
+
+    def test_each_cli_log_counts_loads_reads_and_runs(self):
+        self.usage_fixture()                                            # the unit's references and scripts
+        home = Path(self.tmp.name) / "home"
+        ts = "2026-11-12T09:00:00.000Z"
+        skill = "/r/plugins/demo/skills/demo"
+        # Codex: JS source in a custom_tool_call; prose mentioning a path must not count
+        cx = home / ".codex/sessions/2026/11/12"
+        cx.mkdir(parents=True)
+        js = ('const r = await Promise.allSettled([tools.exec_command({cmd:"sed -n 1,80p ' + skill + '/SKILL.md",workdir:"/p"}), '
+              'tools.exec_command({cmd:"python3 ' + skill + '/scripts/tool.py run",workdir:"/p"})])')
+        (cx / "rollout-2026-11-12T09-00-00-abc.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"timestamp": ts, "type": "session_meta", "payload": {"id": "cx1"}},
+            {"timestamp": ts, "type": "response_item", "payload": {"type": "custom_tool_call", "name": "exec", "input": js}},
+            {"timestamp": ts, "type": "response_item", "payload": {"type": "message", "role": "developer",
+                                                                    "content": [{"type": "input_text", "text": skill + "/references/b.md"}]}},
+        ]) + "\n")
+        # Copilot CLI: tool.execution_start and skill.invoked
+        cp = home / ".copilot/session-state/cp1"
+        cp.mkdir(parents=True)
+        (cp / "events.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"type": "skill.invoked", "timestamp": ts, "data": {"name": "demo", "path": "/h/.copilot/skills/demo/SKILL.md", "content": "..."}},
+            {"type": "tool.execution_start", "timestamp": ts, "data": {"toolName": "view", "arguments": {"path": skill + "/references/a.md"}}},
+            {"type": "tool.execution_complete", "timestamp": ts, "data": {"result": {"content": skill + "/references/b.md"}}},
+        ]) + "\n")
+        # Kiro CLI: tool_call records; disclose_context loads a skill
+        kr = home / ".kiro/sessions/0123456789abcdef/sess_k1"
+        kr.mkdir(parents=True)
+        (kr / "messages.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"timestamp": ts, "payload": {"type": "tool_call", "toolName": "disclose_context", "args": {"name": "demo"}, "status": "completed"}},
+            {"timestamp": ts, "payload": {"type": "tool_call", "toolName": "execute_bash", "args": {"command": "python3 tools/tool.py list"}}},
+        ]) + "\n")
+        # agy: SQLite steps with protobuf payloads; step 132 is a tool call, step 15 repeats it and must not count
+        ag = home / ".gemini/antigravity-cli/conversations"
+        ag.mkdir(parents=True)
+        import sqlite3
+        db = sqlite3.connect(ag / "c1.db")
+        db.execute("create table steps(idx integer, step_type integer, status integer, metadata blob, step_payload blob, step_format integer)")
+        call = _pb((1, 132), (5, _pb((1, _pb((1, 1794480000))), (4, _pb((1, "call_1"), (2, "read_file"),
+                                                                          (3, json.dumps({"Path": skill + "/SKILL.md"})))))))
+        run = _pb((1, 132), (5, _pb((1, _pb((1, 1794480000))), (4, _pb((1, "call_2"), (2, "run_command"),
+                                                                         (3, json.dumps({"CommandLine": "python3 " + skill + "/scripts/tool.py run"})))))))
+        echo = _pb((1, 15), (20, _pb((7, _pb((1, "run_command"), (2, json.dumps({"CommandLine": "python3 x/tool.py run"})))))))
+        db.executemany("insert into steps values (?, ?, 0, x'', ?, 0)", [(1, 132, call), (2, 132, run), (3, 15, echo)])
+        db.commit()
+        db.close()
+        code, out = self.g_run("usage", "demo", "--home", str(home), "--since", "2026-11-01")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"demo: loaded in 4 sessions")                   # codex, copilot, kiro, agy
+        for h in ("codex", "copilot", "kiro", "agy"):
+            self.assertIn(h, out)
+        self.assertRegex(out, r"references/a\.md\s+1\b")                       # copilot view
+        self.assertRegex(out, r"never used:.*references/b\.md")                # prose and tool output do not count
+        self.assertRegex(out, r"tool\.py run\s+2\b")                           # codex and agy, not agy's echo step
+        self.assertRegex(out, r"tool\.py list\s+1\b")                          # kiro
