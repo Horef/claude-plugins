@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-17 - project-foundations 5.15.1: docmap on Windows (O29)
+
+- Bug from nofluke's Windows CI: `str(Path(f).parent)` gives `src\pkg` on Windows, so `folder_table`'s `startswith(d + "/")` missed subfolders and `check` reported MAP.md and parent READMEs stale. All 9 `str(Path...)` sites used as repo-relative keys now use `.as_posix()` (code_dirs, folder_table, build_map, id_scope, the no-git file list, run index paths, worklog list).
+- Verified: new eval (`evals/fixtures/windows_paths.py` runs docmap's helpers with `Path` = `PureWindowsPath`) fails 2 cases on 5.15.0 and passes on 5.15.1; `loop.py eval project-foundations` exit 0; `loop.py check --base origin/main` 0/0; docmap check 0 errors (17 warnings, same as main); `git diff --check` clean.
+- Unverified: not run on a real Windows machine (nofluke's CI will show it once its tools/docmap.py is upgraded).
+
 ## 2026-11-17 - Worktree cleanup and project-foundations 5.15.0
 
 - Owner request: clean up leftover claude-plugins worktrees and stop them recurring. Removed 21 merged worktrees (16 cp-* beside the repo, 5 under .claude/worktrees), the empty claude-plugins-wt/ and 46 merged local branches; 7 more local branches verified as squash-merged (content in main) but not deleted (auto mode refused branch -D; owner to run it).
