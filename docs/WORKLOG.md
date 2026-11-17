@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-17 - Worktree cleanup and project-foundations 5.15.0
+
+- Owner request: clean up leftover claude-plugins worktrees and stop them recurring. Removed 21 merged worktrees (16 cp-* beside the repo, 5 under .claude/worktrees), the empty claude-plugins-wt/ and 46 merged local branches; 7 more local branches verified as squash-merged (content in main) but not deleted (auto mode refused branch -D; owner to run it).
+- Reflection pass project-foundations 5.15.0 (O28 reopened from O20; O27 rejected as fixed in 5.13.0): check fails on merged worktrees idle > worktree_stale_days (default 1); docmap.py worktrees [--remove]; removal is part of the merge (template, SKILL, Upgrade 6b, this AGENTS.md). Evals committed first (5 failed on 5.14.1); now 117 ok, 0 failures. loop.py check 0/0, docmap check 0 errors, git diff --check clean.
+
 ## 2026-11-17 - research-writing 0.11.0: values pass 2 fixes (O31-O37)
 
 - From the helper's values pass 2 on cell1542_mel1998 (simple_complex_v1 `docs/writeups/cell1542_mel1998/review/values_pass2.md`, 10 items; recorded as O31-O38, O34 reopening O29). `numbers`: skips a number followed by an enumerated set or after first/last ("the three draws (a to c)"); a short number equal to 2+ values, a number equal to 4+, or a whole number followed by a word other than what the value counts is counted, not listed (`--all`); unit/name evidence alone makes a small count likely only when at most 2 values share it; "48 of 12" and "2×" not counts; scans every ledger paragraph (Message, Reader, Out of scope) and evidence cells; honours `## Accepted`. `reword`: quantity words and typed numbers count only within 8 words of the changed value and not past ; : or a dash; a sentence or caption over 400 characters becomes the clause around the change (conclusion tasks keep the whole text); ledger tasks say `ledger.md:<line> C2` and show the row filled in; text tasks give the line of the value (as check); a count moving to or from one without `\valp` is a words task. Preamble: `\valw[none]{n}`, `\Valw[None]{n}`, `\valp{n}{draw}{draws}` (values.tex marks values 0 and 1); `upgrade` adds the block where `\val` is defined (preamble-local.tex) and says which file.

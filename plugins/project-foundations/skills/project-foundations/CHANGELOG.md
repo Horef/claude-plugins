@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.15.0 (2026-11-17)
+- Merged worktrees recurred after 5.11.0 (21 left in claude-plugins for up to 3 days, the rule only in the template and the warning lost among ~38): check now fails on a merged worktree idle longer than worktree_stale_days (default 1; a just-merged one stays a warning); new docmap.py worktrees [--remove] lists merged worktrees and removes the clean ones with their branches; AGENTS template, SKILL parallel-agents line and Audit: removal is part of the merge; Upgrade 6b: since 5.15 the worktree line. DOCMAP_VERSION 5.15.0. Owner request 2026-11-17. Evals: 5 new checks committed first (5 failed on 5.14.1), all pass (O28)
+
 ## 5.14.1 (2026-11-15)
 - Learning loop footer shortened to the self-contained template (restructure R2, owner-approved 2026-11-15, D12); skill-specific hints kept under '### Observations'.
 
