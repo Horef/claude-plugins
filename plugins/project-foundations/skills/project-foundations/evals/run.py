@@ -772,6 +772,33 @@ def main() -> int:
         expect("table src/pkg `sub/` `a.py`" in p.stdout,
                "a folder table lists its subfolders even where str(Path) uses backslashes (O29)", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O30: failed attempts and setting dependencies in decisions
+        root = Path(tmp)
+        dec = ("# Decision log\nDecisions.\n\n"
+               "## D1. Parse paths with pathlib (2026-11-01; status: accepted)\n- **Decision:** pathlib.\n"
+               "- **Tried:** os.path string joins - broke on Windows (2026-10-30)\n"
+               "- **Depends on:** Python 3.12; POSIX and Windows runners\n\n"
+               "## D2. Use model X for summaries (2026-11-02; status: superseded by D3)\n- **Decision:** X.\n"
+               "- **Depends on:** Claude Sonnet 5.5\n\n"
+               "## D3. Use model Y for summaries (2026-11-03; status: accepted)\n- **Decision:** Y.\n"
+               "- **Depends on:** Claude Haiku 5.5 and its pricing\n\n"
+               "## D4. Plain Markdown (2026-11-03; status: accepted)\n- **Decision:** md.\n")
+        for rel, text in {"AGENTS.md": "# Dep\n", "docs/DECISIONS.md": dec}.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        p = docmap(root, "depends")
+        expect(p.returncode == 0 and "D1." in p.stdout and "D3." in p.stdout and "Python 3.12" in p.stdout,
+               "depends lists live decisions with a Depends on line and what they depend on (O30)", p)
+        expect("D2." not in p.stdout and "D4." not in p.stdout,
+               "depends skips superseded decisions and decisions without dependencies (O30)", p)
+        p = docmap(root, "depends", "haiku")
+        expect("D3." in p.stdout and "D1." not in p.stdout, "depends WORDS keeps the decisions whose dependencies match (O30)", p)
+        p = docmap(root, "find", "windows", "broke")
+        expect("D1." in p.stdout, "find reaches a decision's Tried line (O30)", p)
+        tpl = (SKILL_DIR / "templates/decisions.md").read_text(encoding="utf-8")
+        expect("**Tried:**" in tpl and "**Depends on:**" in tpl, "the decisions template has Tried and Depends on lines (O30)")
+
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
 
