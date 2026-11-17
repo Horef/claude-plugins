@@ -12,7 +12,12 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
                                              exits 1: rerun with --same O3 (recurrence: ×N and a dated detail; a resolved
                                              O3 is reopened as a new open line carrying its count) or --new
   python loop.py show UNIT O3 [O4 ...]       an observation by id, open or resolved, with the CHANGELOG lines citing it
-  python loop.py status [UNIT]               open observations per unit, which are ripe, budget use (UNIT: wins by section)
+                                             and the earlier fixes of the same lesson that did not hold
+  python loop.py status [UNIT]               open observations per unit, which are ripe, budget use, fixes that held
+                                             (UNIT: the fixes that did not hold, wins by section)
+  python loop.py usage [UNIT] [--days 90 | --since DATE] [--transcripts DIR ...]
+                                             what of each skill Claude Code sessions used: loads, files read, script
+                                             subcommands run, and what was never used (pruning candidates)
   python loop.py digest                      at most a few lines for a session-start hook; silent when nothing is ripe
   python loop.py check [--base REF]          CI gate: manifests, versions, changelogs, learnings format, budgets;
                                              with --base, a plugin changed since REF must have bumped its version
@@ -293,6 +298,17 @@ class Learnings:
         """The open line that reopened the resolved observation `oid`, if any."""
         return next((m.group(1) for _, m in self.entries("open") if re.search(rf"\breopens {oid}\b", m.group(4))), None)
 
+    def came_back(self, oid: str) -> re.Match | None:
+        """The line (open or resolved) that reopened `oid`: a lesson that recurred after it was resolved (O27)."""
+        return next((m for t in ("open", "resolved") for _, m in self.entries(t)
+                     if re.search(rf"\breopens {oid}\b", m.group(4))), None)
+
+    def fixes(self) -> list[tuple[re.Match, re.Match | None]]:
+        """Each observation resolved by a version (a fix, not rejected or moved), with the line that reopened it, if
+        any: a fix that did not hold (O27, after Yu et al. 2026: the record of what missed is what helps later passes)."""
+        return [(m, self.came_back(m.group(1))) for _, m in self.entries("resolved")
+                if m.group(6) and re.match(r"\d+\.\d+\.\d+", m.group(6))]
+
     def reopen(self, m: re.Match, text: str) -> tuple[str, int]:
         """A resolved lesson recurs: a new open line carries its text, count + 1 and `reopens O<n>`; the resolved
         line stays as it is (history is append-only)."""
@@ -530,6 +546,8 @@ def unit_report(genome: Path, name: str, d: Path) -> tuple[list[re.Match], list[
     opened = [m for _, m in learn.entries("open")] if learn else []
     ripe = [m for m in opened if is_ripe(m)]
     notes = []
+    if learn and (fixes := learn.fixes()):
+        notes.append(f"fixes held {sum(1 for _, back in fixes if back is None)}/{len(fixes)}")
     skill = d / "SKILL.md"
     if skill.exists():
         raw = skill.read_bytes()
@@ -551,6 +569,9 @@ def cmd_status(args):
         for m in opened if args.unit else ripe:
             print(f"   {m.group(1)} [{m.group(3)}]{' ×' + m.group(5) if m.group(5) else ''} {m.group(4)[:110]}")
         if args.unit and (d / "LEARNINGS.md").exists():
+            for m, back in Learnings(d / "LEARNINGS.md", name).fixes():
+                if back is not None:   # read their CHANGELOG entries (`show`) before trying the same remedy again
+                    print(f"   did not hold: {m.group(1)} ({m.group(6)}) came back as {back.group(1)}: {m.group(4)[:80]}")
             wins = wins_by_section(Learnings(d / "LEARNINGS.md", name))
             if wins:
                 print("   wins: " + ", ".join(f"{s} ({n})" for s, n in wins))
@@ -825,32 +846,175 @@ def cmd_eval(args):
         sys.exit(f"{args.unit}: no evals/ yet; write at least one case before changing the skill's behaviour")
 
 
+def changelog_citing(log: list[str], oid: str) -> list[tuple[str | None, str]]:
+    """(version, line) for each CHANGELOG line that cites `oid`."""
+    out, version = [], None
+    for line in log:
+        if (h := CHANGE_HEAD.match(line)):
+            version = h.group(1)
+        elif re.search(rf"\b{oid}\b", line):
+            out.append((version, line))
+    return out
+
+
 def cmd_show(args):
-    """Look observations up by id (O26): the line, open or resolved, the CHANGELOG entries citing it, and the open
-    line that reopened it."""
+    """Look observations up by id (O26): the line, open or resolved, the CHANGELOG entries citing it, the line that
+    reopened it, and back along `reopens` the earlier fixes that did not hold with their CHANGELOG entries (O27)."""
     g = need_genome(args)
     d = need_unit(g, args.unit)
     learn = Learnings(d / "LEARNINGS.md", args.unit)
     log = (d / "CHANGELOG.md").read_text(encoding="utf-8").splitlines() if (d / "CHANGELOG.md").exists() else []
+    by_id = {m.group(1): (t, m) for t in ("open", "resolved") for _, m in learn.entries(t)}
     missing = []
     for oid in args.ids:
-        hit = [(t, m) for t in ("open", "resolved") for _, m in learn.entries(t) if m.group(1) == oid]
-        if not hit:
+        if oid not in by_id:
             missing.append(oid)
             continue
-        for t, m in hit:
-            print(f"{oid} [{t}] {m.string}")
-        version = None
-        for line in log:
-            if (h := CHANGE_HEAD.match(line)):
-                version = h.group(1)
-            elif re.search(rf"\b{oid}\b", line):
-                print(f"   CHANGELOG {version}: {line[:300]}")
-        again = learn.reopened_as(oid)
-        if again:
-            print(f"   reopened as {again} (open)")
+        t, m = by_id[oid]
+        print(f"{oid} [{t}] {m.string}")
+        for version, line in changelog_citing(log, oid):
+            print(f"   CHANGELOG {version}: {line[:300]}")
+        back = learn.came_back(oid)
+        if back:
+            print(f"   came back as {back.group(1)} ({by_id[back.group(1)][0]})")
+        seen, cur = {oid}, m
+        while (r := re.search(r"\breopens (O\d+)\b", cur.group(4))) and r.group(1) in by_id and r.group(1) not in seen:
+            prev = by_id[r.group(1)][1]
+            seen.add(prev.group(1))
+            print(f"   reopens {prev.group(1)}, whose fix in {prev.group(6) or '?'} did not hold")
+            for version, line in changelog_citing(log, prev.group(1)):
+                print(f"      CHANGELOG {version}: {line[:300]}")
+            cur = prev
     if missing:
         sys.exit(f"strange-loop: no observation {', '.join(missing)} in {args.unit} ({(d / 'LEARNINGS.md').resolve()})")
+
+
+def transcript_roots(extra: list[str] | None) -> list[Path]:
+    """Claude Code keeps each account's transcripts in <config dir>/projects: $CLAUDE_CONFIG_DIR, ~/.claude and
+    every ~/.claude-*; `--transcripts` replaces them (an archive of older transcripts, another machine's copy)."""
+    if extra:
+        cands = [Path(e).expanduser() for e in extra]
+    else:
+        cands = ([Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser() / "projects"] if os.environ.get("CLAUDE_CONFIG_DIR") else [])
+        cands += [Path.home() / ".claude" / "projects"] + sorted(Path.home().glob(".claude-*/projects"))
+    out, seen = [], set()
+    for c in cands:
+        if c.is_dir() and (r := c.resolve()) not in seen:
+            seen.add(r)
+            out.append(c)
+    return out
+
+
+def unit_parts(d: Path) -> tuple[list[str], dict[str, set[str]]]:
+    """A unit's files an agent opens on demand (references/, templates/) and its scripts with their subcommands
+    (argparse subparser names and the keys of a `COMMANDS = {...}` table)."""
+    files = sorted(p.relative_to(d).as_posix() for sub in ("references", "templates") if (d / sub).is_dir()
+                   for p in (d / sub).rglob("*") if p.is_file())
+    scripts = {}
+    for py in sorted((d / "scripts").glob("*.py")) if (d / "scripts").is_dir() else []:
+        text = py.read_text(encoding="utf-8", errors="replace")
+        subs = set(re.findall(r"add_parser\(\s*[\"']([\w-]+)[\"']", text))
+        if (t := re.search(r"^COMMANDS\s*=\s*\{(.*?)\}", text, re.S | re.M)):
+            subs |= set(re.findall(r"[\"']([\w-]+)[\"']\s*:", t.group(1)))
+        scripts[py.name] = subs
+    return files, scripts
+
+
+def cmd_usage(args):
+    """What of each skill was used (O28): sessions that loaded it (Skill tool, slash command or a read of its SKILL.md),
+    its references/templates read (Read tool or a shell command naming the path), its scripts' subcommands run (by script
+    name, so a project's tools/docmap.py counts for project-foundations), and what was never used since the date."""
+    g = need_genome(args)
+    since = args.since or (_dt.date.today() - _dt.timedelta(days=args.days)).isoformat()
+    us = {n: d for n, d in units(g).items() if not args.unit or n == args.unit}
+    if args.unit and not us:
+        need_unit(g, args.unit)
+    parts = {n: unit_parts(d) for n, d in us.items()}
+    script_unit = {py: n for n, (_, scripts) in parts.items() for py in scripts}
+    path_re = re.compile(r"/skills/([\w.-]+)/((?:references|templates)/[^\s\"'`;|&)<>]+|SKILL\.md)")
+    run_re = re.compile(r"\bpython[\d.]*\s+(?:-\S+\s+)*[\"']?\S*?([\w-]+\.py)\b[\"']?((?:[ \t]+[^\s;&|]+){0,6})")
+    loads: dict[str, set[str]] = {n: set() for n in us}
+    last: dict[str, str] = {}
+    reads: dict[tuple[str, str], int] = {}
+    runs: dict[tuple[str, str, str], int] = {}
+    roots = transcript_roots(args.transcripts)
+    files = [f for r in roots for f in r.rglob("*.jsonl")
+             if _dt.date.fromtimestamp(f.stat().st_mtime).isoformat() >= since]
+
+    def seen(unit, sess, ts):
+        if unit in loads:
+            loads[unit].add(sess)
+            last[unit] = max(last.get(unit, ""), ts[:10])
+
+    for f in files:
+        sess = f.parent.parent.name if f.parent.name == "subagents" else f.stem
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"tool_use"' not in line and "<command-name>" not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                ts = str(rec.get("timestamp") or "")
+                if ts and ts[:10] < since:
+                    continue
+                content = (rec.get("message") or {}).get("content")
+                if isinstance(content, str):
+                    for name in re.findall(r"<command-name>/?([^<\s]+)</command-name>", content):
+                        seen(name.split(":")[-1], sess, ts)
+                    continue
+                for b in content if isinstance(content, list) else []:
+                    if not isinstance(b, dict) or b.get("type") != "tool_use":
+                        continue
+                    inp = b.get("input") or {}
+                    if b.get("name") == "Skill":
+                        seen(str(inp.get("skill", "")).split(":")[-1], sess, ts)
+                        continue
+                    text = " ".join(str(inp.get(k, "")) for k in ("file_path", "command", "path", "pattern"))
+                    for unit, rel in path_re.findall(text):
+                        if rel == "SKILL.md":
+                            seen(unit, sess, ts)
+                        elif unit in us:
+                            reads[unit, rel] = reads.get((unit, rel), 0) + 1
+                    if b.get("name") == "Bash":
+                        cmd = str(inp.get("command", ""))
+                        for var, val in re.findall(r"\b([A-Za-z_]\w*)=([^\s;&|]+)", cmd):   # P=...; python3 $P/x.py
+                            cmd = re.sub(rf"\$\{{?{var}\b\}}?", lambda _m, v=val.strip("\"'"): v, cmd)
+                        for py, rest in run_re.findall(cmd):
+                            if py in script_unit:
+                                u = script_unit[py]
+                                sub = next((t for t in rest.split() if t in parts[u][1][py]), "")
+                                runs[u, py, sub] = runs.get((u, py, sub), 0) + 1
+    print(f"usage since {since}: Claude Code transcripts only ({len(files)} files under {len(roots)} folder(s)); "
+          "helpers on other CLIs, claude.ai chats and transcripts Claude Code already deleted are not counted, "
+          "and the parts of a SKILL.md cannot be told apart (it loads whole)")
+    for n in us:
+        unit_files, scripts = parts[n]
+        if not (us[n] / "SKILL.md").exists():
+            print(f"{n}: a mod (always on, nothing to load; not tracked here)")
+            continue
+        print(f"{n}: loaded in {len(loads[n])} session{'' if len(loads[n]) == 1 else 's'}"
+              + (f", last {last[n]}" if last.get(n) else ""))
+        width = max([len(x) for x in unit_files] + [len(f"{py} {sub}") for (u, py, sub) in runs if u == n] + [10])
+        for rel in unit_files:
+            if reads.get((n, rel)):
+                print(f"   {rel:<{width}}  {reads[n, rel]}")
+        for (u, py, sub), k in sorted(runs.items()):
+            if u == n:
+                print(f"   {(py + ' ' + sub).strip():<{width}}  {k}")
+        code = "\n".join((us[n] / "scripts" / py).read_text(encoding="utf-8", errors="replace") for py in scripts)
+        by_script = (us[n] / "templates").is_dir() and "templates" in code   # scripts that copy templates (init, new) read them, not the agent
+        unused = [rel for rel in unit_files if not reads.get((n, rel)) and not (by_script and rel.startswith("templates/"))]
+        if unused:
+            print(f"   never used: {', '.join(unused)}")
+        if by_script:
+            print("   (templates/ is read by the unit's scripts: not counted)")
+        never = [f"{py} {sub}" for py, subs in scripts.items() for sub in sorted(subs)
+                 if not runs.get((n, py, sub))]
+        never += [py for py, subs in scripts.items() if not subs and not any(u == n and p == py for u, p, _ in runs)]
+        if never:
+            print(f"   never run: {', '.join(never)}")
 
 
 def cmd_judge(args):
@@ -1195,6 +1359,8 @@ def main(argv: list[str]) -> None:
     p = sub.add_parser("bump"); p.add_argument("unit"); p.add_argument("part", choices=["patch", "minor", "major"])
     p.add_argument("summary"); p.add_argument("--obs", action="append")
     p = sub.add_parser("show"); p.add_argument("unit"); p.add_argument("ids", nargs="+")
+    p = sub.add_parser("usage"); p.add_argument("unit", nargs="?"); p.add_argument("--days", type=int, default=90)
+    p.add_argument("--since"); p.add_argument("--transcripts", action="append")
     p = sub.add_parser("judge"); p.add_argument("unit"); p.add_argument("case")
     p.add_argument("--old", required=True); p.add_argument("--new", required=True); p.add_argument("--out")
     p.add_argument("--seed", type=int)
@@ -1209,7 +1375,7 @@ def main(argv: list[str]) -> None:
     p.add_argument("--exclude", action="append"); p.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     {"where": cmd_where, "note": cmd_note, "status": cmd_status, "digest": cmd_digest, "check": cmd_check,
-     "eval": cmd_eval, "bump": cmd_bump, "show": cmd_show, "judge": cmd_judge, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link, "new": cmd_new,
+     "eval": cmd_eval, "bump": cmd_bump, "show": cmd_show, "usage": cmd_usage, "judge": cmd_judge, "absorb": cmd_absorb, "pack": cmd_pack, "link": cmd_link, "new": cmd_new,
      "sync": lambda a: sys.exit(cmd_sync(a)), "hook": cmd_hook}[args.cmd](args)
 
 

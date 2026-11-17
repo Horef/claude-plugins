@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 2.5.0 (2026-11-17)
+- status shows fixes held per unit and, for one unit, the fixes that did not hold (a resolved lesson that came back); show follows reopens back through earlier fixes with their CHANGELOG entries; new loop.py usage reports which skill files, references, templates and script subcommands Claude Code sessions used and which never; Gather and Forgetting rules use them (owner request, after Yu et al. 2026 SIM and Anthropic's subagent-folding article) (O27, O28)
+
 ## 2.4.0 (2026-11-15)
 - Restructure R2, owner-approved 2026-11-15 (D12: each skill works on its own): the Learning loop footer is now a short self-contained block (note command when ~/.config/strange-loop/genome exists, otherwise, when the person takes part, an 'Observations for <name>' block; else nothing but one line if the skill clearly failed); template, loop.py new and strange-loop's own footer match; skill-specific hints go in '### Observations'. check warns when a skill's footer differs from the template. Size exception: front matter 'size-exception: <reason>' silences the size warning and status shows the reason (section 6, AGENTS.md). Section 2: plain-error rule moved there from the footers.
 
