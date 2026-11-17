@@ -45,7 +45,8 @@ Update in the same commit as the change that requires it. A line tagged `[module
 | add, move, rename or delete files | run `python tools/docmap.py update` |
 | learn a fact about this machine (path, interpreter, limit, quirk) | `AGENTS.local.md` only; if every machine needs that key, add it to `AGENTS.local.example.md` |
 | finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results (`python tools/docmap.py worklog "TITLE" body.md --status` inserts it dated, rotates old months and sets STATUS's date) |
-| choose between alternatives, or fill a gap | the next D entry in `docs/DECISIONS.md`; to reverse one, a new entry that supersedes it |
+| choose between alternatives, or fill a gap | the next D entry in `docs/DECISIONS.md`; to reverse one, a new entry that supersedes it; an attempt that failed goes in the **Tried** line of the decision it served |
+| switch a model, platform or key library | `python tools/docmap.py depends WORDS` lists the decisions that depend on it: re-check each |
 | add or change a module boundary | [architecture] `docs/ARCHITECTURE.md` and `[tool.docmap.forbid]` |
 | change user-visible behavior, CLI or config | [releases] `README.md` and `CHANGELOG.md` |
 | run an experiment | [experiments] `python tools/docmap.py runs`; a numbered section in `docs/RESULTS.md` citing the run id |

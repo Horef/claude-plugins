@@ -24,7 +24,7 @@ An agent should be able to go from "nothing loaded" to "the right lines of the r
 2. `docs/MAP.md` - **generated**: every folder and code file with its one-line summary, the most-imported modules, the enforced boundaries.
 3. `<folder>/README.md` - **hand-written** purpose paragraph and folder-specific rules, plus a **generated** table of its files and subfolders with their summaries and who imports them.
 4. The file's header docstring/comment - **hand-written**: what it is for, how to use it, its contracts.
-5. `python tools/docmap.py show PATH | where NAME | uses PATH | find WORDS | get D12` - **computed on demand**: symbols with signatures and line numbers, definitions, importers and every reference.
+5. `python tools/docmap.py show PATH | where NAME | uses PATH | find WORDS | get D12 | depends WORDS` - **computed on demand**: symbols with signatures and line numbers, definitions, importers and every reference.
 6. `python tools/docmap.py calls NAME | deps [PATH] | map [--budget N]` - **the code graph, computed on demand** (Python): callers and callees with file:line, module dependencies with import cycles, and a ranked, token-budgeted repo map. How calls are resolved and what is not: `references/code-graph.md`.
 
 **Write what lasts, generate what changes.** People and agents write purpose, usage and reasons, which change rarely. The script generates lists of files, symbols and "who uses this", which change with every commit and go stale the moment anyone maintains them by hand. CI fails when a generated block is out of date or a description is missing, so forgetting becomes visible instead of silent. The same holds for prose that can go stale: every doc carries a dated Status line, key values live once in a generated `docs/FACTS.md`, and `check` points at docs that are overdue for verification or still cite superseded decisions. "Imported by" also lists the tests that import a module, which tells an agent which tests to run after changing it.
@@ -38,7 +38,7 @@ The project-level documents, each with one job and one change rate (mixing chang
 | `docs/BRIEF.md` | Goal, non-goals, success criteria, open questions for the owner | When scope changes |
 | `docs/STATUS.md` | Snapshot: a Workstreams table (one line per line of work, pointing to its folder), what works (and how it was verified), open problems, next actions, blockers | Overwritten each session |
 | `docs/WORKLOG.md` | Append-only, newest first: what was done, exact commands and results (current month; older months in `docs/worklog/YYYY-MM.md`) | Every session |
-| `docs/DECISIONS.md` | Append-only decisions with IDs, alternatives, reasons, evidence; generated index at the top | When a choice is made |
+| `docs/DECISIONS.md` | Append-only decisions with IDs, alternatives, failed attempts (Tried), what they depend on (`depends` lists them), reasons, evidence; generated index at the top | When a choice is made |
 | `docs/ARCHITECTURE.md` | Short: data flow, boundaries, invariants ("core never imports X"), with the checkable ones enforced by docmap | A few times a year |
 | `docs/MAP.md` | Generated project map | `docmap.py update` |
 | `docs/RESULTS.md`, `docs/RUNS.md` | Research: append-only results with generated index; generated run index | Per experiment / run |

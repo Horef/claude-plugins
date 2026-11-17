@@ -8,6 +8,8 @@ Every choice between alternatives, and every gap the code or sources leave that 
 - **Context:** <the problem and constraints>
 - **Decision:** <what we do>
 - **Alternatives:** <option> - <why not>
+- **Tried:** <attempt> - <what happened> (<date or run id>) (optional: attempts that failed, so nobody retries them without new evidence)
+- **Depends on:** <model, platform, library or data version it holds for> (optional; `docmap.py depends` lists these after a switch)
 - **Consequences:** <what this makes easy/hard; when to revisit>
 - **Evidence / source:** <link, paper, benchmark, commit; research: established/plausible/unresolved>
 ```

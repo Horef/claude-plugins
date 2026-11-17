@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.16.0 (2026-11-17)
+- decisions record failed attempts (Tried) and what they depend on (Depends on); docmap.py depends [WORDS] lists live setting-dependent decisions to re-check after a model, platform or library switch; AGENTS template rows for both (owner request, after Yu et al. 2026 SIM) (O30)
+
 ## 5.15.1 (2026-11-17)
 - docmap keeps folder keys POSIX on Windows (as_posix at every str(Path) site); fixes stale MAP/README reports there (O29)
 
