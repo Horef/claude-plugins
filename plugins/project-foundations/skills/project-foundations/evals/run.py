@@ -320,6 +320,47 @@ def main() -> int:
         p = docmap(root, "check")
         expect(not [ln for ln in p.stdout.splitlines() if "worktree " in ln], "the warning goes once the worktree is removed", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O28: merged worktrees recurred (21 left for days); stale ones are errors, one command removes them
+        root = Path(tmp) / "proj"
+        root.mkdir()
+        for rel, text in FILES.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        for a in (("init", "-q", "-b", "main"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-qm", "base")
+        for name in ("done", "dirty", "open"):
+            wt = Path(tmp) / f"proj_{name}"
+            sh(root, "git", "worktree", "add", "-q", str(wt), "-b", name)
+            (wt / f"{name}.txt").write_text(name, encoding="utf-8")
+            sh(wt, "git", "add", f"{name}.txt")
+            sh(wt, "git", "commit", "-qm", f"{name} work")
+            if name != "open":
+                sh(root, "git", "merge", "--no-ff", "-qm", f"merge {name}", name)
+        (Path(tmp) / "proj_dirty" / "wip.txt").write_text("uncommitted", encoding="utf-8")
+        p = docmap(root, "check")
+        wt_lines = [ln for ln in p.stdout.splitlines() if "worktree " in ln]
+        expect(p.returncode == 0 and len(wt_lines) == 2 and all(ln.startswith("warning:") and "worktrees --remove" in ln for ln in wt_lines),
+               "a just-merged worktree is a warning that names `worktrees --remove`", p)
+        (root / "docmap.toml").write_text("worktree_stale_days = 0\n", encoding="utf-8")
+        p = docmap(root, "check")
+        errs = [ln for ln in p.stdout.splitlines() if ln.startswith("error: worktree ")]
+        expect(p.returncode == 1 and len(errs) == 2 and "branch open" not in p.stdout,
+               "a merged worktree older than worktree_stale_days is an error; unmerged ones are not reported", p)
+        p = docmap(root, "worktrees")
+        expect(p.returncode == 0 and "proj_done" in p.stdout and "proj_dirty" in p.stdout and "uncommitted" in p.stdout
+               and "proj_open" not in p.stdout, "worktrees lists merged worktrees and marks uncommitted changes", p)
+        p = docmap(root, "worktrees", "--remove")
+        branches = sh(root, "git", "branch", "--format=%(refname:short)").stdout.split()
+        expect(not (Path(tmp) / "proj_done").exists() and "done" not in branches
+               and (Path(tmp) / "proj_dirty" / "wip.txt").exists() and "dirty" in branches
+               and (Path(tmp) / "proj_open").exists() and "open" in branches,
+               "worktrees --remove removes clean merged worktrees and their branches, keeps dirty and unmerged ones", p)
+        p = docmap(root, "check")
+        expect("proj_done" not in p.stdout and "proj_dirty" in p.stdout, "after --remove only the kept dirty worktree is reported", p)
+
     with tempfile.TemporaryDirectory() as tmp:  # O14: STATUS keeps one short line per workstream
         root = Path(tmp)
         for rel, text in FILES.items():
