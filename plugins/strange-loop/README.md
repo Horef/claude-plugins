@@ -111,11 +111,12 @@ Every skill works on its own; strange-loop is what lets it learn. A skill's Lear
 ## Commands
 
 ```bash
-python loop.py status              # every unit: open lessons, which are ripe, budget use
+python loop.py status              # every unit: open lessons, which are ripe, budget use, fixes that held
+python loop.py usage gui-design    # what Claude Code sessions used of a skill (files, script subcommands) and what never
 python loop.py note scientific-figures friction "§5: lint missed a label under a band" --harness claude-ai --context "L7 notes"
 python loop.py eval project-foundations
 python loop.py bump project-foundations minor "Templates move to templates/*.md" --obs O3
-python loop.py show strange-loop O24      # an observation by id, open or resolved, and the CHANGELOG lines citing it
+python loop.py show strange-loop O24      # an observation by id, open or resolved, the CHANGELOG lines citing it, earlier fixes that missed
 python loop.py check --base origin/main   # CI: manifests, versions, changelogs, learnings; changed plugins must bump; per commit, no eval edit with the code it grades
 python loop.py judge strange-loop "kernel alone" --old a.md --new b.md   # blind A/B packet, key kept aside
 python loop.py pack scientific-figures     # upload zip, for a harness that cannot add a marketplace
