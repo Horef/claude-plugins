@@ -758,6 +758,20 @@ def main() -> int:
         expect("python scripts/docmap.py" in usage_out and "tools/docmap.py" not in usage_out,
                "usage text names docmap.py's repo-relative path when run inside the repo", p_usage)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O29: on Windows str(Path) uses backslashes; folder keys must stay POSIX
+        root = Path(tmp)
+        for rel, text in {"AGENTS.md": "# Win\n", "src/README.md": "# src/\n\nSrc.\n", "src/s.py": '"""S."""\n',
+                          "src/pkg/README.md": "# pkg/\n\nPkg.\n", "src/pkg/a.py": '"""A."""\n',
+                          "src/pkg/sub/README.md": "# sub/\n\nSub.\n", "src/pkg/sub/b.py": '"""B."""\n'}.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        sh(root, "git", "init", "-q")
+        p = sh(root, sys.executable, str(SKILL_DIR / "evals/fixtures/windows_paths.py"), str(DOCMAP))
+        expect("dirs src src/pkg src/pkg/sub" in p.stdout and "scope src/pkg/" in p.stdout,
+               "folder keys and id scopes use '/' even where str(Path) uses backslashes (O29)", p)
+        expect("table src/pkg `sub/` `a.py`" in p.stdout,
+               "a folder table lists its subfolders even where str(Path) uses backslashes (O29)", p)
+
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
 
