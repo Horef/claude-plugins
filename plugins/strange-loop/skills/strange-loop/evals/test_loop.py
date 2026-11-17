@@ -818,7 +818,7 @@ class HeldAndUsageTest(unittest.TestCase):
         self.assertRegex(out, r"never used.*references/b\.md")                     # its only read is before --since
         self.assertRegex(out, r"tool\.py run\s+2\b")                               # subagent transcripts count, any path
         self.assertRegex(out, r"never run.*tool\.py list")
-        self.assertIn("Claude Code transcripts only", out)                         # says what it cannot see
+        self.assertIn("not counted", out)                                          # says what it cannot see
 
 
 class JudgeTwiceTest(unittest.TestCase):
