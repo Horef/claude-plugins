@@ -1035,20 +1035,30 @@ def cmd_judge(args):
         sys.exit(f"strange-loop: case {args.case!r} matches {len(hits)} of: {'; '.join(named)}")
     head = hits[0]
     body = "\n".join(l for l in named[head].splitlines()[1:] if not l.startswith("**Origin:**")).strip()
-    outs = [("old", Path(args.old)), ("new", Path(args.new))]
-    random.Random(args.seed).shuffle(outs)
+    if len(args.old) != len(args.new):
+        sys.exit(f"strange-loop: {len(args.old)} --old and {len(args.new)} --new; give one of each per run")
     out = Path(args.out).expanduser() if args.out else Path(tempfile.mkdtemp(prefix=f"judge-{args.unit}-"))
     out.mkdir(parents=True, exist_ok=True)
-    parts = [f"# Blind comparison: {head}\n",
-             "Two outputs for the same task follow, in random order. Judge each against every criterion of the rubric "
-             "(met, partly, missed, with a quote as evidence), then say which output is better per criterion and overall, "
-             "or that they tie.\n", body + "\n"]
-    for i, (_, p) in enumerate(outs, 1):
-        parts.append(f"## Output {i}\n\n{p.read_text(encoding='utf-8').strip()}\n")
-    (out / "packet.md").write_text("\n".join(parts), encoding="utf-8")
-    (out / "key.txt").write_text("".join(f"Output {i} = {label} ({p})\n" for i, (label, p) in enumerate(outs, 1))
-                                 + "Keep this file from the judge.\n", encoding="utf-8")
-    print(f"packet: {(out / 'packet.md').resolve()} (give only this to a fresh judge)\nkey: {(out / 'key.txt').resolve()} (keep aside)")
+    rng = random.Random(args.seed)
+    many = len(args.old) > 1
+    for run, (o, n) in enumerate(zip(args.old, args.new), 1):   # judged outputs vary: one packet per pair of runs
+        outs = [("old", Path(o)), ("new", Path(n))]
+        rng.shuffle(outs)
+        parts = [f"# Blind comparison: {head}\n",
+                 "Two outputs for the same task follow, in random order. Judge each against every criterion of the rubric "
+                 "(met, partly, missed, with a quote as evidence), then say which output is better per criterion and "
+                 "overall, or that they tie.\n", body + "\n"]
+        for i, (_, p) in enumerate(outs, 1):
+            parts.append(f"## Output {i}\n\n{p.read_text(encoding='utf-8').strip()}\n")
+        packet, key = (out / f"packet-{run}.md", out / f"key-{run}.txt") if many else (out / "packet.md", out / "key.txt")
+        packet.write_text("\n".join(parts), encoding="utf-8")
+        key.write_text("".join(f"Output {i} = {label} ({p})\n" for i, (label, p) in enumerate(outs, 1))
+                       + "Keep this file from the judge.\n", encoding="utf-8")
+        print(f"packet: {packet.resolve()} (give only this to a fresh judge)\nkey: {key.resolve()} (keep aside)")
+    if many:
+        print("a fresh judge per packet; the new version wins the case only if it wins every pair (a split is a tie)")
+    else:
+        print("note: one run of each output; judged outputs vary, so give two --old and two --new (section 4 step 6)")
 
 
 def bump_version(v: str, part: str) -> str:
@@ -1362,7 +1372,8 @@ def main(argv: list[str]) -> None:
     p = sub.add_parser("usage"); p.add_argument("unit", nargs="?"); p.add_argument("--days", type=int, default=90)
     p.add_argument("--since"); p.add_argument("--transcripts", action="append")
     p = sub.add_parser("judge"); p.add_argument("unit"); p.add_argument("case")
-    p.add_argument("--old", required=True); p.add_argument("--new", required=True); p.add_argument("--out")
+    p.add_argument("--old", required=True, action="append"); p.add_argument("--new", required=True, action="append")
+    p.add_argument("--out")
     p.add_argument("--seed", type=int)
     p = sub.add_parser("absorb"); p.add_argument("file", nargs="?")
     p = sub.add_parser("sync"); p.add_argument("--no-push", action="store_true"); p.add_argument("--quiet", action="store_true")
