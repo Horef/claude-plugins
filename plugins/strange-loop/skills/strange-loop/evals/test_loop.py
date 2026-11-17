@@ -959,3 +959,23 @@ class UsageOtherHarnessesTest(unittest.TestCase):
         self.assertRegex(out, r"never used:.*references/b\.md")                # prose and tool output do not count
         self.assertRegex(out, r"tool\.py run\s+2\b")                           # codex and agy, not agy's echo step
         self.assertRegex(out, r"tool\.py list\s+1\b")                          # kiro
+
+
+class UsageGenomeWorkTest(unittest.TestCase):
+    """Work on the genome itself (evals, audits, reflection) reads skill files without using the skill: left out
+    of usage by default, counted with --all."""
+    setUp, tearDown, g_run = PassTest.setUp, PassTest.tearDown, PassTest.g_run
+    usage_fixture = HeldAndUsageTest.usage_fixture
+
+    def test_sessions_working_in_the_genome_are_left_out(self):
+        tr = self.usage_fixture()
+        rec = {"type": "assistant", "timestamp": "2026-11-10T12:00:00.000Z", "cwd": str(self.g / "plugins"),
+               "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "Read",
+                           "input": {"file_path": str(self.unit / "references/b.md")}}]}}
+        (tr / "-genome" ).mkdir()
+        (tr / "-genome" / "g1.jsonl").write_text(json.dumps(rec) + "\n")
+        out = self.g_run("usage", "demo", "--transcripts", str(tr), "--since", "2026-11-01")[1]
+        self.assertRegex(out, r"never used:.*references/b\.md")
+        self.assertRegex(out, r"1 session-day.*genome.*left out")
+        out = self.g_run("usage", "demo", "--transcripts", str(tr), "--since", "2026-11-01", "--all")[1]
+        self.assertRegex(out, r"references/b\.md\s+1\b")
