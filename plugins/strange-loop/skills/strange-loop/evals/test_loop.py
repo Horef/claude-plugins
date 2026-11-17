@@ -819,3 +819,31 @@ class HeldAndUsageTest(unittest.TestCase):
         self.assertRegex(out, r"tool\.py run\s+2\b")                               # subagent transcripts count, any path
         self.assertRegex(out, r"never run.*tool\.py list")
         self.assertIn("Claude Code transcripts only", out)                         # says what it cannot see
+
+
+class JudgeTwiceTest(unittest.TestCase):
+    """Judged outputs vary from run to run (owner, 2026-11-17): judge takes repeated --old/--new, one packet per pair."""
+    setUp, tearDown, g_run = PassTest.setUp, PassTest.tearDown, PassTest.g_run
+
+    def test_two_runs_give_two_packets_and_one_run_is_flagged(self):
+        (self.unit / "evals").mkdir()
+        (self.unit / "evals/cases.md").write_text("# Judged cases: demo\n\n## Fixes the flag\n**Task:** Fix step 3.\n"
+                                                 "**Good looks like:**\n- Names the right flag.\n**Origin:** O1.\n")
+        files = {}
+        for name in ("old1", "old2", "new1", "new2"):
+            files[name] = Path(self.tmp.name) / f"{name}.md"
+            files[name].write_text(f"OUTPUT-{name.upper()}\n")
+        out_dir = Path(self.tmp.name) / "packets"
+        code, out = self.g_run("judge", "demo", "flag", "--old", str(files["old1"]), "--old", str(files["old2"]),
+                               "--new", str(files["new1"]), "--new", str(files["new2"]), "--out", str(out_dir))
+        self.assertEqual(code, 0, out)
+        p1, p2 = (out_dir / "packet-1.md").read_text(), (out_dir / "packet-2.md").read_text()
+        self.assertIn("OUTPUT-OLD1", p1); self.assertIn("OUTPUT-NEW1", p1); self.assertNotIn("OUTPUT-OLD2", p1)
+        self.assertIn("OUTPUT-OLD2", p2); self.assertIn("OUTPUT-NEW2", p2)
+        self.assertTrue((out_dir / "key-1.txt").exists() and (out_dir / "key-2.txt").exists())
+        self.assertNotEqual(self.g_run("judge", "demo", "flag", "--old", str(files["old1"]), "--new", str(files["new1"]),
+                                       "--new", str(files["new2"]), "--out", str(out_dir))[0], 0)   # pairs must match
+        code, out = self.g_run("judge", "demo", "flag", "--old", str(files["old1"]), "--new", str(files["new1"]),
+                               "--out", str(Path(self.tmp.name) / "one"))
+        self.assertEqual(code, 0, out)
+        self.assertIn("one run", out)                                    # a single pair is allowed but flagged
