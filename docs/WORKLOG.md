@@ -2,6 +2,14 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-17 - Ideas from SIM (Yu et al. 2026) and the subagent-folding article: project-foundations 5.16.0, strange-loop 2.5.0
+
+- Owner asked how Anthropic's "When to fold subagents into your main agent loop" (Sarkis, 2026-10-22) and Google's "Self-Improvement Memory Enables Continual Recursive Self-Improvement" (Yu et al., arXiv 2611.18856) compare with the genome. Owner kept: usage tracking (from the article's /skill-doctor), and both SIM ideas; declined splitting router steps by context, testing delegated vs folded, and repeated judged runs beyond non-deterministic cases.
+- project-foundations 5.16.0 (O30): decisions take optional **Tried** (failed attempts) and **Depends on** (model, platform, library or data version) lines; `docmap.py depends [WORDS]` lists live decisions with dependencies (superseded left out, partly superseded kept, heading or Status line); AGENTS template rows for both. Evals committed first (3 of 5 failed on 5.15.1); evals exit 0.
+- strange-loop 2.5.0 (O27, O28): `status` shows "fixes held N/M" per unit and, for one unit, each fix that did not hold (a resolved lesson reopened); `show` follows `reopens` back through earlier fixes with their CHANGELOG entries; `loop.py usage [UNIT] [--days|--since] [--transcripts DIR]` reads Claude Code transcripts (all ~/.claude*/projects) for skill loads, references/templates read and script subcommands run, and lists what was never used. Gather and Forgetting rules point at them; SKILL.md trimmed to 24,992 bytes. Tests committed first (3 failed on 2.4.0); evals exit 0.
+- Real genome: fixes held 172/175 (project-foundations O20 came back as O28; research-writing 2). Usage since 2026-08-19, 244 transcripts, ~3 s: never-used references include gui-design (6 of 10), herdr-delegate (4), project-foundations (code-graph, modules, principles, retrofit) and strange-loop (growing, harnesses); `loop.py check --base origin/main` 0/0.
+- Unverified: usage misses helpers on other CLIs, claude.ai chats and deleted transcripts, and runs through variables set in an earlier command; Tried/Depends on not yet used in a project.
+
 ## 2026-11-17 - project-foundations 5.15.1: docmap on Windows (O29)
 
 - Bug from nofluke's Windows CI: `str(Path(f).parent)` gives `src\pkg` on Windows, so `folder_table`'s `startswith(d + "/")` missed subfolders and `check` reported MAP.md and parent READMEs stale. All 9 `str(Path...)` sites used as repo-relative keys now use `.as_posix()` (code_dirs, folder_table, build_map, id_scope, the no-git file list, run index paths, worklog list).

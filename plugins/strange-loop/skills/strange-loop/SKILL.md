@@ -17,7 +17,7 @@ Work happens at three speeds:
 | **Fix** | A plain error you have just verified (wrong path, renamed API, broken example) | Correct it, patch version, CHANGELOG line | Minutes |
 | **Reflect** | Lessons are ripe (session digest, `loop.py status`) or the user asks | Turn observations into rules, code, checks or evals; prune; verify; version | One focused session |
 
-**Invoked directly** (the person types `/strange-loop`, or asks "how are my skills doing?"): run `loop.py where`, then `loop.py sync` if there is a clone, then `loop.py status`. Report in a few lines: the units with ripe lessons, open lessons older than six months, anything waiting in the inbox. Offer the next steps (a reflection pass on a ripe unit, adding a skill, an audit, absorbing a pasted reply) and do the one the person picks. With an argument (`/strange-loop reflect scientific-figures`, `/strange-loop new ...`), go straight to that section. Without a clone (no `~/.config/strange-loop/genome`), explain the setup in two lines instead (README, Setup). Nobody has to invoke this skill for the loop to run: every skill carries its own Learning loop section, and in Claude Code the session-start hook syncs and shows the digest.
+**Invoked directly** (the person types `/strange-loop`, or asks "how are my skills doing?"): run `loop.py where`, then `loop.py sync` if there is a clone, then `loop.py status`. Report in a few lines: the units with ripe lessons, open lessons older than six months, anything waiting in the inbox. Offer the next steps (a reflection pass on a ripe unit, adding a skill, an audit, absorbing a pasted reply) and do the one the person picks. With an argument (`/strange-loop reflect <unit>`), go straight to that section. Without a clone (no `~/.config/strange-loop/genome`), explain the setup in two lines instead (README, Setup). Nobody has to invoke this skill for the loop to run: every skill carries its own Learning loop section, and in Claude Code the session-start hook syncs and shows the digest.
 
 ## 1. The hierarchy: where a lesson belongs
 
@@ -90,7 +90,7 @@ Changes only to `evals/`, `LEARNINGS.md` or `CHANGELOG.md` take no version bump 
 
 Do one unit per pass. Work on the genome checkout, on a branch if the repository uses PRs.
 
-1. **Gather.** `loop.py status <unit>`; read its `LEARNINGS.md` (open and the last few resolved), `SKILL.md`, `CHANGELOG.md` and `evals/`. Read the WORKLOG or chat notes the observations cite if they are available. When a requested observation does not match the file (wrong id, already resolved, another count), check it with `loop.py show <unit> O<n>`, say so, and work from what is recorded.
+1. **Gather.** `loop.py status <unit>`; read its `LEARNINGS.md` (open and the last few resolved), `SKILL.md`, `CHANGELOG.md` and `evals/`. Read the WORKLOG or chat notes the observations cite if they are available. `status <unit>` lists fixes that did not hold: read their history (`show`); never repeat a remedy that missed. When a requested observation does not match the file (wrong id, already resolved, another count), check it with `loop.py show <unit> O<n>`, say so, and work from what is recorded.
 2. **Baseline.** `loop.py eval <unit>` and note the result. No evals yet? Write the first cases now, from the observations (section 5), before changing anything.
 3. **Triage** each open observation into exactly one outcome:
    - *codify*: becomes code (a helper, a lint, a `check`) - preferred whenever the lesson is mechanical, because instructions are advisory and code is not ("a rule broken twice becomes a check");
@@ -125,17 +125,17 @@ Signals rank: tests and deterministic checks > a rubric judged blind by a fresh 
 
 Always-loaded text costs every session and dilutes attention, so growth must be paid for. Defaults (`loop.py check` warns):
 
-- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ 25,000 bytes (about 500 typical lines; lines run up to 1.5 KB, so bytes measure the real cost) and ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure). If cutting would hurt, front matter `size-exception: <reason>` stops the warning; `status` shows it (owner, 2026-11-15).
+- Skill `description` ≤ 1024 characters and says *when* to use the skill; `SKILL.md` ≤ 25,000 bytes (bytes, since lines run up to 1.5 KB) and ≤ ~500 lines, detail in referenced files the skill names (progressive disclosure). If cutting would hurt, front matter `size-exception: <reason>` stops the warning; `status` shows it (owner, 2026-11-15).
 - Project `AGENTS.md` ≤ ~120 lines (project-foundations).
 - `LEARNINGS.md` open list ≤ ~15 entries; beyond that, a reflection pass is overdue.
 
-**Slow costs need sensors.** Some decay is invisible from inside any one session: a log that grows a little each week, a map that lists one more file, a search that takes a little longer. The working agent never sees the comparison, so it never writes the observation. When a unit's cost can grow with use, give it a measurement that becomes a check warning past a budget (project-foundations does this with `docmap.py stats` and `read_max_tokens`); warnings then reach the loop through the rule in section 2. A unit whose cost grows without a sensor is a `missing` observation.
+**Slow costs need sensors.** Some decay is invisible from inside any one session (a log that grows a little each week, a search that takes a little longer), so the working agent never writes the observation. When a unit's cost can grow with use, give it a measurement that becomes a check warning past a budget (project-foundations does this with `docmap.py stats` and `read_max_tokens`); warnings then reach the loop through the rule in section 2. A unit whose cost grows without a sensor is a `missing` observation.
 
 Lessons also go stale: an open observation older than about six months (`loop.py check` warns) is either confirmed by new use or rejected as no longer relevant.
 
-Reading notes ripen like notes from use: a problem found by reading (a contradiction, a broken command, a step that cannot work) is fixed promptly and proactively in the next pass, by the same change classes; one that would need a restructure still follows the restructure rules (owner, 2026-11-15; this replaces the 2026-11-06 rule that held reading notes back as "unconfirmed by use").
+Reading notes ripen like notes from use: a problem found by reading (a contradiction, a broken command, a step that cannot work) is fixed promptly and proactively in the next pass, by the same change classes; one that would need a restructure still follows the restructure rules (owner, 2026-11-15).
 
-Forgetting is part of learning: a rule with no recorded `win` (`loop.py status <unit>` counts wins per section), no eval that needs it and no owner preference behind it is a candidate for removal in a Restructure pass. Removed text stays in git and the CHANGELOG says where it went.
+Forgetting is part of learning: a rule with no recorded `win` (`loop.py status <unit>` counts wins per section), no eval that needs it and no owner preference behind it is a candidate for removal in a Restructure pass; so is a reference, template or script subcommand that `loop.py usage <unit>` shows unused for months (a rare path can be by design: which task would miss it?). Removed text stays in git and the CHANGELOG says where it went.
 
 ## 7. Kernel: what the loop may not change by itself
 
@@ -157,13 +157,11 @@ Forgetting is part of learning: a rule with no recorded `win` (`loop.py status <
 
 1. **Take only the genome, not its expressions.** Go through the file list `new --dry-run` printed and sort every file: the instructions, tools and libraries, reusable material (with licences) and worked examples that are general come in; outputs of tasks done with the skill stay out - work made for a particular project, before/after renders, reports about past runs, scripts named or framed after one course or client, anything that writes to a task's output location. A task output that shows something no example covers is distilled into a general example named after what it shows, and verified to produce the same result.
 2. Replace the placeholder eval cases with real ones; a skill with scripts gets an `evals/run.py`.
-3. Keep the footer as the template has it (`check` warns); skill hints go under `### Observations`.
+3. Keep the footer as `references/learning-loop-template.md` has it (`check` warns; `new` writes it); skill hints go under `### Observations`.
 4. If the skill installs lasting artifacts into projects (files, templates, tools), give each a provenance line and the note command, as section 1 says (project-foundations' AGENTS.md template and `docmap.py` show how).
 5. Seed `LEARNINGS.md` with what you noticed while adopting it - as notes, not as edits; the next pass fixes the problems among them like any other (section 6).
 6. `loop.py check`.
 7. Distribution follows the version: Claude Code updates an installed plugin when its `plugin.json` version changes, and claude.ai with "Sync automatically" re-syncs the marketplace; bump the version with every change so both see it. For a harness that only takes uploads, `loop.py pack <name>` writes `dist/<name>-<version>.zip`.
-
-The Learning loop footer: `loop.py new` writes it; see `references/learning-loop-template.md` to repair one.
 
 ## 9. Growing a new capability
 
@@ -171,7 +169,7 @@ When the same weakness shows up across tasks and a rule will not fix it, a tool 
 
 ## 10. Auditing the whole system
 
-Occasionally (or when asked "how is the system doing?"): `loop.py status` across all units; `loop.py check`; run the units' sensors where they apply (e.g. `docmap.py stats` in projects that use project-foundations), look for lessons stuck open for months (decide: wait or reject), units with no evals, skills over budget, rules duplicated across units (move the shared one up a layer), and observations about the kernel. Report the findings most important first, propose the passes, do the ones the user approves.
+Occasionally (or when asked "how is the system doing?"): `loop.py status` across all units (fixes held); `loop.py usage`; `loop.py check`; run the units' sensors where they apply (e.g. `docmap.py stats` in projects that use project-foundations), look for lessons stuck open for months (decide: wait or reject), units with no evals, skills over budget, rules duplicated across units (move the shared one up a layer), and observations about the kernel. Report the findings most important first, propose the passes, do the ones the user approves.
 
 ## 11. Closing the loop: how a lesson travels
 

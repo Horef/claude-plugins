@@ -741,3 +741,81 @@ class HistoryCheckTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HeldAndUsageTest(unittest.TestCase):
+    """O27: fixes that did not hold (a resolved lesson that came back); O28: `usage` from Claude Code transcripts."""
+    setUp, tearDown, g_run = PassTest.setUp, PassTest.tearDown, PassTest.g_run
+
+    def held_fixture(self):
+        head = loop.LEARNINGS_TEMPLATE.format(name="demo", what="skill").replace("## Open\n\n## Resolved\n", "")
+        self.learn.write_text(head + "\n".join([
+            "## Open",
+            "- O5 2026-03-01 [failure] lint misses patches over labels [+2026-03-01 again; reopens O3] ×3",
+            "",
+            "## Resolved",
+            "- O1 2026-01-01 [failure] lint misses patches over labels → 1.0.0",
+            "- O2 2026-01-01 [friction] slow render on big figures → 1.0.0",
+            "- O3 2026-02-01 [failure] lint misses patches over labels [+2026-02-01 seen again; reopens O1] ×2 → 1.1.0",
+            "- O4 2026-02-01 [wish] a dark theme → rejected: owner preference",
+        ]) + "\n")
+        (self.unit / "CHANGELOG.md").write_text("# Changelog: demo\n\n## 1.1.0 (2026-02-02)\n- Second try: check text bboxes (O3)\n\n"
+                                                "## 1.0.0 (2026-01-02)\n- First fix: patch check in the lint (O1, O2)\n")
+
+    def test_status_lists_fixes_that_did_not_hold(self):
+        self.held_fixture()
+        code, out = self.g_run("status", "demo")
+        self.assertEqual(code, 0, out)
+        self.assertIn("fixes held 1/3", out)                     # O1, O2, O3 were fixes; O1 and O3 came back
+        self.assertRegex(out, r"did not hold: O1 \(1\.0\.0\) came back as O3")
+        self.assertRegex(out, r"did not hold: O3 \(1\.1\.0\) came back as O5")
+        self.assertIn("fixes held 1/3", self.g_run("status")[1])  # the overview line carries the count too
+
+    def test_show_follows_the_chain_of_earlier_fixes(self):
+        self.held_fixture()
+        code, out = self.g_run("show", "demo", "O5")
+        self.assertEqual(code, 0, out)
+        self.assertIn("reopens O3, whose fix in 1.1.0 did not hold", out)
+        self.assertIn("Second try: check text bboxes", out)
+        self.assertIn("reopens O1, whose fix in 1.0.0 did not hold", out)
+        self.assertIn("First fix: patch check in the lint", out)
+        self.assertIn("came back as O5", self.g_run("show", "demo", "O3")[1])   # a resolved reopener counts too
+
+    def usage_fixture(self):
+        (self.unit / "references").mkdir()
+        for f in ("a.md", "b.md"):
+            (self.unit / "references" / f).write_text("# ref\n")
+        (self.unit / "scripts").mkdir()
+        (self.unit / "scripts/tool.py").write_text('import argparse\np = argparse.ArgumentParser().add_subparsers()\n'
+                                                   'p.add_parser("run")\np.add_parser("list")\n')
+        tr = Path(self.tmp.name) / "transcripts" / "-proj"
+        (tr / "s1" / "subagents").mkdir(parents=True)
+        now = "2026-11-10T10:00:00.000Z"
+
+        def use(name, inp, ts=now):
+            return json.dumps({"type": "assistant", "timestamp": ts, "sessionId": "x", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "t", "name": name, "input": inp}]}})
+        (tr / "s1.jsonl").write_text("\n".join([
+            use("Skill", {"skill": "demo:demo"}),
+            use("Read", {"file_path": "/home/u/.claude/plugins/cache/t/demo/1.0.0/skills/demo/references/a.md"}),
+            use("Bash", {"command": "cd /p && python3 /x/plugins/demo/skills/demo/scripts/tool.py run --fast | tail"}),
+            "not json at all",
+        ]) + "\n")
+        (tr / "s1" / "subagents" / "agent-1.jsonl").write_text(use("Bash", {"command": "python3 tools/tool.py run"}) + "\n")
+        (tr / "s2.jsonl").write_text("\n".join([
+            json.dumps({"type": "user", "timestamp": now, "message": {"role": "user", "content":
+                        "<command-message>demo</command-message>\n<command-name>/demo:demo</command-name>"}}),
+            use("Read", {"file_path": "/g/plugins/demo/skills/demo/references/b.md"}, ts="2020-01-01T00:00:00.000Z"),
+        ]) + "\n")
+        return tr.parent
+
+    def test_usage_counts_loads_files_and_subcommands(self):
+        tr = self.usage_fixture()
+        code, out = self.g_run("usage", "demo", "--transcripts", str(tr), "--since", "2026-11-01")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"demo: loaded in 2 session")                        # Skill tool and a slash command
+        self.assertRegex(out, r"references/a\.md\s+1\b")
+        self.assertRegex(out, r"never used.*references/b\.md")                     # its only read is before --since
+        self.assertRegex(out, r"tool\.py run\s+2\b")                               # subagent transcripts count, any path
+        self.assertRegex(out, r"never run.*tool\.py list")
+        self.assertIn("Claude Code transcripts only", out)                         # says what it cannot see
