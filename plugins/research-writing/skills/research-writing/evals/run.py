@@ -730,6 +730,86 @@ def grouped_source_checks() -> list[str]:
     return fails
 
 
+def values_pass2_checks() -> list[str]:
+    """O31-O37 (values pass 2 on cell1542_mel1998): set labels and ambiguous digits left out of numbers, every ledger
+    paragraph scanned, Accepted honoured; reword counts quantity words near the change only, hands over the clause of
+    a long sentence, fills ledger rows, flags singular/plural; \\valw[none] and \\valp; upgrade next to \\val."""
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        d = _vf_fixture(Path(t), "p2")
+        (d / "values" / "c.json").write_text(json.dumps({
+            "n_draws": 13, "n_pass_abc": {"value": 3, "unit": "draws"}, "n_lost": {"value": 1, "unit": "draws"},
+            "n_none": 0, "g_a": 0.02, "g_b": 0.02, "g_c": 0.02}))
+        led = (d / "ledger.md").read_text().replace("We found X.", "We found X in 9 of 13 placements.")
+        led = led.replace("| C2 | Y holds | plausible | R2 |", "| C2 | Y holds, {{n_lost}} lost | plausible | R2, 8 of 13 |")
+        (d / "ledger.md").write_text(led + "\n## Accepted\n- `'5 of 13'` another analysis (owner)\n")
+        m = (d / "main.tex").read_text()
+        long = ("On ten trials per direction, with the earlier runs on two trials and eighty trials in all for the "
+                "controls, and with every group placed as in the design so that nothing else changes between runs, "
+                "and the scrambled controls drawn again each time from the same pool with the same sizes and the same "
+                "numbers of contacts per group, the cell loses \\valw{n_lost} \\valp{n_lost}{draw}{draws} of the "
+                "\\val{n_draws} at native strength, which is the result.")
+        (d / "main.tex").write_text(m.replace("\\section{Y holds}", "\\section{Y holds}\nThe three draws (a to c) and "
+                                    "the first three placements run. Then 5 of 13 tie, 48 of 12 contacts, $2\\times$ NMDA. "
+                                    "The gOSI is 0.02 here. \\Valw[None]{n_none} fail; \\valw{n_lost} "
+                                    "\\valp{n_lost}{draw}{draws} \\valp{n_lost}{is}{are} lost.\n\n" + long + "\n"))
+        out = run("numbers", str(d)).stdout
+        if "'three draws (a" in out or "'three placements" in out or "'three" in out:
+            fails.append("numbers: a set label ('the three draws (a to c)', 'the first three') was noted:\n" + out)
+        if not re.search(r"ledger\.md:\d+: '9 of 13' counts out of n_draws", out) or "'8 of 13'" not in out:
+            fails.append("numbers: the Message and a claim's evidence cell are scanned:\n" + out)
+        if "'5 of 13'" in out or "48 of 12" in out or "'2 " in out:
+            fails.append("numbers: an accepted note, a part larger than its whole, or 2x was listed:\n" + out)
+        if "0.02 is the value" in out or "not listed: " not in out:
+            fails.append("numbers: a short number equal to several values is counted, not listed:\n" + out)
+        if "0.02 is the value" not in run("numbers", str(d), "--all").stdout:
+            fails.append("numbers --all lists the ambiguous ones")
+        vt = run("values", str(d)) and (d / "values.tex").read_text()
+        if "\\wrsetvalc{n_none}{z}" not in vt or "\\wrsetvalc{n_lost}{o}" not in vt:
+            fails.append("values.tex marks values 0 and 1 for \\valw[none] and \\valp:\n" + vt)
+        if any("valp" in p or "valw" in p for p in _probs(run("check", str(d)).stdout)):
+            fails.append("check: \\valp and \\valw[...] are defined by the template preamble")
+        # reword
+        run("confirm", str(d))
+        j = d / "values" / "c.json"
+        j.write_text(j.read_text().replace('"n_lost": {"value": 1', '"n_lost": {"value": 2'))
+        tasks = json.loads(run("reword", str(d), "--json").stdout or "[]")
+        lt = next((x for x in tasks if x["where"].endswith(" C2")), {})
+        if lt.get("where") != f"ledger.md:{_lineof(d / 'ledger.md', '| C2 |')} C2" or \
+                lt.get("filled", "").find("Y holds, 2 lost") < 0:
+            fails.append(f"reword: a ledger task says ledger.md:<line> and fills in the values: {lt}")
+        lg = next((x for x in tasks if "loses" in x["sentence"]), {})
+        if not lg or lg["kind"] != "number-only" or lg.get("part_of", 0) <= 400 or "ten trials" in lg["sentence"]:
+            fails.append(f"reword: a long sentence gives its clause; far method constants do not count: {lg}")
+        sp = next((x for x in tasks if "\\valp{n_lost}{is}{are}" in x["sentence"]), None)
+        if sp is None or sp["kind"] != "number-only":
+            fails.append(f"reword: a count with \\valp around it needs no rewording: {sp}")
+        m = (d / "main.tex").read_text()
+        (d / "main.tex").write_text(m.replace("\\section{X rises}", "\\section{X rises}\nHere \\valw{n_lost} draw is lost.\n"))
+        pl = next((x for x in json.loads(run("reword", str(d), "--json").stdout or "[]") if "draw is lost" in x["sentence"]), {})
+        if pl.get("kind") != "words" or not any("singular/plural" in w for w in pl.get("why", [])):
+            fails.append(f"reword: a count moving from one is a words task (draw is -> draws are): {pl}")
+        if shutil.which("latexmk") and shutil.which("lualatex") and shutil.which("pdftotext"):
+            run("build", str(d))
+            txt = " ".join(subprocess.run(["pdftotext", str(d / "p2.pdf"), "-"], capture_output=True, text=True).stdout.split())
+            if "None fail; two draws are lost" not in txt:
+                fails.append("build: \\Valw[None] and \\valp:\n" + txt[:800])
+        # upgrade: a preamble with the older \valw gets the new block, next to \val in preamble-local.tex
+        p = d / "preamble.tex"
+        pre = p.read_text()
+        i, k = pre.index("% \\valw[none]{name}"), pre.index("\\makeatother\n", pre.index("\\def\\wr@pdfw")) + 13
+        valblock = pre[pre.index("\\makeatletter\n\\newcommand{\\wrsetval}"):i]
+        p.write_text(pre[:i].replace(valblock, "") + pre[k:])
+        (d / "preamble-local.tex").write_text("% local\n" + valblock)
+        if "newer \\valw" not in run("check", str(d)).stdout:
+            fails.append("check: \\valw[none] with an older preamble asks for upgrade")
+        r = run("upgrade", str(d), "--dry-run")
+        if "preamble: preamble-local.tex (\\val is defined there)" not in r.stdout or \
+                "would: preamble-local.tex: added \\valw[none] and \\valp" not in r.stdout:
+            fails.append("upgrade: the new block goes next to \\val, and the dry run says where:\n" + r.stdout)
+    return fails
+
+
 def main() -> int:
     fails = []
     with tempfile.TemporaryDirectory() as t:
@@ -784,6 +864,7 @@ def main() -> int:
     fails += pilot_checks()
     fails += retrofit_reword_checks()
     fails += grouped_source_checks()
+    fails += values_pass2_checks()
     for f in fails:
         print("FAIL", f)
     print("ok" if not fails else f"{len(fails)} failure(s)")
