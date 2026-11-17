@@ -47,6 +47,21 @@
 \DeclareRobustCommand{\Valw}[1]{\ifcsname wrvalW@#1\endcsname\csname wrvalW@#1\endcsname\else\val{#1}\fi}
 \pdfstringdefDisableCommands{\let\valw\wrvalof\let\Valw\wrvalof}
 \makeatother
+% \valw[none]{name}: the word in brackets when the value is 0 ("none of the 13 pass"), else as \valw;
+% \valp{name}{draw}{draws}: the singular when the value is 1, else the plural, so "one draw is" follows the value
+\makeatletter
+\newcommand{\wrsetvalc}[2]{\expandafter\def\csname wrvalc@#1\endcsname{#2}}
+\def\wr@z{z}\def\wr@o{o}
+\newcommand{\wr@cls}[1]{\edef\wr@c{\ifcsname wrvalc@#1\endcsname\csname wrvalc@#1\endcsname\else x\fi}}
+\newcommand{\wr@word}[2]{\ifcsname #1@#2\endcsname\csname #1@#2\endcsname\else\val{#2}\fi}
+\DeclareRobustCommand\valw[2][]{\wr@cls{#2}\def\wr@a{#1}%
+  \ifx\wr@c\wr@z\ifx\wr@a\@empty\wr@word{wrvalw}{#2}\else#1\fi\else\wr@word{wrvalw}{#2}\fi}
+\DeclareRobustCommand\Valw[2][]{\wr@cls{#2}\def\wr@a{#1}%
+  \ifx\wr@c\wr@z\ifx\wr@a\@empty\wr@word{wrvalW}{#2}\else#1\fi\else\wr@word{wrvalW}{#2}\fi}
+\DeclareRobustCommand\valp[3]{\wr@cls{#1}\ifx\wr@c\wr@o#2\else#3\fi}
+\def\wr@pdfw#1#{\wrvalof}\def\wr@pdfp#1#2#3{#3}
+\pdfstringdefDisableCommands{\let\valw\wr@pdfw\let\Valw\wr@pdfw\let\valp\wr@pdfp}
+\makeatother
 % \figref{fig:x}: cite a figure; records the page of the first citation for wr.py (page of figure vs of its first mention).
 % Robust, so it also works inside a \caption (a moving argument; a plain \newcommand is fatal there).
 \makeatletter

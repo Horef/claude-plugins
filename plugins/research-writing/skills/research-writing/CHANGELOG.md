@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.11.0 (2026-11-17)
+- numbers skips set labels, counts ambiguous digits instead of listing them, scans every ledger paragraph and honours Accepted; reword counts quantity words only near the change, hands over the clause of a long sentence, fills ledger rows, flags singular/plural; \valw[none] and \valp; upgrade adds next to \val (O31, O32, O33, O34, O35, O36, O37)
+
 ## 0.10.1 (2026-11-16)
 - check lists a derived value inside the entry of the value that changed it (one cause, one entry); sources read: shown in check's change entries, reword tasks and where for claims and facts, note for values in use without a source (O30)
 
