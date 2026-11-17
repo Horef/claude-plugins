@@ -847,3 +847,33 @@ class JudgeTwiceTest(unittest.TestCase):
                                "--out", str(Path(self.tmp.name) / "one"))
         self.assertEqual(code, 0, out)
         self.assertIn("one run", out)                                    # a single pair is allowed but flagged
+
+
+class UsageBlindSpotsTest(unittest.TestCase):
+    """usage blind spots (owner, 2026-11-17): deleted transcripts, shell variables set in an earlier command."""
+    setUp, tearDown, g_run = PassTest.setUp, PassTest.tearDown, PassTest.g_run
+    usage_fixture = HeldAndUsageTest.usage_fixture
+
+    def test_counts_survive_a_deleted_transcript(self):
+        tr = self.usage_fixture()
+        self.assertEqual(self.g_run("usage", "demo", "--transcripts", str(tr), "--since", "2026-11-01")[0], 0)
+        for f in tr.rglob("*.jsonl"):
+            f.unlink()                                                  # Claude Code's cleanup deleted them
+        code, out = self.g_run("usage", "demo", "--transcripts", str(tr), "--since", "2026-11-01")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"demo: loaded in 2 session")
+        self.assertRegex(out, r"tool\.py run\s+2\b")
+        self.assertRegex(out, r"references/a\.md\s+1\b")
+
+    def test_a_variable_set_in_an_earlier_command_names_the_script(self):
+        tr = self.usage_fixture()
+
+        def bash(cmd):
+            return json.dumps({"type": "assistant", "timestamp": "2026-11-10T11:00:00.000Z", "message": {"role": "assistant",
+                               "content": [{"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": cmd}}]}})
+        (tr / "-proj" / "s3.jsonl").write_text(bash("L=/x/plugins/demo/skills/demo/scripts/tool.py; echo set") + "\n"
+                                                + bash('python3 "$L" list --all') + "\n")
+        code, out = self.g_run("usage", "demo", "--transcripts", str(tr), "--since", "2026-11-01")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"tool\.py list\s+1\b")
+        self.assertNotRegex(out, r"never run:.*tool\.py list")
