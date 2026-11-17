@@ -15,9 +15,11 @@ A "unit" is a skill folder or a plugin root that holds a LEARNINGS.md; its versi
                                              and the earlier fixes of the same lesson that did not hold
   python loop.py status [UNIT]               open observations per unit, which are ripe, budget use, fixes that held
                                              (UNIT: the fixes that did not hold, wins by section)
-  python loop.py usage [UNIT] [--days 90 | --since DATE] [--transcripts DIR ...]
-                                             what of each skill Claude Code sessions used: loads, files read, script
-                                             subcommands run, and what was never used (pruning candidates)
+  python loop.py usage [UNIT] [--days 90 | --since DATE] [--all] [--home DIR | --transcripts DIR ...]
+                                             what of each skill sessions used (Claude Code, Codex, Copilot, Kiro, agy
+                                             logs, kept in a ledger past their deletion): loads, files read, script
+                                             subcommands run, and what was never used; work in the genome left out
+  python loop.py judge UNIT CASE --old A1 --old A2 --new B1 --new B2   blind packets, one per pair of runs
   python loop.py digest                      at most a few lines for a session-start hook; silent when nothing is ripe
   python loop.py check [--base REF]          CI gate: manifests, versions, changelogs, learnings format, budgets;
                                              with --base, a plugin changed since REF must have bumped its version
@@ -889,14 +891,16 @@ def cmd_show(args):
         sys.exit(f"strange-loop: no observation {', '.join(missing)} in {args.unit} ({(d / 'LEARNINGS.md').resolve()})")
 
 
-def transcript_roots(extra: list[str] | None) -> list[Path]:
+def transcript_roots(extra: list[str] | None, home: Path | None = None) -> list[Path]:
     """Claude Code keeps each account's transcripts in <config dir>/projects: $CLAUDE_CONFIG_DIR, ~/.claude and
     every ~/.claude-*; `--transcripts` replaces them (an archive of older transcripts, another machine's copy)."""
     if extra:
         cands = [Path(e).expanduser() for e in extra]
     else:
-        cands = ([Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser() / "projects"] if os.environ.get("CLAUDE_CONFIG_DIR") else [])
-        cands += [Path.home() / ".claude" / "projects"] + sorted(Path.home().glob(".claude-*/projects"))
+        env = os.environ.get("CLAUDE_CONFIG_DIR") if home is None else None   # another home: its folders only
+        cands = [Path(env).expanduser() / "projects"] if env else []
+        home = home or Path.home()
+        cands += [home / ".claude" / "projects"] + sorted(home.glob(".claude-*/projects"))
     out, seen = [], set()
     for c in cands:
         if c.is_dir() and (r := c.resolve()) not in seen:
@@ -920,99 +924,367 @@ def unit_parts(d: Path) -> tuple[list[str], dict[str, set[str]]]:
     return files, scripts
 
 
+def claude_code_events(f: Path):
+    """(session, timestamp, kind, value) from one Claude Code transcript: kind is load (a skill name), path (text that
+    may name a skill file) or cmd (a shell command). Only the agent's tool calls and the person's slash commands."""
+    sess = f.parent.parent.name if f.parent.name == "subagents" else f.stem
+    with open(f, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if '"tool_use"' not in line and "<command-name>" not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            ts = str(rec.get("timestamp") or "")
+            if rec.get("cwd"):
+                yield sess, ts, "cwd", str(rec["cwd"])
+            content = (rec.get("message") or {}).get("content")
+            if isinstance(content, str):
+                for name in re.findall(r"<command-name>/?([^<\s]+)</command-name>", content):
+                    yield sess, ts, "load", name
+                continue
+            for b in content if isinstance(content, list) else []:
+                if not isinstance(b, dict) or b.get("type") != "tool_use":
+                    continue
+                inp = b.get("input") or {}
+                if b.get("name") == "Skill":
+                    yield sess, ts, "load", str(inp.get("skill", ""))
+                elif b.get("name") == "Bash":
+                    yield sess, ts, "cmd", str(inp.get("command", ""))
+                else:
+                    yield sess, ts, "path", " ".join(str(inp.get(k, "")) for k in ("file_path", "path", "pattern"))
+
+
+def _jsonl(f: Path):
+    """Lines of a JSONL log, a zstd-compressed one (`.zst`: Codex compresses old sessions) included, as dicts."""
+    if f.suffix == ".zst":
+        try:
+            from compression import zstd   # Python 3.14
+            text = zstd.decompress(f.read_bytes()).decode("utf-8", "replace")
+        except ImportError:
+            p = subprocess.run(["zstd", "-dc", str(f)], capture_output=True)   # OSError when zstd is missing
+            text = p.stdout.decode("utf-8", "replace")
+        lines = text.splitlines()
+    else:
+        lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            yield rec
+
+
+def codex_events(f: Path):
+    """Codex CLI rollouts (~/.codex/sessions/**/rollout-*.jsonl[.zst]): shell commands sit in the JavaScript of
+    `custom_tool_call` "exec" records as `tools.exec_command({cmd: "..."})`; a skill load is a read of its SKILL.md."""
+    sess = f.name.split(".")[0]
+    for rec in _jsonl(f):
+        p = rec.get("payload") or {}
+        if rec.get("type") == "session_meta":
+            sess = str(p.get("id") or p.get("session_id") or sess)
+            if p.get("cwd"):
+                yield sess, str(rec.get("timestamp", "")), "cwd", str(p["cwd"])
+        elif rec.get("type") == "response_item" and p.get("type") == "custom_tool_call" and p.get("name") == "exec":
+            for lit in re.findall(r"exec_command\(\{\s*\"?cmd\"?\s*:\s*(\"(?:\\.|[^\"\\])*\")", str(p.get("input", ""))):
+                try:
+                    yield sess, str(rec.get("timestamp", "")), "cmd", json.loads(lit)
+                except ValueError:
+                    pass
+
+
+def copilot_events(f: Path):
+    """GitHub Copilot CLI (~/.copilot/session-state/<id>/events.jsonl): `skill.invoked` and `tool.execution_start`
+    (bash command, view/grep path, skill name); results and messages are skipped."""
+    sess = f.parent.name
+    for rec in _jsonl(f):
+        d, ts = rec.get("data") or {}, str(rec.get("timestamp", ""))
+        if rec.get("type") == "session.start" and (d.get("context") or {}).get("cwd"):
+            yield sess, ts, "cwd", str(d["context"]["cwd"])
+        if rec.get("type") == "skill.invoked":
+            yield sess, ts, "load", str(d.get("name", ""))
+        elif rec.get("type") == "tool.execution_start":
+            a = d.get("arguments") if isinstance(d.get("arguments"), dict) else {}
+            tool = d.get("toolName")
+            if tool == "skill":
+                yield sess, ts, "load", str(a.get("skill", ""))
+            elif tool == "bash":
+                yield sess, ts, "cmd", str(a.get("command", ""))
+            else:
+                yield sess, ts, "path", " ".join(str(a.get(k, "")) for k in ("path", "paths", "pattern"))
+
+
+def kiro_events(f: Path):
+    """Kiro CLI (~/.kiro/sessions/<hash>/sess_<id>/messages.jsonl): `tool_call` records only; `disclose_context`
+    loads a skill (when it completed), execute_bash/control_bash_process run commands, read_* name paths."""
+    sess = f.parent.name
+    try:
+        for w in json.loads((f.parent / "session.json").read_text(encoding="utf-8")).get("workspacePaths") or []:
+            yield sess, "", "cwd", str(w)
+    except (OSError, ValueError, AttributeError):
+        pass
+    for rec in _jsonl(f):
+        p, ts = rec.get("payload") or {}, str(rec.get("timestamp", ""))
+        if p.get("type") != "tool_call":
+            continue
+        a = p.get("args") if isinstance(p.get("args"), dict) else {}
+        tool = p.get("toolName")
+        if tool == "disclose_context" and p.get("status") in ("completed", None):
+            yield sess, ts, "load", str(a.get("name", ""))
+        elif tool in ("execute_bash", "control_bash_process"):
+            yield sess, ts, "cmd", str(a.get("command", ""))
+        else:
+            paths = [str(a.get("path", ""))] + [str(x.get("path", "")) for x in a.get("files") or [] if isinstance(x, dict)]
+            yield sess, ts, "path", " ".join(paths)
+
+
+def _pb_fields(buf: bytes) -> dict[int, list]:
+    """Protobuf wire format, one level: field number -> values (ints for varints, bytes for length-delimited)."""
+    out: dict[int, list] = {}
+    i, n = 0, len(buf)
+
+    def varint():
+        nonlocal i
+        shift = val = 0
+        while True:
+            b = buf[i]
+            i += 1
+            val |= (b & 0x7F) << shift
+            shift += 7
+            if not b & 0x80:
+                return val
+    while i < n:
+        key = varint()
+        num, wt = key >> 3, key & 7
+        if wt == 0:
+            v = varint()
+        elif wt == 2:
+            ln = varint()
+            v, i = buf[i:i + ln], i + ln
+        elif wt == 1:
+            v, i = buf[i:i + 8], i + 8
+        elif wt == 5:
+            v, i = buf[i:i + 4], i + 4
+        else:
+            break
+        out.setdefault(num, []).append(v)
+    return out
+
+
+def agy_events(f: Path):
+    """Antigravity CLI (~/.gemini/antigravity-cli/conversations/<id>.db): SQLite `steps` rows of step_type 132 are
+    tool calls, the protobuf payload's field 5.4 = {2: tool name, 3: arguments as JSON}, 5.1.1 = epoch seconds.
+    read_file names a path (a SKILL.md read is the skill load); run_command a command. Other step types are skipped
+    (type 15 repeats the planned call)."""
+    import sqlite3
+    db = sqlite3.connect(f"file:{f.resolve()}?mode=ro", uri=True)
+    try:
+        rows = db.execute("select step_payload from steps where step_type = 132 order by idx").fetchall()
+    finally:
+        db.close()
+    for (blob,) in rows:
+        try:
+            meta = _pb_fields(_pb_fields(blob)[5][0])
+            call = _pb_fields(meta[4][0])
+            secs = _pb_fields(meta[1][0])[1][0] if 1 in meta else 0
+            ts = _dt.datetime.fromtimestamp(secs, _dt.timezone.utc).isoformat() if secs else ""
+            tool = call[2][0].decode("utf-8", "replace")
+            args = json.loads(call[3][0].decode("utf-8", "replace")) if 3 in call else {}
+        except (KeyError, IndexError, ValueError, TypeError):
+            continue
+        if tool == "run_command":
+            yield f.stem, ts, "cmd", str(args.get("CommandLine", ""))
+        else:
+            yield f.stem, ts, "path", str(args.get("Path", "")) if isinstance(args, dict) else ""
+
+
+# Each harness: (name, the folders it keeps sessions in under a home folder, file glob, extractor of events).
+HARNESS_LOGS = [
+    ("claude-code", lambda home: [], "*.jsonl", claude_code_events),
+    ("codex", lambda home: [home / ".codex/sessions", home / ".codex/archived_sessions"], "*.jsonl*", codex_events),
+    ("copilot", lambda home: [home / ".copilot/session-state"], "events.jsonl", copilot_events),
+    ("kiro", lambda home: [home / ".kiro/sessions"], "messages.jsonl", kiro_events),
+    ("agy", lambda home: [home / ".gemini/antigravity-cli/conversations"], "*.db", agy_events),
+]
+
+PATH_RE = re.compile(r"/skills/([\w.-]+)/((?:references|templates)/[^\s\"'`;|&)<>]+|SKILL\.md)")
+RUN_RE = re.compile(r"\bpython[\d.]*\s+(?:-\S+\s+)*[\"']?\S*?([\w-]+\.py)\b[\"']?((?:[ \t]+[^\s;&|]+){0,6})")
+ASSIGN_RE = re.compile(r"(?:^|[;&|\n]\s*|\bexport\s+)([A-Za-z_]\w*)=(\"[^\"]*\"|'[^']*'|[^\s;&|]+)")
+
+
+def in_genome(path: str, genome: Path | None, _cache: dict = {}) -> bool:
+    """A working folder inside the genome or one of its worktrees (a marketplace with plugins/ above it, or a path that
+    names the genome's folder): work on the skills, not use of them."""
+    if path not in _cache:
+        p, hit = Path(path), False
+        for q in [p, *p.parents]:
+            if (q / ".claude-plugin" / "marketplace.json").is_file() and (q / "plugins").is_dir():
+                hit = True
+                break
+        _cache[path] = hit or bool(genome and genome.name in Path(path).parts)
+    return _cache[path]
+
+
+def session_records(harness: str, key: str, events, scripts: dict[str, set[str]], genome: Path | None = None) -> list[dict]:
+    """One record per (file, day): loads, skill files read and script subcommands run. Shell variables carry across
+    the session's commands (`L=.../loop.py` in one call, `python3 $L status` in the next)."""
+    recs: dict[str, dict] = {}
+    env: dict[str, str] = {}
+
+    def rec(sess, ts):
+        day = ts[:10] or "0000-00-00"
+        return recs.setdefault(day, {"h": harness, "f": key, "s": sess, "d": day, "loads": [], "reads": {}, "runs": {}})
+
+    in_g = False
+    for sess, ts, kind, val in events:
+        if kind == "cwd":
+            in_g = in_g or in_genome(val, genome)
+            continue
+        r = rec(sess, ts)
+        if kind == "load":
+            name = val.split(":")[-1].strip("/")
+            if name and name not in r["loads"]:
+                r["loads"].append(name)
+            continue
+        if kind == "cmd":
+            val = re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: env.get(m.group(1), m.group(0)), val)
+            for var, v in ASSIGN_RE.findall(val):
+                env[var] = v.strip("\"'")
+            for py, rest in RUN_RE.findall(val):
+                if py in scripts:
+                    sub = next((t.strip("\"'") for t in rest.split() if t.strip("\"'") in scripts[py]), "")
+                    k = f"{py} {sub}".strip()
+                    r["runs"][k] = r["runs"].get(k, 0) + 1
+        for unit, rel in PATH_RE.findall(val):
+            if rel == "SKILL.md":
+                if unit not in r["loads"]:
+                    r["loads"].append(unit)
+            else:
+                r["reads"][f"{unit}/{rel}"] = r["reads"].get(f"{unit}/{rel}", 0) + 1
+    out = [r for r in recs.values() if r["loads"] or r["reads"] or r["runs"]]
+    for r in out:
+        r["g"] = in_g
+    return out
+
+
+USAGE_FORMAT = 2   # bump when session_records changes what a record holds
+
+
+def usage_records(roots_cc: list[Path], home: Path | None, scripts: dict[str, set[str]],
+                  genome: Path | None = None) -> tuple[list[dict], int]:
+    """Records from every harness's logs, merged into the machine's usage ledger (CONFIG/usage.jsonl), so counts outlive
+    the logs (Claude Code deletes transcripts after cleanupPeriodDays, 30 by default). Only files changed since the last
+    scan are read again; their records replace the old ones."""
+    ledger, state_p = CONFIG / "usage.jsonl", CONFIG / "usage-scan.json"
+    try:
+        state = json.loads(state_p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    old = []
+    if state.get("_format") != USAGE_FORMAT:   # records written by an older loop.py: read every log again
+        state = {"_format": USAGE_FORMAT}
+        old = None
+    if old is not None and ledger.exists():
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            try:
+                old.append(json.loads(line))
+            except ValueError:
+                pass
+    fresh, rescanned, n = [], set(), 0
+    for harness, roots, pattern, extract in HARNESS_LOGS:
+        for root in (roots_cc if harness == "claude-code" else roots(home) if home else []):
+            for f in sorted(root.rglob(pattern)) if root.is_dir() else ([root] if root.is_file() else []):
+                n += 1
+                key = f"{harness}:{f.resolve()}"
+                m = f.stat().st_mtime
+                if state.get(key) == m:
+                    continue
+                try:
+                    fresh += session_records(harness, key, extract(f), scripts, genome)
+                except Exception:                      # one unreadable log never stops the report
+                    continue
+                state[key] = m
+                rescanned.add(key)
+    records = [r for r in old or [] if r.get("f") not in rescanned] + fresh
+    try:
+        CONFIG.mkdir(parents=True, exist_ok=True)
+        ledger.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in records), encoding="utf-8")
+        state_p.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+    return records, n
+
+
 def cmd_usage(args):
     """What of each skill was used (O28): sessions that loaded it (Skill tool, slash command or a read of its SKILL.md),
-    its references/templates read (Read tool or a shell command naming the path), its scripts' subcommands run (by script
-    name, so a project's tools/docmap.py counts for project-foundations), and what was never used since the date."""
+    its references/templates read, its scripts' subcommands run (by script name, so a project's tools/docmap.py counts
+    for project-foundations), and what was never used since the date. Counts come from the usage ledger, refreshed
+    from every harness's local logs first."""
     g = need_genome(args)
     since = args.since or (_dt.date.today() - _dt.timedelta(days=args.days)).isoformat()
     us = {n: d for n, d in units(g).items() if not args.unit or n == args.unit}
     if args.unit and not us:
         need_unit(g, args.unit)
-    parts = {n: unit_parts(d) for n, d in us.items()}
-    script_unit = {py: n for n, (_, scripts) in parts.items() for py in scripts}
-    path_re = re.compile(r"/skills/([\w.-]+)/((?:references|templates)/[^\s\"'`;|&)<>]+|SKILL\.md)")
-    run_re = re.compile(r"\bpython[\d.]*\s+(?:-\S+\s+)*[\"']?\S*?([\w-]+\.py)\b[\"']?((?:[ \t]+[^\s;&|]+){0,6})")
-    loads: dict[str, set[str]] = {n: set() for n in us}
+    parts = {n: unit_parts(d) for n, d in units(g).items()}
+    scripts = {py: subs for _, sc in parts.values() for py, subs in sc.items()}
+    script_unit = {py: n for n, (_, sc) in parts.items() for py in sc}
+    # --transcripts alone reads only those folders; --home reads every harness's logs under another home folder
+    home = Path(args.home).expanduser() if args.home else (None if args.transcripts else Path.home())
+    records, n_files = usage_records(transcript_roots(args.transcripts, home), home, scripts, g)
+    records = [r for r in records if r["d"] >= since]
+    in_g = [r for r in records if r.get("g")]
+    if not args.all:
+        records = [r for r in records if not r.get("g")]
+    loads: dict[str, set] = {n: set() for n in us}
     last: dict[str, str] = {}
     reads: dict[tuple[str, str], int] = {}
-    runs: dict[tuple[str, str, str], int] = {}
-    roots = transcript_roots(args.transcripts)
-    files = [f for r in roots for f in r.rglob("*.jsonl")
-             if _dt.date.fromtimestamp(f.stat().st_mtime).isoformat() >= since]
-
-    def seen(unit, sess, ts):
-        if unit in loads:
-            loads[unit].add(sess)
-            last[unit] = max(last.get(unit, ""), ts[:10])
-
-    for f in files:
-        sess = f.parent.parent.name if f.parent.name == "subagents" else f.stem
-        with open(f, encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                if '"tool_use"' not in line and "<command-name>" not in line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                ts = str(rec.get("timestamp") or "")
-                if ts and ts[:10] < since:
-                    continue
-                content = (rec.get("message") or {}).get("content")
-                if isinstance(content, str):
-                    for name in re.findall(r"<command-name>/?([^<\s]+)</command-name>", content):
-                        seen(name.split(":")[-1], sess, ts)
-                    continue
-                for b in content if isinstance(content, list) else []:
-                    if not isinstance(b, dict) or b.get("type") != "tool_use":
-                        continue
-                    inp = b.get("input") or {}
-                    if b.get("name") == "Skill":
-                        seen(str(inp.get("skill", "")).split(":")[-1], sess, ts)
-                        continue
-                    text = " ".join(str(inp.get(k, "")) for k in ("file_path", "command", "path", "pattern"))
-                    for unit, rel in path_re.findall(text):
-                        if rel == "SKILL.md":
-                            seen(unit, sess, ts)
-                        elif unit in us:
-                            reads[unit, rel] = reads.get((unit, rel), 0) + 1
-                    if b.get("name") == "Bash":
-                        cmd = str(inp.get("command", ""))
-                        for var, val in re.findall(r"\b([A-Za-z_]\w*)=([^\s;&|]+)", cmd):   # P=...; python3 $P/x.py
-                            cmd = re.sub(rf"\$\{{?{var}\b\}}?", lambda _m, v=val.strip("\"'"): v, cmd)
-                        for py, rest in run_re.findall(cmd):
-                            if py in script_unit:
-                                u = script_unit[py]
-                                sub = next((t for t in rest.split() if t in parts[u][1][py]), "")
-                                runs[u, py, sub] = runs.get((u, py, sub), 0) + 1
-    print(f"usage since {since}: Claude Code transcripts only ({len(files)} files under {len(roots)} folder(s)); "
-          "helpers on other CLIs, claude.ai chats and transcripts Claude Code already deleted are not counted, "
-          "and the parts of a SKILL.md cannot be told apart (it loads whole)")
+    runs: dict[tuple[str, str], int] = {}
+    harnesses: dict[str, set] = {n: set() for n in us}
+    for r in records:
+        for name in r["loads"]:
+            if name in loads:
+                loads[name].add((r["h"], r["s"]))
+                harnesses[name].add(r["h"])
+                last[name] = max(last.get(name, ""), r["d"])
+        for k, c in r["reads"].items():
+            unit, rel = k.split("/", 1)
+            reads[unit, rel] = reads.get((unit, rel), 0) + c
+        for k, c in r["runs"].items():
+            u = script_unit.get(k.split(" ")[0])
+            if u:
+                runs[u, k] = runs.get((u, k), 0) + c
+    names = [h for h, *_ in HARNESS_LOGS] if home else ["claude-code"]
+    print(f"usage since {since}: {len(records)} session-days from the ledger and {n_files} local log files "
+          f"({', '.join(names)}); not counted: claude.ai chats, other machines (run usage there), and the parts of a "
+          "SKILL.md (it loads whole)"
+          + (f"; {len(in_g)} session-day{'' if len(in_g) == 1 else 's'} working in the genome itself "
+             + ("counted (--all)" if args.all else "left out (--all counts them)") if in_g else ""))
     for n in us:
-        unit_files, scripts = parts[n]
+        unit_files, sc = parts[n]
         if not (us[n] / "SKILL.md").exists():
             print(f"{n}: a mod (always on, nothing to load; not tracked here)")
             continue
-        print(f"{n}: loaded in {len(loads[n])} session{'' if len(loads[n]) == 1 else 's'}"
+        by = f" ({', '.join(sorted(harnesses[n]))})" if harnesses[n] - {"claude-code"} else ""
+        print(f"{n}: loaded in {len(loads[n])} session{'' if len(loads[n]) == 1 else 's'}{by}"
               + (f", last {last[n]}" if last.get(n) else ""))
-        width = max([len(x) for x in unit_files] + [len(f"{py} {sub}") for (u, py, sub) in runs if u == n] + [10])
+        width = max([len(x) for x in unit_files] + [len(k) for (u, k) in runs if u == n] + [10])
         for rel in unit_files:
             if reads.get((n, rel)):
                 print(f"   {rel:<{width}}  {reads[n, rel]}")
-        for (u, py, sub), k in sorted(runs.items()):
+        for (u, k), c in sorted(runs.items()):
             if u == n:
-                print(f"   {(py + ' ' + sub).strip():<{width}}  {k}")
-        code = "\n".join((us[n] / "scripts" / py).read_text(encoding="utf-8", errors="replace") for py in scripts)
-        by_script = (us[n] / "templates").is_dir() and "templates" in code   # scripts that copy templates (init, new) read them, not the agent
+                print(f"   {k:<{width}}  {c}")
+        code = "\n".join((us[n] / "scripts" / py).read_text(encoding="utf-8", errors="replace") for py in sc)
+        by_script = (us[n] / "templates").is_dir() and "templates" in code   # scripts that copy templates read them
         unused = [rel for rel in unit_files if not reads.get((n, rel)) and not (by_script and rel.startswith("templates/"))]
         if unused:
             print(f"   never used: {', '.join(unused)}")
         if by_script:
             print("   (templates/ is read by the unit's scripts: not counted)")
-        never = [f"{py} {sub}" for py, subs in scripts.items() for sub in sorted(subs)
-                 if not runs.get((n, py, sub))]
-        never += [py for py, subs in scripts.items() if not subs and not any(u == n and p == py for u, p, _ in runs)]
+        never = [f"{py} {sub}" for py, subs in sc.items() for sub in sorted(subs) if not runs.get((n, f"{py} {sub}"))]
+        never += [py for py, subs in sc.items() if not subs and not runs.get((n, py))]
         if never:
             print(f"   never run: {', '.join(never)}")
 
@@ -1337,7 +1609,8 @@ def argparse_ns(**kw):
 
 
 def cmd_hook(args):
-    """Session start: optional automatic sync (opt-in), then the digest. A hook must never break a session."""
+    """Session start: optional automatic sync (opt-in), the usage ledger refreshed, then the digest. A hook must never
+    break a session."""
     try:
         flag = CONFIG / "auto_sync"
         if flag.is_file() and flag.read_text(encoding="utf-8").strip().lower() in ("on", "yes", "true", "1"):
@@ -1347,6 +1620,13 @@ def cmd_hook(args):
                 cmd_sync(argparse_ns(genome=args.genome, no_push=False, quiet=True, configured_first=True))
                 if run_git(g, "rev-parse", "HEAD").stdout.strip() != before:
                     print(f"strange-loop: synced the genome ({g}): this machine's observations shared, others' changes pulled.")
+    except Exception:
+        pass
+    try:   # keep the usage ledger ahead of Claude Code's transcript cleanup; only changed logs are read
+        g, _ = find_genome(args.genome, prefer_cwd=False)
+        if g:
+            scripts = {py: subs for d in units(g).values() for py, subs in unit_parts(d)[1].items()}
+            usage_records(transcript_roots(None), Path.home(), scripts, g)
     except Exception:
         pass
     cmd_digest(args)
@@ -1370,7 +1650,8 @@ def main(argv: list[str]) -> None:
     p.add_argument("summary"); p.add_argument("--obs", action="append")
     p = sub.add_parser("show"); p.add_argument("unit"); p.add_argument("ids", nargs="+")
     p = sub.add_parser("usage"); p.add_argument("unit", nargs="?"); p.add_argument("--days", type=int, default=90)
-    p.add_argument("--since"); p.add_argument("--transcripts", action="append")
+    p.add_argument("--since"); p.add_argument("--transcripts", action="append"); p.add_argument("--home")
+    p.add_argument("--all", action="store_true")
     p = sub.add_parser("judge"); p.add_argument("unit"); p.add_argument("case")
     p.add_argument("--old", required=True, action="append"); p.add_argument("--new", required=True, action="append")
     p.add_argument("--out")
