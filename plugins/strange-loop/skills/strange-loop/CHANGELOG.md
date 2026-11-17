@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 2.6.0 (2026-11-17)
+- judged cases run twice (judge takes repeated --old/--new, one packet per pair; the new version wins a case only if it wins both); usage reads Codex, Copilot, Kiro and agy logs, keeps a ledger that outlives deleted transcripts (refreshed at session start), follows shell variables across commands and leaves out work in the genome itself (--all counts it); SKILL.md over budget under a size-exception (owner request) (O29)
+
 ## 2.5.0 (2026-11-17)
 - status shows fixes held per unit and, for one unit, the fixes that did not hold (a resolved lesson that came back); show follows reopens back through earlier fixes with their CHANGELOG entries; new loop.py usage reports which skill files, references, templates and script subcommands Claude Code sessions used and which never; Gather and Forgetting rules use them (owner request, after Yu et al. 2026 SIM and Anthropic's subagent-folding article) (O27, O28)
 

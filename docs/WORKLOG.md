@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-17 - strange-loop 2.6.0: judged cases twice; usage across CLIs
+
+- Owner request: judged outputs are non-deterministic, so `judge` takes repeated `--old`/`--new` (one blind packet per pair; the new version wins a case only if it wins both; one pair is allowed but flagged); §4 step 6 says so. Owner allowed going over 25 KB where cutting hurts: the "never sees the comparison" sentence came back, and SKILL.md is 25.2 KB under a size-exception that names the way back under (move §8's adoption steps to a reference).
+- `usage` blind spots fixed: reads Codex (`~/.codex/sessions`, JS `exec_command` cmds, `.zst` via Python 3.14 or zstd), Copilot CLI (`session-state/*/events.jsonl`: `tool.execution_start`, `skill.invoked`), Kiro CLI (`sessions/*/sess_*/messages.jsonl`: `tool_call`, `disclose_context`) and agy (`antigravity-cli/conversations/*.db`: step 132 protobuf) - formats from a survey subagent, checked on this Mac; a per-machine ledger (`~/.config/strange-loop/usage.jsonl`, refreshed by the session-start hook, only changed logs re-read) keeps counts after Claude Code deletes transcripts; shell variables carry across a session's commands; sessions working in the genome are left out (`--all`).
+- Verified: tests for each committed first (failed on 2.5.0); `loop.py eval strange-loop` exit 0; `check --base origin/main` 0/0. Real run: 607 logs, 7 s first scan, 0.2 s incremental; 262 session-days of use, 88 of genome work left out. Never used since 2026-08-19 (all CLIs): project-foundations references principles, retrofit, upgrade; `docmap.py uses`; `ra.py close/round`; `wr.py values`.
+- Unverified: claude.ai chats and other machines still not counted; agy's older IDE-era logs not read.
+
 ## 2026-11-17 - Ideas from SIM (Yu et al. 2026) and the subagent-folding article: project-foundations 5.16.0, strange-loop 2.5.0
 
 - Owner asked how Anthropic's "When to fold subagents into your main agent loop" (Sarkis, 2026-10-22) and Google's "Self-Improvement Memory Enables Continual Recursive Self-Improvement" (Yu et al., arXiv 2611.18856) compare with the genome. Owner kept: usage tracking (from the article's /skill-doctor), and both SIM ideas; declined splitting router steps by context, testing delegated vs folded, and repeated judged runs beyond non-deterministic cases.
