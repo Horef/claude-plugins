@@ -796,6 +796,12 @@ def main() -> int:
         expect("D3." in p.stdout and "D1." not in p.stdout, "depends WORDS keeps the decisions whose dependencies match (O30)", p)
         p = docmap(root, "find", "windows", "broke")
         expect("D1." in p.stdout, "find reaches a decision's Tried line (O30)", p)
+        (root / "docs/decisions").mkdir()
+        (root / "docs/decisions/0005-cache.md").write_text("# 0005 Cache layout\nStatus: superseded by D3\n\n- **Depends on:** Redis 7\n", encoding="utf-8")
+        (root / "docs/decisions/0006-queue.md").write_text("# 0006 Queue\nStatus: accepted, partly superseded by D3: retries\n\n- **Depends on:** RabbitMQ 4\n", encoding="utf-8")
+        p = docmap(root, "depends")
+        expect("Redis" not in p.stdout and "RabbitMQ" in p.stdout,
+               "depends reads a Status line: superseded is left out, partly superseded stays (O30)", p)
         tpl = (SKILL_DIR / "templates/decisions.md").read_text(encoding="utf-8")
         expect("**Tried:**" in tpl and "**Depends on:**" in tpl, "the decisions template has Tried and Depends on lines (O30)")
 

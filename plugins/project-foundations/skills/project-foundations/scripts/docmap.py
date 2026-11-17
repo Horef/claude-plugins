@@ -18,6 +18,7 @@ Installed by the project-foundations skill (source: its scripts/docmap.py; see D
                                        (default 2000 tokens). calls/deps/map read Python only.
   python tools/docmap.py get ID...     print only these entries: D12 (DECISIONS), R5 (RESULTS), or a WORKLOG date
   python tools/docmap.py find WORDS    doc entries (decisions, results, worklog, docs) containing all the words
+  python tools/docmap.py depends [WORDS]  live decisions with a **Depends on:** line (matching the words): what to re-check after a model, platform or library switch
   python tools/docmap.py stats         what an agent reads: token estimates of the files it reads whole
   python tools/docmap.py rotate [--keep N]
                                        move WORKLOG entries from earlier months to docs/worklog/YYYY-MM.md;
@@ -1923,6 +1924,29 @@ def cmd_find(args):
           + "; `get D<n>` / `get R<n>` prints one entry, or read the file at the line shown")
 
 
+DEPENDS = re.compile(r"^\s*[-*]\s*\*\*Depends on:?\*\*:?\s*(.+)$", re.M)
+
+
+def cmd_depends(args):
+    """Decisions that hold only for a given model, platform, library or data version (their `**Depends on:**` line),
+    superseded ones left out: after such a switch, the list to re-check (O30)."""
+    words = [w.lower() for w in args]
+    docs = [f for f in tracked_files() if f.endswith(".md") and f.startswith("docs/")]
+    n = 0
+    for f in docs:
+        for ln, head, body in doc_entries(f):
+            dep = DEPENDS.search(body)
+            status = head + "\n" + "\n".join(l for l in body.splitlines() if re.match(r"^\s*[-*]?\s*\**status\b", l, re.I))
+            if not dep or re.search(r"(?<!partly )superseded by\b", status, re.I):
+                continue
+            if words and not all(w in (head + " " + dep.group(1)).lower() for w in words):
+                continue
+            n += 1
+            print(f"{f}:{ln}  {head[:90]}\n      depends on: {dep.group(1).strip()[:150]}")
+    print(f"{n} decision{'' if n == 1 else 's'} with a Depends on line" + (" matching" if words else "")
+          + "; re-check each one whose dependency changed (`get D<n>`), and supersede it if it no longer holds")
+
+
 def cmd_stats(_args):
     """Token estimates of what an agent reads: the session-start files (read whole) and the logs (read by entry)."""
     print("Read whole at session start (per file: warning above read_max_tokens = %d; "
@@ -2019,7 +2043,7 @@ def cmd_worktrees(args):
 
 COMMANDS = {"update": cmd_update, "check": cmd_check, "where": cmd_where, "show": cmd_show, "uses": cmd_uses, "rotate": cmd_rotate, "runs": cmd_runs,
             "calls": cmd_calls, "deps": cmd_deps, "map": cmd_map,
-            "get": cmd_get, "find": cmd_find, "stats": cmd_stats, "worklog": cmd_worklog,
+            "get": cmd_get, "find": cmd_find, "depends": cmd_depends, "stats": cmd_stats, "worklog": cmd_worklog,
             "local": cmd_local, "docs": cmd_docs, "ids": cmd_ids, "worktrees": cmd_worktrees}
 
 if __name__ == "__main__":
