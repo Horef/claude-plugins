@@ -748,7 +748,9 @@ class HeldAndUsageTest(unittest.TestCase):
     setUp, tearDown, g_run = PassTest.setUp, PassTest.tearDown, PassTest.g_run
 
     def held_fixture(self):
-        self.learn.write_text(loop.LEARNINGS_TEMPLATE.format(name="demo", what="skill") + "\n".join([
+        head = loop.LEARNINGS_TEMPLATE.format(name="demo", what="skill").replace("## Open\n\n## Resolved\n", "")
+        self.learn.write_text(head + "\n".join([
+            "## Open",
             "- O5 2026-03-01 [failure] lint misses patches over labels [+2026-03-01 again; reopens O3] ×3",
             "",
             "## Resolved",
