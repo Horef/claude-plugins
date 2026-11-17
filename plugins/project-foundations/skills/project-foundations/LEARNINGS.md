@@ -7,6 +7,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 ## Open
 - O25 2026-11-15 [wish] RESULTS template / docmap: provenance of results. Each result entry names the run that produced it (code commit, config or its hash, command, date, output path), and docmap check warns when an entry lacks them. Idea from atomRDF (ontology-typed simulation records), owner 2026-11-15 (claude-code, owner request)
 - O26 2026-11-15 [wish] docmap: check typed ids more widely: every cited D-/O-/rule-id and run/result id resolves to a definition, and result entries reference an existing run. Owner 2026-11-15 (from atomRDF's schema-typed records) (claude-code, owner request)
+- O27 2026-11-17 [friction] docmap check: a worktree just created for a helper (branch with no commits yet) is reported as 'merged into main, remove it'; would help: skip branches whose tip equals main's or that are younger than a day (simple_complex_v1)
 
 ## Resolved
 - O24 2026-11-14 [failure] docmap build_map (docmap.py:408-418) omits code files at the repo root from MAP.md; no check flags a STATUS 'works' claim about deleted code (eval grading 2026-11-14) → 5.13.0
