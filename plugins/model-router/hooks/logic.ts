@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUN
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.23.0'
+export const VERSION = '0.25.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -1488,7 +1488,10 @@ export const staleProviders = (cfg: HelperConfig | undefined, report: ModelsRepo
     .filter(([, p]) => p.cli_found !== false && !p.self && p.kind !== 'claude')
     .map(([name]) => name)
     .filter(name => {
-      const date = report?.providers[name]?.date ?? cache?.[name]?.date
+      const p = report?.providers[name]
+      const date = p?.date ?? cache?.[name]?.date
+      // A list that failed today (a CLI logged out) is not asked for again until tomorrow, as helpers.py does.
+      if ((p?.checked ?? cache?.[name]?.checked) === today) return false
       const age = typeof date === 'string' ? daysBetween(date, today) : NaN
 
       return !(age <= STALE_DAYS)

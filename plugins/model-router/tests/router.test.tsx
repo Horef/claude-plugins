@@ -3081,6 +3081,8 @@ test('the models report: parsed, older helpers.py recognised, stale providers fo
   expect(staleProviders(cfg, report, { kiro: { date: ago(8) } }, ago(0))).toEqual(['kiro'])
   expect(staleProviders(cfg, report, { kiro: { date: ago(7) } }, ago(0))).toEqual([])
   expect(staleProviders(cfg, undefined, undefined, ago(0))).toEqual(['kiro', 'agy'])
+  // A list that failed today (Kiro logged out) waits until tomorrow.
+  expect(staleProviders(cfg, report, { kiro: { date: ago(12), checked: ago(0), error: 'Not logged in' } }, ago(0))).toEqual([])
 
   // Newly seen models are remembered; one with a note is not asked about, one without is, once.
   const notes = mergeNotes(undefined)
