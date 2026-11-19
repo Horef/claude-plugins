@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pick a helper template, render templates from a config, track models and quotas (stdlib only).
 
-  helpers.py pick light|standard|deep|argon|fusion first usable template for a tier (default order)
+  helpers.py pick light|standard|deep|second|fusion first usable template for a tier (default order; `argon` is the old name of `second`)
   helpers.py pick kiro-deep,copilot-deep,...    first usable template from your own order (custom names too)
   helpers.py out <provider> [--until YYYY-MM-DD] mark a provider out of quota (default: 1st of next month)
   helpers.py login <provider>                   mark a provider as needing a fresh login (no expiry)
@@ -11,7 +11,7 @@
   helpers.py usage <name>                       the helper's session usage as JSON {provider, amount, unit}; run before hc kill
 
   helpers.py config [--json]                    the effective config (default + your overrides) as JSON, each provider with
-                                                kind, config_dir, label, unit, order, cli_found, self, auto; plus default_orders per tier
+                                                kind, config_dir, label, unit, order, cli_found, self, auto, direct; plus default_orders per tier
   helpers.py account list                       the Claude accounts (found by themselves, see below), their quota readings, which is this session's
   helpers.py account add <name> <config_dir> [--label L]   configure one by hand (overrides the auto-discovered one of that dir)
   helpers.py account rm <name>                  remove one; an auto-discovered account stays out (excluded_accounts in your config)
@@ -19,10 +19,16 @@
   helpers.py set <provider> <tier> [model=X] [effort=Y] [--force]   change a tier's model/effort, then render
   helpers.py custom <provider> model=X effort=Y [--force]   render a one-off <provider>-<model>-<effort> template, print its name
   helpers.py custom [--prune]                   list custom templates, or forget them all
-  helpers.py models [provider]                  ask the installed CLIs which models they offer; report gaps and newer ones
+  helpers.py models [provider] [--json]         ask the installed CLIs which models they offer; report gaps, newer ones,
+                                                NEW (first seen in the last 14 days) and GONE (no longer offered) models
+  helpers.py models [provider] --cached [--json]  the same report from models.json, asking no CLI
+  helpers.py run <template> --brief FILE [--cwd DIR] [--out FILE] [--timeout MIN]   direct mode (no Herdr): run one brief
+                                                non-interactively through the provider's `headless` command; the last stdout
+                                                line is JSON {template, provider, model, effort, exit, out, log, seconds, usage}
 
 Config: helpers.default.json (shipped next to SKILL.md) merged under $XDG_CONFIG_HOME/herdr-delegate/helpers.json
-(default ~/.config; only your overrides). Per provider: cli, command with {model} {effort} {model_id} {config_dir},
+(default ~/.config; only your overrides; an old `argon` tier or tier_order key is read as `second`). Per provider: cli,
+command with {model} {effort} {model_id} {settings} {config_dir}, headless (a command like it, plus {prompt}, for `run`),
 efforts, tiers, order (default pick order, lowest first; `tier_order` per tier), unit (what `usage` reports), and
 optional sources that make a provider plug in: login_check, usage_screen, usage_source, quota_source, models_source.
 A provider with kind "claude" and a config_dir is Claude Code under another account (see `account`).
@@ -46,6 +52,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -77,6 +84,19 @@ def models_file():
 NAME_OK = re.compile(r"[a-z][a-z0-9]*")  # a provider is the template name before the first '-'
 
 
+TIER_ALIASES = {"argon": "second"}  # the second-opinion tier was named after one model (renamed 2026-11-19)
+
+
+def canon_tier(tier):
+    return TIER_ALIASES.get(tier, tier)
+
+
+def canon_template(name):
+    """`agy-argon` -> `agy-second`: a template name written with a tier's old name."""
+    prefix, sep, tier = name.partition("-")
+    return f"{prefix}-{canon_tier(tier)}" if sep else name
+
+
 def provider_order(prov):
     return prov.get("order", 100)
 
@@ -104,7 +124,7 @@ class _Orders:
     """ORDER[tier]: the default pick order for a tier, computed from the effective config."""
 
     def get(self, tier, default=None):
-        return tier_names(effective_config(), tier) or default
+        return tier_names(effective_config(), canon_tier(tier)) or default
 
     def __getitem__(self, tier):
         got = self.get(tier)
@@ -644,12 +664,19 @@ def agy_weekly():
 
 
 def agy_group(model_id, groups):
-    """The /usage group a model id draws on: Argon has its own, Claude and GPT share one, other Gemini the last."""
+    """The /usage group a model id draws on: a Gemini model named in a group of its own (gemini-4-argon in "Gemini 4
+    Argon") uses that one; Claude and GPT share one; other Gemini models share the group that names no single model."""
     m = model_id.lower()
-    want = "argon" if "argon" in m else ("claude" if m.startswith(("claude", "gpt")) else "gemini")
+    if m.startswith("gemini"):
+        parts = m.split("-")
+        codename = parts[2] if len(parts) > 2 else ""
+        own = [g for g in groups if len(codename) > 2 and codename in g.lower()]
+        if own:
+            return own[0]
+    want = "claude" if m.startswith(("claude", "gpt")) else "gemini"
     hits = [g for g in groups if want in g.lower()]
     if want == "gemini":
-        hits = [g for g in hits if "argon" not in g.lower()]
+        hits = [g for g in hits if not re.search(r"gemini\s+\d[\d.]*\s+\w", g.lower())]
     return hits[0] if hits else None
 
 
@@ -666,10 +693,15 @@ def agy_usage(name):
     except OSError:
         cmd = ""
     m = re.search(r"--model\s+(\S+)", cmd)
+    return agy_usage_of(m.group(1) if m else "")
+
+
+def agy_usage_of(model_id):
+    """The drop in the model's /usage group since agy_mark, as {provider, amount, unit}, or None when unknown or not positive."""
     before = read_json(agy_snapshot_file(), {}).get("weekly", {})
     now = agy_weekly()
-    group = agy_group(m.group(1) if m else "", list(now))
-    if not m or not group or group not in before:
+    group = agy_group(model_id, list(now)) if model_id else None
+    if not group or group not in before:
         return None
     used = round((before[group] - now[group]) * 100, 2)
     return {"provider": "agy", "amount": used, "unit": f"% of {group} weekly"} if used > 0 else None
@@ -727,6 +759,21 @@ def deep_merge(base, over):
     return out
 
 
+def migrate_tier_names(user):
+    """Read an old tier name as its new one (`argon` as `second`) in tiers, tier_order and tier_text; the new key wins."""
+    def move(table):
+        for old, new in TIER_ALIASES.items():
+            if isinstance(table, dict) and old in table:
+                val = table.pop(old)
+                table[new] = deep_merge(val, table[new]) if isinstance(val, dict) and isinstance(table.get(new), dict) else table.get(new, val)
+    move(user.get("tier_text"))
+    for prov in (user.get("providers") or {}).values():
+        if isinstance(prov, dict):
+            move(prov.get("tiers"))
+            move(prov.get("tier_order"))
+    return user
+
+
 def load_user_config():
     path = user_config_file()
     if not path.exists():
@@ -736,7 +783,7 @@ def load_user_config():
     except ValueError as err:
         print(f"warning: {path} is not valid JSON ({err}); ignored", file=sys.stderr)
         return {}
-    return data if isinstance(data, dict) else {}
+    return migrate_tier_names(data) if isinstance(data, dict) else {}
 
 
 def with_kind_defaults(cfg):
@@ -920,6 +967,13 @@ def drift_summary(cfg):
     return [f"{k} {n}" for k, n in compute(cfg) if k in DRIFT]
 
 
+def ensure_template(cfg, name):
+    """Write the template `name` when the config has it and its file is missing (pick needs the file: after an update
+    renamed a tier, or in direct mode where no one ran `render`). A hand-made file is never touched."""
+    if name in template_specs(cfg) and not (templates_dir() / f"{name}.md").exists():
+        apply_plan(cfg, [p for p in compute(cfg, only={name}) if p[0] == "new"])
+
+
 # ---------------------------------------------------------------- models
 
 def run_text(cmd, timeout=30, env=None):
@@ -1066,6 +1120,31 @@ def not_offered():
         return set()
 
 
+def track_models(prov, old, ids, today):
+    """(seen, gone, baseline) after a successful listing: {base id: date first seen}, {base id: date it went missing}
+    and the ids the first listing found (they got that day's date but are not NEW: no flood on the first run).
+
+    Later, a base id not in `seen` is new; one in `seen` but no longer listed goes to `gone` (and stays in `seen`); a
+    gone id offered again leaves `gone` (and the baseline) and counts as new again, with today as its first-seen date."""
+    bases = list(dict.fromkeys(base_of(prov, i) for i in ids))
+    if not isinstance(old.get("seen"), dict):
+        return {b: today for b in bases}, {}, bases
+    seen = dict(old["seen"])
+    gone = dict(old["gone"]) if isinstance(old.get("gone"), dict) else {}
+    baseline = list(old.get("baseline") or [])
+    for b in bases:
+        if b in gone:
+            del gone[b]
+            seen[b] = today
+            baseline = [x for x in baseline if x != b]
+        elif b not in seen:
+            seen[b] = today
+    for b in seen:
+        if b not in bases and b not in gone:
+            gone[b] = today
+    return seen, gone, baseline
+
+
 def refresh_models(cfg, providers=None, today=None):
     """Ask the installed CLIs for their models and cache the answer. One CLI failing does not stop the others."""
     today = (today or dt.date.today()).isoformat()
@@ -1085,7 +1164,8 @@ def refresh_models(cfg, providers=None, today=None):
             ids, credits = got if isinstance(got, tuple) else (got, None)
             if not ids:
                 raise RuntimeError("no models found in the output")
-            cache[pname] = {"date": today, "checked": today, "models": ids}
+            seen, gone, baseline = track_models(prov, old, ids, today)
+            cache[pname] = {"date": today, "checked": today, "models": ids, "seen": seen, "gone": gone, "baseline": baseline}
             if credits:
                 cache[pname]["credits"] = credits
         except Exception as err:  # noqa: BLE001 - any failure must leave the other providers alone
@@ -1128,26 +1208,73 @@ def models_report(cfg, cache):
     return missing, newer
 
 
+NEW_DAYS = 14
+
+
+def models_changes(cfg, cache, today):
+    """(new, gone) from the cache: [(provider, base id, date)] first seen / gone within the last NEW_DAYS days."""
+    out = ([], [])
+    for pname in cfg["providers"]:
+        entry = cache.get(pname) or {}
+        for rows, table in zip(out, (entry.get("seen"), entry.get("gone"))):
+            for base, day in sorted((table or {}).items()):
+                try:
+                    age = (today - dt.date.fromisoformat(day)).days
+                except (TypeError, ValueError):
+                    continue
+                skip = rows is out[0] and (base in (entry.get("gone") or {}) or base in (entry.get("baseline") or []))
+                if 0 <= age <= NEW_DAYS and not skip:
+                    rows.append((pname, base, day))
+    return out
+
+
+def models_data(cfg, cache, wanted, today):
+    """The `models --json` object: providers, not_offered, newer, new, gone."""
+    providers = {}
+    for pname in cfg["providers"]:
+        e = cache.get(pname)
+        if e and (not wanted or pname in wanted):
+            providers[pname] = {"date": e.get("date"), "checked": e.get("checked"), "count": len(e.get("models") or [])}
+            if e.get("error"):
+                providers[pname]["error"] = e["error"]
+    missing, newer = models_report(cfg, cache)
+    new, gone = models_changes(cfg, cache, today)
+    return {"providers": providers,
+            "not_offered": [{"template": n, "model": w} for n, w in missing],
+            "newer": [{"template": n, "model": m, "candidates": c} for n, m, c in newer],
+            "new": [{"provider": p, "model": m, "first_seen": d} for p, m, d in new],
+            "gone": [{"provider": p, "model": m, "since": d} for p, m, d in gone]}
+
+
 def models_cmd(args, today=None):
     today = today or dt.date.today()
     cfg = effective_config()
     wanted = [a for a in args if not a.startswith("-")]
-    cache = refresh_models(cfg, wanted or None, today)
+    as_json, cached = "--json" in args, "--cached" in args
+    cache = load_models() if cached else refresh_models(cfg, wanted or None, today)
+    data = models_data(cfg, cache, wanted, today)
+    if as_json:
+        print(json.dumps(data))
+        return 0
     for pname in cfg["providers"]:
         if wanted and pname not in wanted:
             continue
         e = cache.get(pname)
         if not e:
-            print(f"{pname:8} CLI not installed")
+            print(f"{pname:8} " + ("not listed yet (no cache)" if cached else "CLI not installed"))
             continue
         n = len(e.get("models") or [])
         print(f"{pname:8} {n} models ({e.get('date', 'never listed')})" + (f"  ERROR: {e['error']}" if e.get("error") else ""))
-    missing, newer = models_report(cfg, cache)
-    for name, wid in missing:
-        print(f"NOT OFFERED  {name}: {wid} (provider {name.split('-')[0]}); change it with: helpers.py set")
-    for name, model, cands in newer:
-        print(f"NEWER        {name}: {model} -> {', '.join(cands)}")
-    if not missing and not newer:
+    for row in data["not_offered"]:
+        name = row["template"]
+        print(f"NOT OFFERED  {name}: {row['model']} (provider {name.split('-')[0]}); change it with: helpers.py set")
+    for row in data["newer"]:
+        print(f"NEWER        {row['template']}: {row['model']} -> {', '.join(row['candidates'])}")
+    for row in data["new"]:
+        print(f"NEW          {row['provider']}: {row['model']} (first seen {row['first_seen']})")
+    for row in data["gone"]:
+        print(f"GONE         {row['provider']}: {row['model']} (not offered since {row['since']})")
+    if not any(data[k] for k in ("not_offered", "newer", "new", "gone")):
         print("every configured model is offered; nothing newer in the same family")
     return 0
 
@@ -1187,7 +1314,7 @@ def set_cmd(args):
     if len(rest) != 2 or not set(kv) <= {"model", "effort"} or not kv:
         print("usage: helpers.py set <provider> <tier> [model=X] [effort=Y] [--force]", file=sys.stderr)
         return 2
-    provider, tier = rest
+    provider, tier = rest[0], canon_tier(rest[1])
     if provider not in effective_config()["providers"]:
         print(f"error: unknown provider {provider!r} (have: {', '.join(effective_config()['providers'])})", file=sys.stderr)
         return 1
@@ -1265,11 +1392,13 @@ def custom_cmd(args):
 
 
 def provider_view(prov):
-    """A provider's config plus the derived fields other tools read: kind, config_dir, label, unit, order, cli_found, self, auto."""
+    """A provider's config plus the derived fields other tools read: kind, config_dir, label, unit, order, cli_found, self,
+    auto, direct (a headless command and the CLI installed: `run` works without Herdr)."""
     out = dict(prov)
+    found = bool(shutil.which(prov.get("cli", "")))
     out.update(kind=prov.get("kind", "cli"), config_dir=prov.get("config_dir"), label=prov.get("label"),
                unit=prov.get("unit"), order=provider_order(prov),
-               cli_found=bool(shutil.which(prov.get("cli", ""))), self=is_self(prov), auto=bool(prov.get("auto")))
+               cli_found=found, self=is_self(prov), auto=bool(prov.get("auto")), direct=bool(prov.get("headless")) and found)
     return out
 
 
@@ -1285,6 +1414,141 @@ def config_cmd():
     cfg["session_account"] = {"config_dir": os.path.realpath(written_dir(session_dir())), "key": account_key(session_dir())}
     print(json.dumps(cfg, indent=2, sort_keys=True))
     return 0
+
+
+# ---------------------------------------------------------------- direct mode (no Herdr)
+
+def headless_argv(pname, prov, entry, model, effort, prompt):
+    """(argv, env additions, env names to unset) for one non-interactive run, from the `headless` command template.
+
+    The template is split into words first and the placeholders filled per word afterwards, so the prompt (and any
+    path) stays one argument whatever it contains; nothing goes through a shell. Leading VAR=value words are env vars.
+    The default Claude account runs with CLAUDE_CONFIG_DIR unset (see command_for)."""
+    template = (entry or {}).get("headless") or prov["headless"]
+    values = dict(model=model, effort=effort, model_id=full_model_id(prov, model, effort), settings=str(settings_file(pname)),
+                  config_dir=written_dir(prov["config_dir"]) if prov.get("config_dir") else "", prompt=prompt)
+    words = [re.sub(r"\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)), w) for w in shlex.split(template)]
+    env, unset = {}, []
+    while words and re.match(r"[A-Za-z_]\w*=", words[0]):
+        key, _, val = words.pop(0).partition("=")
+        if key == "CLAUDE_CONFIG_DIR" and prov.get("config_dir") and account_key(prov["config_dir"]) == "default":
+            unset.append(key)
+        else:
+            env[key] = val
+    return words, env, unset
+
+
+def answer_of(argv, stdout):
+    """The CLI's final answer: for `--output-format json` the result text of the JSON (Claude `result`, agy `response`), else stdout."""
+    if "--output-format" in argv and argv[argv.index("--output-format") + 1:][:1] == ["json"]:
+        for text in (stdout, *reversed([l for l in stdout.splitlines() if l.strip()][-1:])):
+            try:
+                data = json.loads(text)
+            except ValueError:
+                continue
+            for key in ("result", "response"):
+                if isinstance(data, dict) and isinstance(data.get(key), str):
+                    return data[key]
+    return stdout
+
+
+def run_usage(pname, prov, model_id, captured):
+    """{provider, amount, unit} for a finished direct run, or None (unknown, never 0): the same sources as `usage`."""
+    try:
+        source = usage_source(prov)
+        if source == "agy-weekly":
+            return agy_usage_of(model_id)
+        if source == "quota-delta":
+            return quota_usage(pname, prov)
+        return usage_of(pname, captured)
+    except Exception:  # noqa: BLE001 - a usage read must never lose the run's result
+        return None
+
+
+def run_cmd(args):
+    """`helpers.py run <template> --brief FILE [--cwd DIR] [--out FILE] [--timeout MIN]`: run one brief without Herdr."""
+    usage = "usage: helpers.py run <template> --brief <file> [--cwd <dir>] [--out <file>] [--timeout <minutes, default 60>]"
+    opts, rest, i = {}, [], 0
+    while i < len(args):
+        if args[i] in ("--brief", "--cwd", "--out", "--timeout") and i + 1 < len(args):
+            opts[args[i][2:]] = args[i + 1]
+            i += 2
+        else:
+            rest.append(args[i])
+            i += 1
+    try:
+        minutes = float(opts.get("timeout", 60))
+    except ValueError:
+        minutes = 0
+    if len(rest) != 1 or "brief" not in opts or minutes <= 0:
+        print(usage, file=sys.stderr)
+        return 2
+    name = canon_template(rest[0])
+    cfg = effective_config()
+    spec = template_specs(cfg).get(name)
+    if not spec:
+        print(f"error: no template named {name} in the config (helpers.py config lists the providers and tiers)", file=sys.stderr)
+        return 2
+    pname, prov = spec["provider"], cfg["providers"][spec["provider"]]
+    entry = prov.get("tiers", {}).get(spec["tier"]) if spec["tier"] else None
+    if not (entry or {}).get("headless") and (spec["fixed"] or not prov.get("headless")):
+        print(f"error: {name} has no headless command (a router tier, or provider {pname} has no `headless` in the config): "
+              "it can only run in a Herdr terminal", file=sys.stderr)
+        return 2
+    brief = Path(opts["brief"]).expanduser()
+    try:
+        brief_text = brief.read_text()
+    except OSError as err:
+        print(f"error: cannot read the brief: {err}", file=sys.stderr)
+        return 2
+    cwd = Path(opts.get("cwd", ".")).expanduser().resolve()
+    if not cwd.is_dir():
+        print(f"error: --cwd {cwd} is not a directory", file=sys.stderr)
+        return 2
+    out = Path(opts["out"]).expanduser() if "out" in opts else brief.with_name(brief.stem + ".out.md")
+    out, log = out.resolve(), out.resolve().with_name(out.name + ".log")
+    preamble = (SKILL / "templates" / "_direct.md").read_text().strip()
+    argv, env_add, unset = headless_argv(pname, prov, entry, spec["model"], spec["effort"], f"{preamble}\n\nThe brief:\n\n{brief_text}")
+    if not shutil.which(argv[0] if argv else ""):
+        print(f"error: {argv[0] if argv else prov.get('cli')} is not installed", file=sys.stderr)
+        return 2
+    env = {k: v for k, v in os.environ.items() if k not in unset}
+    env.update(env_add)
+    write_settings({"providers": {pname: prov}})
+    try:
+        mark_usage(pname, prov)
+    except Exception:  # noqa: BLE001 - no usage mark must not stop the run
+        pass
+    started, timed_out = time.time(), False
+    try:
+        proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, errors="replace", start_new_session=True)
+    except OSError as err:
+        print(f"error: cannot start {argv[0]}: {err}", file=sys.stderr)
+        return 2
+    try:
+        stdout, stderr = proc.communicate(timeout=minutes * 60)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        try:
+            stdout, stderr = proc.communicate(timeout=15)
+        except subprocess.TimeoutExpired:  # a grandchild outside the process group still holds the pipes
+            stdout, stderr = "", ""
+    code = 124 if timed_out else proc.returncode
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(answer_of(argv, stdout or ""))
+    log.write_text(stderr or "")
+    result = {"template": name, "provider": pname, "model": spec["model"], "effort": spec["effort"], "exit": code,
+              "out": str(out), "log": str(log), "seconds": round(time.time() - started, 1),
+              "usage": run_usage(pname, prov, full_model_id(prov, spec["model"], spec["effort"]), (stdout or "") + (stderr or ""))}
+    if timed_out:
+        result["timeout"] = True
+    print(json.dumps(result))
+    return code
 
 
 def reading_text(reading):
@@ -1414,13 +1678,14 @@ def main(argv, today=None):
         for line in auto_account_templates(effective_config()):
             print(f"auto accounts: {line}", file=sys.stderr)
     if cmd == "pick" and args:
-        order = ORDER.get(args[0]) or [s.strip() for s in args[0].split(",") if s.strip()]
+        order = ORDER.get(args[0]) or [canon_template(s.strip()) for s in args[0].split(",") if s.strip()]
         absent = not_offered()
         cfg = effective_config()
         for name in order:
             if name in absent:
                 print(f"skipped {name}: its model is not offered (last `helpers.py models`)", file=sys.stderr)
                 continue
+            ensure_template(cfg, name)
             if command_of(name) is None:
                 print(f"skipped {name}: no template named {name} (pick takes template names such as kiro-standard,agy-standard)", file=sys.stderr)
                 continue
@@ -1487,6 +1752,8 @@ def main(argv, today=None):
         return custom_cmd(args)
     if cmd == "models":
         return models_cmd(args, today)
+    if cmd == "run":
+        return run_cmd(args)
     print(__doc__)
     return 2
 
