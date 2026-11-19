@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Scripted evals for herdr-delegate (also account_cases.py, auto_account_cases.py, render_cases.py): prompt detection on real Copilot screens (captured 2026-11-01), usage read from Kiro and Copilot screens (2026-11-08).
+"""Scripted evals for herdr-delegate (also account_cases.py, auto_account_cases.py, render_cases.py, direct_cases.py): prompt detection on real Copilot screens (captured 2026-11-01), usage read from Kiro and Copilot screens (2026-11-08).
 
 Exit 0 when every check passes, 1 otherwise.
 """
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="herdr-delegate-run-")  # pick may write a missing template: never the real config
 import helpers  # noqa: E402
 
 CASES = [
@@ -26,15 +29,15 @@ for name, want in CASES:
     failures += not ok
     print(f"{'OK  ' if ok else 'FAIL'} {name}: {got if not ok else 'detected as expected'}")
 
-# pick order: argon prefers agy over Copilot (Copilot's argon model falls back to Sonnet).
+# pick order: the second-opinion tier (old name argon, still accepted) prefers agy over Copilot (Copilot's Gemini model falls back to Sonnet).
 helpers.command_of = lambda name: "sh"
 order = helpers.ORDER["argon"]
-ok = order[0] == "agy-argon" and order.index("agy-argon") < order.index("copilot-argon")
+ok = order[0] == "agy-second" and order.index("agy-second") < order.index("copilot-second")
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} pick argon order: {order}")
 import datetime as _dt
 picked = [n for n in order if helpers.usable(n, {}, _dt.date(2026, 11, 6))][0]
-ok = picked == "agy-argon" and [n for n in order if helpers.usable(n, {"agy": "login"}, _dt.date(2026, 11, 6))] == ["copilot-argon"]
+ok = picked == "agy-second" and [n for n in order if helpers.usable(n, {"agy": "login"}, _dt.date(2026, 11, 6))] == ["copilot-second"]
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} pick argon takes agy, falls to copilot when agy is out")
 # A login mark clears itself once the provider reports a login (O11); a failed check keeps it.
@@ -54,12 +57,12 @@ print(f"{'OK  ' if sub.returncode == 0 else 'FAIL'} render_cases.py: {tail}")
 if sub.returncode != 0:
     print("\n".join(l for l in sub.stdout.splitlines() if l.startswith("FAIL")))
 # pick skips a template whose model the cache says is not offered (O7).
-helpers.not_offered = lambda: {"agy-argon"}
+helpers.not_offered = lambda: {"agy-second"}
 import io as _io, contextlib as _cl
 out = _io.StringIO()
 with _cl.redirect_stdout(out), _cl.redirect_stderr(_io.StringIO()):
-    rc = helpers.main(["pick", "agy-argon,copilot-argon"], _dt.date(2026, 11, 7))
-ok = rc == 0 and out.getvalue().strip() == "copilot-argon"
+    rc = helpers.main(["pick", "agy-second,copilot-second"], _dt.date(2026, 11, 7))
+ok = rc == 0 and out.getvalue().strip() == "copilot-second"
 failures += not ok
 print(f"{'OK  ' if ok else 'FAIL'} pick skips a template whose model is not offered: {out.getvalue().strip()}")
 # Copilot's path-access dialog (screen captured 2026-11-14, paths made generic) uses "enter select · esc cancel" (O10).
@@ -155,4 +158,11 @@ failures += auto.returncode != 0
 print(f"{'OK  ' if auto.returncode == 0 else 'FAIL'} auto_account_cases.py: {tail}")
 if auto.returncode != 0:
     print("\n".join(l for l in auto.stdout.splitlines() if l.startswith("FAIL")))
+# NEW/GONE models, the `second` tier and its argon alias, direct mode (`run`): own process, temp HOME/XDG, fake CLIs.
+direct = subprocess.run([sys.executable, str(HERE / "direct_cases.py")], capture_output=True, text=True)
+tail = direct.stdout.strip().splitlines()[-1] if direct.stdout.strip() else direct.stderr.strip()[-300:]
+failures += direct.returncode != 0
+print(f"{'OK  ' if direct.returncode == 0 else 'FAIL'} direct_cases.py: {tail}")
+if direct.returncode != 0:
+    print("\n".join(l for l in direct.stdout.splitlines() if l.startswith("FAIL")))
 sys.exit(1 if failures else 0)

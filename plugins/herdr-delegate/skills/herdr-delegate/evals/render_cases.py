@@ -39,6 +39,9 @@ AGY_LIST = (
     "claude-opus-5-6-high\tClaude Opus 5.6 (High)\n"
     "claude-sonnet-5-5-high\tClaude Sonnet 5.5 (High)\n"
     "claude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)\n"
+    "gemini-4-neon-high\tGemini 4 Neon (High)\n"
+    "gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)\n"
+    "gemini-5-neon-high\tGemini 5 Neon (High)\n"
 )
 ACP_MODELS = [
     {"modelId": "auto", "name": "Auto", "_meta": {"copilotEnablement": "enabled"}},
@@ -112,7 +115,7 @@ def command_line(name):
 
 # Fake agy output sanity (the shell quoting above is fiddly): it must list tab-separated rows.
 agy_rows = helpers.parse_agy(helpers.run_text([str(bindir / "agy"), "models"]))
-check("claude-opus-5-5-high" in agy_rows and len(agy_rows) == 8, "fake agy prints the canned list", str(agy_rows))
+check("claude-opus-5-5-high" in agy_rows and len(agy_rows) == 11, "fake agy prints the canned list", str(agy_rows))
 
 # --- render: expected commands, marker, check
 code, out, _ = run("render", "--check")
@@ -172,7 +175,7 @@ check(code == 1 and "unknown provider" in err, "set refuses an unknown provider"
 
 # --- models: parsing and isolation
 check(helpers.parse_kiro(KIRO_LIST) == ["auto", "claude-opus-5.5", "claude-sonnet-5.5", "claude-haiku-5.5", "claude-opus-6", "claude-opus-4.8", "glm-5"], "parse_kiro", str(helpers.parse_kiro(KIRO_LIST)))
-check(helpers.parse_agy(AGY_LIST)[:2] == ["gemini-3.8-flash-high", "gemini-3.8-flash-low"] and len(helpers.parse_agy(AGY_LIST)) == 8, "parse_agy skips the progress line")
+check(helpers.parse_agy(AGY_LIST)[:2] == ["gemini-3.8-flash-high", "gemini-3.8-flash-low"] and len(helpers.parse_agy(AGY_LIST)) == 11, "parse_agy skips the progress line")
 check(helpers.parse_acp(ACP_LINES) == ["auto", "claude-sonnet-5.5", "claude-opus-5.5", "gpt-6-luna"], "parse_acp keeps enabled models once", str(helpers.parse_acp(ACP_LINES)))
 cr = helpers.parse_kiro_credits(KIRO_LIST)
 check(set(cr) == set(helpers.parse_kiro(KIRO_LIST)) and all(isinstance(v, float) for v in cr.values()), "parse_kiro_credits", str(cr))
@@ -186,12 +189,12 @@ del os.environ["FAKE_COPILOT_FAIL"]
 code, out, _ = run("models", "copilot")
 cache = json.loads((tmp / "cfg" / "herdr-delegate" / "models.json").read_text())
 check(cache["copilot"]["models"] == ["auto", "claude-sonnet-5.5", "claude-opus-5.5", "gpt-6-luna"] and "error" not in cache["copilot"], "copilot models come from the ACP session/new answer", out)
-check("NOT OFFERED  copilot-argon: gemini-4-argon" in out, "a configured model that is not offered is reported", out)
+check("NOT OFFERED  copilot-second: gemini-4-argon" in out, "a configured model that is not offered is reported", out)
 
 # --- newer candidates
 code, out, _ = run("models")
 check("NEWER        kiro-deep: claude-opus-5.5 -> claude-opus-6" in out, "newer model in the same family (kiro)", out)
-check("NEWER        agy-deep: claude-opus-5-5 -> claude-opus-5-6" in out, "newer model in the same family (agy, level stripped from the id)", out)
+check("NEWER        agy-deep: gemini-4-neon -> gemini-5-neon" in out, "newer model in the same family (agy, level stripped from the id)", out)
 check("kiro-standard: claude-sonnet-5.5 ->" not in out and "kiro-light: claude-haiku-5.5 ->" not in out, "no false candidates", out)
 check(helpers.family_version("claude-opus-5.5") == helpers.family_version("claude-opus-5-5") == ("claude-opus", (5, 5))
       and helpers.family_version("gemini-3.8-flash") == ("gemini-flash", (3, 8)), "family_version reads dotted and dashed versions")
@@ -206,7 +209,7 @@ check(code == 0 and "claude-sonnet-5.5" in command_line("kiro-standard"), "set w
 
 # --- status warning, cache staleness
 code, out, _ = run("status")
-check("WARNING: copilot-argon uses gemini-4-argon" in out, "status warns about a configured model no longer offered", out)
+check("WARNING: copilot-second uses gemini-4-argon" in out, "status warns about a configured model no longer offered", out)
 today = dt.date(2026, 11, 7)
 check(helpers.models_stale(None, today) and helpers.models_stale({"date": "2026-10-20", "models": ["a"]}, today)
       and not helpers.models_stale({"date": "2026-11-05", "models": ["a"]}, today)

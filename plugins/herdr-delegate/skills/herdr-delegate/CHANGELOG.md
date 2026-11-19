@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 0.15.0 (2026-11-19)
+- models reports NEW and GONE ids (any name), --json and --cached; the argon tier is now 'second' (alias kept); agy deep and second default to Gemini 4 Neon high; direct mode: helpers.py run runs a helper headless without Herdr, config shows direct per provider (contract read by model-router) (O33)
+
 ## 0.14.3 (2026-11-16)
 - agy_weekly runs agy by full path with no browser opener on its PATH (issue #89: a broken login opened a browser window on every pick/usage read); a failed read returns {} as documented instead of raising
 
