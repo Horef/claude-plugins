@@ -93,6 +93,8 @@ export type HelperState = {
   warnings: string[]
   /** What went wrong, in a line, for the pane. */
   message?: string
+  /** The grid row (`<provider>:<tier>`) whose change failed: the message is shown under it too. */
+  messageAt?: string
   busy?: boolean
   /** The marketplace this plugin came from, for the install line shown when helpers.py or hc is missing. */
   marketplace?: string

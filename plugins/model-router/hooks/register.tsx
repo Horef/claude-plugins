@@ -31,7 +31,8 @@ import {
   fmtTok,
   fmtUsd,
   genomeNote,
-  helperEfforts,
+  fitEffort,
+  modelEfforts,
   helperFacts,
   helperGain,
   helperItems,
@@ -1225,14 +1226,14 @@ async function changeHelperTier($: EngineInterface, provider: string, tier: stri
     try {
       const r = await runHelpers($, st.script, ['set', provider, tier, `model=${next.model}`, `effort=${next.effort}`])
       if (r.exitCode !== 0) {
-        await update($, helperCfg, x => ({ ...x, message: firstLine(r.stderr || r.stdout) || `helpers.py set failed (exit ${r.exitCode})` }))
+        await update($, helperCfg, x => ({ ...x, message: firstLine(r.stderr || r.stdout) || `helpers.py set failed (exit ${r.exitCode})`, messageAt: `${provider}:${tier}` }))
         return false
       }
     } catch (err) {
-      await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
+      await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}`, messageAt: `${provider}:${tier}` }))
       return false
     }
-    await update($, helperCfg, x => ({ ...x, message: undefined }))
+    await update($, helperCfg, x => ({ ...x, message: undefined, messageAt: undefined }))
     await loadHelperConfig($)
 
     return true
@@ -3191,23 +3192,33 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   const r = helperTierRung(hcfg, provider, tier)!
                   const d = helperDiffers(provider, tier)
 
+                  const efforts = modelEfforts(hcfg, hs.models, provider, r.model)
+
                   return (
-                    <Box key={`helper-tier:${provider}:${tier}`} flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={2}>
+                    <Box key={`helper-tier:${provider}:${tier}`} flexDirection="column" paddingLeft={2}>
+                    <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
                       <Text color={isTier(tier) ? TIER_COLOR[tier] : undefined} size="footnote">{tier}</Text>
                       {pick(
                         `helper-model:${provider}:${tier}`,
                         r.model,
                         offeredModels(hcfg, hs.models, provider).map(x => ({ value: x, label: x })),
-                        v => void changeHelperTier($, provider, tier, { model: v }),
+                        // A model that lacks the tier's level takes its nearest one (agy's gpt-oss-120b: medium only).
+                        v => void changeHelperTier($, provider, tier, { model: v, effort: fitEffort(hcfg, hs.models, provider, v, r.effort) }),
                       )}
                       {dot(`helper-model:${provider}:${tier}`, d.model)}
                       {pick(
                         `helper-effort:${provider}:${tier}`,
                         r.effort,
-                        helperEfforts(hcfg, provider, r.effort).map(x => ({ value: x, label: `${x} effort` })),
+                        // The levels this model comes at (agy lists them per model), and the current one if it is not among them.
+                        (efforts.includes(r.effort) ? efforts : [...efforts, r.effort]).map(x => ({ value: x, label: `${x} effort` })),
                         v => void changeHelperTier($, provider, tier, { effort: v }),
                       )}
                       {dot(`helper-effort:${provider}:${tier}`, d.effort)}
+                    </Box>
+                    {/* A change helpers.py refused: said under the row that asked for it, not only at the top of the group. */}
+                    {hs.message && hs.messageAt === `${provider}:${tier}` ? (
+                      <Text key={`helper-tier-error:${provider}:${tier}`} color="warning" size="footnote" wrap="wrap">{hs.message}</Text>
+                    ) : null}
                     </Box>
                   )
                 })}

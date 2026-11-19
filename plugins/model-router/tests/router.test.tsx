@@ -2,7 +2,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, applyPreset, presetOf, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
+import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, applyPreset, presetOf, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fitEffort, modelEfforts, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
 import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
@@ -2487,6 +2487,20 @@ test('helper ladder, advice, learned rungs and template names, worked out from t
   expect(baseModelId(cfg, 'agy', 'claude-sonnet-5-5-high')).toBe('claude-sonnet-5-5')
   expect(baseModelId(cfg, 'kiro', 'claude-haiku-5.5')).toBe('claude-haiku-5.5')
   expect(offeredModels(cfg, OFFERED as never, 'kiro', ['custom-x']).at(-1)).toBe('custom-x')
+
+  // Levels per model where the ids carry them (0.29): agy's gpt-oss-120b comes at medium only, so moving a high tier to it
+  // takes medium instead of a model and level helpers.py refuses (the stuck ⇄ button of 0.28).
+  const lv = { providers: { agy: { model_id: '{model}-{effort}', efforts: ['low', 'medium', 'high', 'xhigh'], tiers: {} }, kiro: { efforts: ['low', 'high'], tiers: {} } } } as never
+  const lvCache = { agy: { models: ['gpt-oss-120b-medium', 'claude-sonnet-5-5-low', 'claude-sonnet-5-5-high', 'gemini-4-neon-xhigh', 'gemini-4-neon-high'] } }
+  expect(modelEfforts(lv, lvCache, 'agy', 'gpt-oss-120b')).toEqual(['medium'])
+  expect(modelEfforts(lv, lvCache, 'agy', 'claude-sonnet-5-5')).toEqual(['low', 'high'])
+  expect(modelEfforts(lv, lvCache, 'agy', 'not-listed')).toEqual(['low', 'medium', 'high', 'xhigh'])
+  expect(modelEfforts(lv, lvCache, 'kiro', 'anything')).toEqual(['low', 'high'])
+  expect(fitEffort(lv, lvCache, 'agy', 'gpt-oss-120b', 'high')).toBe('medium')
+  expect(fitEffort(lv, lvCache, 'agy', 'gemini-4-neon', 'high')).toBe('high')
+  expect(fitEffort(lv, lvCache, 'agy', 'claude-sonnet-5-5', 'medium')).toBe('high')
+  expect(fitEffort(lv, lvCache, 'agy', 'claude-sonnet-5-5', 'xhigh')).toBe('high')
+  expect(fitEffort(lv, undefined, 'agy', 'gpt-oss-120b', 'high')).toBe('high')
   expect(modelWarnings('kiro  5 models\nNOT OFFERED  kiro-light: x\nNEWER        kiro-deep: a -> b\ncopilot  ERROR: boom\nevery configured model is offered')).toEqual(['NOT OFFERED kiro-light: x', 'NEWER kiro-deep: a -> b', 'copilot ERROR: boom'])
   expect(modelsChecked({ kiro: { checked: '2026-11-07' }, agy: { date: '2026-11-08' } })).toBe('2026-11-08')
   expect(modelsChecked(undefined)).toBeUndefined()
