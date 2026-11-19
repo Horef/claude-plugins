@@ -1,7 +1,7 @@
 // The state file the Herdr view reads: the plan and the money as short display strings, built by a pure function.
 import type { HelperTotals, Settings, Step, Totals } from '../types'
-import { fmtCost, fmtUsd, helperLine, helperName, helperTotalsOf, isDelegated, isHelperRun, leavesOf, rollupOf, runsOn, depthOf, pickSource } from './logic'
-import type { Learned } from './logic'
+import { cardModelLine, fmtCost, fmtUsd, helperLine, helperName, helperTotalsOf, isDelegated, isHelperRun, leavesOf, rollupOf, runsOn, depthOf, pickSource } from './logic'
+import type { Learned, NewModelsCard } from './logic'
 
 /** Days a state file is kept after its last write. */
 export const STATE_DAYS = 2
@@ -162,6 +162,16 @@ export const buildSnapshot = (i: SnapshotInput): RouterState => {
     news: [...(i.news ?? [])],
   }
 }
+
+/** The New models card as text lines, the same words as the pane: a header, a line per model, a line per proposal. */
+export const newsLines = (card: NewModelsCard | undefined): string[] =>
+  card
+    ? [
+        `New models (${card.models.length || card.proposals.length})${card.checked ? ` · checked ${card.checked}` : ''}`,
+        ...card.models.map(m => cardModelLine(m)),
+        ...card.proposals.map(p => `${p.tier} ${p.label}: ${p.from} → ${p.to} · ${p.why}`),
+      ]
+    : []
 
 /** The snapshot without its time: two snapshots with the same key need no second write. */
 export const snapshotKey = (s: RouterState) => JSON.stringify({ ...s, at: '' })

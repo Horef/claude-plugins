@@ -134,7 +134,7 @@ import {
 } from './logic'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
-import { buildSnapshot, chatKeyOf, oldStateFiles, snapshotKey } from './snapshot'
+import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from './snapshot'
 import type { RouterState } from './snapshot'
 import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
 
@@ -322,6 +322,7 @@ async function publishState($: EngineInterface) {
       main: await read($, main),
       planBaseCost: (await read($, planBase)).mainCost,
       totals: await read($, chatTotals),
+      news: newsLines(newModelsCard({ news: await read($, modelNews), notes: await read($, modelNotes), report: hs.report, cache: hs.models, cfg: hs.status === 'ready' ? hs.config : undefined, set, today: dayOf(new Date()) })),
     })
     const same = snapshotKey(snap)
     if (same === state.key) return

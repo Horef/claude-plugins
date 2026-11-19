@@ -42,7 +42,9 @@ export default class ModelRouter extends View {
     this.stamp = "";
     this.loaded = false;
     this.refresh(cx);
-    if (!checking()) cx.timer.every(2000, (cx) => this.refresh(cx));
+    // A tick every 2 s; a remote machine is asked only every fifth tick (an exec over ssh is heavy).
+    this.tick = 0;
+    if (!checking()) cx.timer.every(2000, (cx) => { if (!location().on || ++this.tick % 5 === 0) this.refresh(cx); });
   }
 
   refresh(cx) {
@@ -112,7 +114,7 @@ export default class ModelRouter extends View {
       .children(state.steps.map(stepRow))
       .child(section("This plan", state.cost.plan, "mr-cost-plan"))
       .child(section("This chat", state.cost.chat, "mr-cost-chat"))
-      .when(state.news.length > 0, (el) => el.child(section("New models", state.news, "mr-news")));
+      .when(state.news.length > 0, (el) => el.child(section(state.news[0], state.news.slice(1), "mr-news")));
 
     return root.child(head).child(body);
   }

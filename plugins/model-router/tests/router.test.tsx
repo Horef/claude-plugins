@@ -7,7 +7,7 @@ import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, set
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
 import { SEED_NOTES, checkNote, findNote, mergeNotes, parseNotesFile } from '../hooks/notes'
-import { buildSnapshot, chatKeyOf, oldStateFiles, snapshotKey } from '../hooks/snapshot'
+import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from '../hooks/snapshot'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -3390,6 +3390,7 @@ test('status and report carry the model check', async ($, on) => {
   expect(report).toContain(`- New in the last 14 days: agy:gemini-5-xenon (${ago(0)})`)
   expect(report).toContain(`- No longer offered in the last 14 days: kiro:glm-4 (since ${ago(3)})`)
   expect(report).toContain(`- Pending proposals: 0; model notes: ${SEED_NOTES.length}`)
+})
 
 test('Herdr view state: the snapshot as display strings, a stable chat key, files older than two days to delete', async () => {
   const done = { ...newStep('s1.a', 'Read the code', 'light', 'agent'), status: 'done' as const, cost: 0.02, mainCost: 0.1, verdict: 'ok' as const, why: 'fine' }
@@ -3417,6 +3418,10 @@ test('Herdr view state: the snapshot as display strings, a stable chat key, file
   // A later time alone is no change.
   expect(snapshotKey({ ...snap, at: '2030-01-01T00:00:00.000Z' })).toBe(snapshotKey(snap))
 
+  expect(newsLines(undefined)).toEqual([])
+  expect(
+    newsLines({ checked: '2026-11-19', models: [{ key: 'm', name: 'Sonnet 5.6', providers: 'Kiro', summary: 'faster' }, { key: 'n', name: 'glm-6', providers: 'Kiro' }], proposals: [{ key: 'p', tier: 'standard', label: 'Kiro', from: 'a/low', to: 'b/low', why: 'cheaper' }] }),
+  ).toEqual(['New models (2) · checked 2026-11-19', 'Sonnet 5.6 · Kiro · faster', 'glm-6 · Kiro · notes not written yet', 'standard Kiro: a/low → b/low · cheaper'])
   expect(chatKeyOf('a/b c..d', () => 'r')).toBe('abcd')
   expect(chatKeyOf(undefined, () => 'rand1')).toBe('rand1')
   const now = new Date('2026-11-19T08:00:00Z')
