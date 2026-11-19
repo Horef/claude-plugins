@@ -1,10 +1,11 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelsCache, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelNews, ModelNote, ModelsCache, ModelsReport, PlanNode, Proposal, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import { findNote, normId } from './notes'
 import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.23.0'
+export const VERSION = '0.25.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -1381,6 +1382,8 @@ export type ReportInput = {
   history: number
   lifetime: { steps: number; plans: number; helperSteps: number; fallbacks?: number; since?: string }
   events: readonly string[]
+  /** The model check: see `modelCheckLines`. */
+  models?: ReturnType<typeof modelCheckLines>
 }
 
 export const reportMarkdown = (r: ReportInput) => {
@@ -1415,6 +1418,17 @@ export const reportMarkdown = (r: ReportInput) => {
     '',
     ...TIER_ORDER.map(t => `- ${t} order: ${helperList(r.set, t).join(', ') || 'none'}`),
     '',
+    ...(r.models
+      ? [
+          '## Model check',
+          '',
+          `- Models ${r.models.checked}`,
+          `- New in the last 14 days: ${r.models.new}`,
+          `- No longer offered in the last 14 days: ${r.models.gone}`,
+          `- Pending proposals: ${r.models.proposals}; model notes: ${r.models.notes}`,
+          '',
+        ]
+      : []),
     `## Last ${r.events.length} log events`,
     '',
     '```',
@@ -1425,3 +1439,255 @@ export const reportMarkdown = (r: ReportInput) => {
 
   return lines.join('\n')
 }
+
+// --- New models: the report, what is new, the proposals and the card --------------------------------------
+
+/** The day as YYYY-MM-DD, in local time. */
+export const dayOf = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+
+const NEW_DAYS = 14
+const STALE_DAYS = 7
+
+/** Whole days from one YYYY-MM-DD to another (negative when `to` is earlier); NaN for something that is not a day. */
+export const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000)
+
+const rows = <T>(v: unknown, ok: (x: Record<string, unknown>) => boolean): T[] => (Array.isArray(v) ? (v.filter(x => x && typeof x === 'object' && ok(x as Record<string, unknown>)) as T[]) : [])
+const str = (v: unknown) => typeof v === 'string' && v !== ''
+
+/** `helpers.py models --json`'s one JSON object, else nothing (an older helpers.py ignores the flag and prints text). */
+export const parseModelsReport = (text: string): ModelsReport | undefined => {
+  try {
+    const v = JSON.parse(text) as Record<string, unknown> | null
+    if (!v || typeof v !== 'object' || Array.isArray(v) || !v.providers || typeof v.providers !== 'object') return undefined
+
+    return {
+      providers: v.providers as ModelsReport['providers'],
+      not_offered: rows(v.not_offered, x => str(x.template) && str(x.model)),
+      newer: rows(v.newer, x => str(x.template) && str(x.model) && Array.isArray(x.candidates)),
+      new: rows(v.new, x => str(x.provider) && str(x.model) && str(x.first_seen)),
+      gone: rows(v.gone, x => str(x.provider) && str(x.model) && str(x.since)),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/** The herdr-delegate version a helpers.py path sits under (`.../herdr-delegate/0.15.0/skills/...`), or nothing for a path set by hand. */
+export const scriptVersion = (script: string | undefined) => /herdr-delegate[\\/](\d+(?:\.\d+)*)[\\/]skills/.exec(script ?? '')?.[1]
+
+/** Whether this helpers.py can print `models --json` (0.15.0 or later; a path whose version is unknown is tried). */
+export const hasModelsJson = (script: string | undefined) => {
+  const v = scriptVersion(script)
+
+  return v === undefined || compareVersions(v, '0.15.0') >= 0
+}
+
+/** Providers whose model list is missing or older than 7 days: installed CLIs, not this account, not another Claude account. */
+export const staleProviders = (cfg: HelperConfig | undefined, report: ModelsReport | undefined, cache: ModelsCache | undefined, today: string) =>
+  Object.entries(cfg?.providers ?? {})
+    .filter(([, p]) => p.cli_found !== false && !p.self && p.kind !== 'claude')
+    .map(([name]) => name)
+    .filter(name => {
+      const p = report?.providers[name]
+      const date = p?.date ?? cache?.[name]?.date
+      // A list that failed today (a CLI logged out) is not asked for again until tomorrow, as helpers.py does.
+      if ((p?.checked ?? cache?.[name]?.checked) === today) return false
+      const age = typeof date === 'string' ? daysBetween(date, today) : NaN
+
+      return !(age <= STALE_DAYS)
+    })
+
+/** The day a report's providers were last listed (the latest), or nothing. */
+export const reportChecked = (report: ModelsReport | undefined) =>
+  Object.values(report?.providers ?? {})
+    .map(p => p?.date)
+    .filter((d): d is string => typeof d === 'string')
+    .sort()
+    .at(-1)
+
+const stringsOf = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+
+/** `proposalKey`: what makes two proposals the same. */
+export const proposalKey = (p: Pick<Proposal, 'provider' | 'tier' | 'model' | 'effort'>) => `${p.provider}|${p.tier}|${p.model}|${p.effort}`
+
+/** The remembered news as stored, with anything missing or malformed made empty. */
+export const asModelNews = (v: unknown): ModelNews => {
+  const x = (v && typeof v === 'object' ? v : {}) as Partial<ModelNews>
+  const seen = Object.fromEntries(Object.entries(x.seen && typeof x.seen === 'object' ? x.seen : {}).filter(([, d]) => typeof d === 'string')) as Record<string, string>
+  const proposals = (Array.isArray(x.proposals) ? x.proposals : []).filter(
+    (p): p is Proposal => !!p && typeof p === 'object' && str(p.provider) && str(p.tier) && str(p.model) && str(p.effort) && typeof p.why === 'string',
+  )
+
+  return { seen, asked: stringsOf(x.asked).slice(-200), proposals: proposals.map(p => ({ ...p, key: proposalKey(p), at: str(p.at) ? p.at : '' })).slice(-20), dismissed: stringsOf(x.dismissed).slice(-200) }
+}
+
+/** Records models of a report as first seen (the earliest day wins); returns the news changed, or the same object when nothing was new. */
+export const notedNew = (news: ModelNews, found: readonly { provider: string; model: string; first_seen: string }[]): ModelNews => {
+  const seen = { ...news.seen }
+  let changed = false
+  for (const f of found) {
+    const key = `${f.provider}:${f.model}`
+    if (seen[key] === undefined || seen[key]! > f.first_seen) {
+      seen[key] = f.first_seen
+      changed = true
+    }
+  }
+
+  return changed ? { ...news, seen } : news
+}
+
+export type NewModel = { provider: string; model: string; first: string }
+
+/** The models first seen in the last 14 days, newest first. */
+export const newModels = (news: ModelNews, today: string): NewModel[] =>
+  Object.entries(news.seen)
+    .map(([key, first]) => ({ provider: key.slice(0, key.indexOf(':')), model: key.slice(key.indexOf(':') + 1), first }))
+    .filter(m => m.provider && m.model && daysBetween(m.first, today) <= NEW_DAYS && daysBetween(m.first, today) >= -1)
+    .sort((a, b) => b.first.localeCompare(a.first) || a.model.localeCompare(b.model))
+
+/** The configured tiers whose model is no longer offered: `not_offered` of the report, as `template: model`. */
+export const goneConfigured = (report: ModelsReport | undefined) => (report?.not_offered ?? []).map(r => ({ provider: r.template.split('-')[0]!, template: r.template, model: r.model }))
+
+/** The models to ask the main agent about now: new ones with no note and not asked before, and configured models no longer offered not asked about. */
+export const toAsk = (news: ModelNews, notes: Record<string, ModelNote>, report: ModelsReport | undefined, today: string) => ({
+  fresh: newModels(news, today).filter(m => !findNote(notes, m.model) && !news.asked.includes(`${m.provider}:${m.model}`)),
+  gone: goneConfigured(report).filter(g => !news.asked.includes(`gone:${g.provider}:${g.model}`)),
+})
+
+/** The router note that asks the main agent for notes and proposals. `label` names a provider. */
+export const modelsAskNote = (a: ReturnType<typeof toAsk>, tool: string, label: (provider: string) => string) => {
+  const parts = [`New models offered: ${a.fresh.map(m => `${label(m.provider)} ${m.model} (first seen ${m.first})`).join(', ') || 'none'}`]
+  if (a.gone.length) parts.push(`no longer offered: ${a.gone.map(g => `${label(g.provider)} ${g.model}, used by ${g.template}`).join('; ')}`)
+
+  return `${parts.join('; ')}. When the current task is finished (do not interrupt it), offer the person to look them up: release, benchmarks, strengths, weaknesses, which tier and level each fits, sources (free JSON catalogues: https://openrouter.ai/api/v1/models, https://models.dev/api.json; the provider's changelog). A light or standard subagent step is enough. Then call ${tool} with models: {notes: [...], proposals: [...]}. Propose a change only where the new model is clearly better or cheaper for that tier, with a one-line reason.`
+}
+
+export type ProposalContext = { cfg: HelperConfig | undefined; cache: ModelsCache | undefined; set: Settings; news: ModelNews; today: string }
+
+/** The proposals the main agent sent: those that can be stored, and a line for each that cannot. */
+export const checkProposals = (raw: unknown, c: ProposalContext): { ok: Proposal[]; skipped: string[] } => {
+  const ok: Proposal[] = []
+  const skipped: string[] = []
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const x = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
+    const [provider, tier, model, effort, why] = ['provider', 'tier', 'model', 'effort', 'why'].map(k => (typeof x[k] === 'string' ? (x[k] as string).trim() : ''))
+    const label = `${provider || '?'} ${tier || '?'} ${model || '?'}`
+    if (!provider || !tier || !model || !effort || !why) {
+      skipped.push(`proposal ${label}: provider, tier, model, effort and why are all needed`)
+      continue
+    }
+    let chosen = model
+    if (provider === 'claude') {
+      if (!isTier(tier)) {
+        skipped.push(`proposal ${label}: claude has the tiers light, standard and deep`)
+        continue
+      }
+      chosen = modelOf(model, c.set) ?? model
+      if (!knownModels(c.set).includes(chosen)) {
+        skipped.push(`proposal ${label}: ${model} is not a Claude model the router knows`)
+        continue
+      }
+      if (!EFFORTS.includes(effort as Effort)) {
+        skipped.push(`proposal ${label}: effort ${effort} is not one of ${EFFORTS.join(', ')}`)
+        continue
+      }
+      if (c.set.tiers[tier].model === chosen && c.set.tiers[tier].effort === effort) {
+        skipped.push(`proposal ${label}: the tier has that already`)
+        continue
+      }
+    } else {
+      const prov = c.cfg?.providers[provider]
+      if (!c.cfg || !prov) {
+        skipped.push(`proposal ${label}: ${provider} is not a helper provider in the config`)
+        continue
+      }
+      if (!helperTierNames(c.cfg, provider).includes(tier)) {
+        skipped.push(`proposal ${label}: ${provider} has the tiers ${helperTierNames(c.cfg, provider).join(', ') || 'none'}`)
+        continue
+      }
+      const offered = offeredModels(c.cfg, c.cache, provider)
+      const hit = offered.find(m => m === model) ?? offered.find(m => normId(m) === normId(model))
+      if (!hit) {
+        skipped.push(`proposal ${label}: ${provider} does not offer ${model}`)
+        continue
+      }
+      chosen = hit
+      if (!helperEfforts(c.cfg, provider).includes(effort)) {
+        skipped.push(`proposal ${label}: ${provider}'s levels are ${helperEfforts(c.cfg, provider).join(', ')}`)
+        continue
+      }
+      const now = helperTierRung(c.cfg, provider, tier)
+      if (now?.model === chosen && now.effort === effort) {
+        skipped.push(`proposal ${label}: the tier has that already`)
+        continue
+      }
+    }
+    const p: Proposal = { key: '', provider, tier, model: chosen, effort, why: why.replace(/\s+/g, ' ').slice(0, 200), ...(typeof x.source === 'string' && /^https?:\/\//i.test(x.source) ? { source: x.source.slice(0, 300) } : {}), at: c.today }
+    p.key = proposalKey(p)
+    if (c.news.dismissed.includes(p.key)) {
+      skipped.push(`proposal ${label}: dismissed by the person before; not stored again`)
+      continue
+    }
+    if (c.news.proposals.some(q => q.key === p.key) || ok.some(q => q.key === p.key)) {
+      skipped.push(`proposal ${label}: already pending`)
+      continue
+    }
+    ok.push(p)
+  }
+
+  return { ok, skipped }
+}
+
+export type CardModel = { key: string; name: string; providers: string; released?: string; summary?: string; note?: ModelNote }
+export type CardProposal = { key: string; tier: string; label: string; from: string; to: string; why: string; source?: string }
+export type NewModelsCard = { checked?: string; models: CardModel[]; proposals: CardProposal[] }
+
+/** What the New models card shows, or nothing when no proposal is pending and every new model has a note. */
+export const newModelsCard = (i: { news: ModelNews; notes: Record<string, ModelNote>; report: ModelsReport | undefined; cache: ModelsCache | undefined; cfg: HelperConfig | undefined; set: Settings; today: string }): NewModelsCard | undefined => {
+  const byModel = new Map<string, NewModel[]>()
+  for (const m of newModels(i.news, i.today)) byModel.set(normId(m.model), [...(byModel.get(normId(m.model)) ?? []), m])
+  const models: CardModel[] = [...byModel.values()].map(list => {
+    const note = findNote(i.notes, list[0]!.model)
+
+    return { key: normId(list[0]!.model), name: note?.name ?? list[0]!.model, providers: [...new Set(list.map(m => providerLabel(m.provider)))].join(', '), ...(note?.released ? { released: note.released } : {}), ...(note ? { summary: note.summary, note } : {}) }
+  })
+  const proposals = i.news.proposals.flatMap((p): CardProposal[] => {
+    const now = p.provider === 'claude' ? i.set.tiers[p.tier as Tier] : helperTierRung(i.cfg, p.provider, p.tier)
+    // A change the person made in the meantime that already matches is no proposal any more.
+    if (p.provider !== 'claude' && !now) return []
+    if (now && now.model === p.model && now.effort === p.effort) return []
+
+    return [{ key: p.key, tier: p.tier, label: providerLabel(p.provider), from: now ? `${now.model}/${now.effort}` : '?', to: `${p.model}/${p.effort}`, why: p.why, ...(p.source ? { source: p.source } : {}) }]
+  })
+  if (proposals.length === 0 && !models.some(m => !m.note)) return undefined
+
+  return { checked: reportChecked(i.report) ?? modelsChecked(i.cache), models, proposals }
+}
+
+/** One line for a new model on the card; `max` cuts the summary where the view is narrow. */
+export const cardModelLine = (m: CardModel, max?: number) => {
+  const summary = m.summary ? (max && m.summary.length > max ? `${m.summary.slice(0, max - 1)}…` : m.summary) : 'notes not written yet'
+
+  return [m.name, m.providers, m.released, summary].filter(Boolean).join(' · ')
+}
+
+/** The lines the report and the status check give of the model check. */
+export const modelCheckLines = (i: { report: ModelsReport | undefined; cache: ModelsCache | undefined; news: ModelNews; notes: number; today: string }) => {
+  const dates = Object.entries(i.report?.providers ?? {}).map(([p, v]) => `${p} ${v?.date ?? 'never'}${v?.error ? ` (error: ${v.error})` : ''}`)
+  const fresh = newModels(i.news, i.today).map(m => `${m.provider}:${m.model} (${m.first})`)
+
+  return {
+    checked: i.report ? `checked ${reportChecked(i.report) ?? 'never'}${dates.length ? `: ${dates.join(', ')}` : ''}` : modelsChecked(i.cache) ? `checked ${modelsChecked(i.cache)} (no JSON report: older helpers.py, or not read yet)` : 'not checked',
+    new: fresh.length ? fresh.join(', ') : 'none',
+    gone: i.report?.gone.length ? i.report.gone.map(g => `${g.provider}:${g.model} (since ${g.since})`).join(', ') : 'none',
+    proposals: String(i.news.proposals.length),
+    notes: String(i.notes),
+  }
+}
+
+/** The lines the pane shows under Check models, taken from a report instead of the command's text (the same words). */
+export const reportWarnings = (r: ModelsReport) => [
+  ...Object.entries(r.providers).flatMap(([p, v]) => (v?.error ? [`${p} ERROR: ${v.error}`] : [])),
+  ...r.not_offered.map(x => `NOT OFFERED ${x.template}: ${x.model} (provider ${x.template.split('-')[0]}); change it with: helpers.py set`),
+  ...r.newer.map(x => `NEWER ${x.template}: ${x.model} -> ${x.candidates.join(', ')}`),
+]

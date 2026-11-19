@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.25.0 (2026-11-19)
+- new and gone models noticed by themselves (helpers.py models --cached/--json, a weekly background check, new Claude model ids); model notes (seed plus ~/.config/model-router/model-notes.json); the plan tool's models input for notes and proposals; a New models card with Apply and Dismiss; VERSION constant follows the plugin again
+
 ## 0.24.0 (2026-11-19)
 - helper health line and checks; helper mode Herdr, direct (helpers.py run, herdr-delegate 0.15) or none, never offered when they cannot run; the helper rule reaches a chat when helpers change mid-chat; cut-short verdict left out of advice and auto mode; fallback reasons; empty states; JSONL log and /router report (O3, O4, O5)
 
