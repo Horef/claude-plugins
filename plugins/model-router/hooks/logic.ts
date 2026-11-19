@@ -284,11 +284,18 @@ export const healthChecks = ({ set, st, rules }: HealthInput): Check[] => {
   const hc = st.hc === true
   const terminal = st.terminal === true
   const mode = helperModeOf(run, { hc, terminal, direct })
+  // In auto mode a missing Herdr is no failure while direct mode runs helpers instead; with neither, the fixes name both ways.
+  const instead = run === 'auto' && mode === 'direct'
+  const orDirect = run === 'auto' ? ', or update herdr-delegate to 0.15+ for direct mode.' : ', or use direct mode.'
   if (run === 'direct') {
     skip('hc', "Herdr's hc: not used in direct mode")
     skip('terminal', 'Herdr terminal: not used in direct mode')
-  } else if (add('hc', hc, "Herdr's hc found", "Herdr's hc not found on your PATH", 'Install Herdr and put hc on your PATH, or use direct mode.')) {
-    add('terminal', terminal, 'This chat is inside a Herdr terminal', 'This chat is not inside a Herdr terminal', 'Start Claude from a Herdr terminal, or use direct mode.')
+  } else if (!hc && instead) {
+    skip('hc', "Herdr's hc not found: direct mode runs helpers instead")
+    skip('terminal', 'Not inside a Herdr terminal: direct mode runs helpers instead')
+  } else if (add('hc', hc, "Herdr's hc found", "Herdr's hc not found on your PATH", `Install Herdr and put hc on your PATH${orDirect}`)) {
+    if (!terminal && instead) skip('terminal', 'Not inside a Herdr terminal: direct mode runs helpers instead')
+    else add('terminal', terminal, 'This chat is inside a Herdr terminal', 'This chat is not inside a Herdr terminal', `Start Claude from a Herdr terminal${orDirect}`)
   } else skip('terminal', 'Herdr terminal: needs hc')
   if (run === 'herdr') skip('direct', 'Direct mode: off (Settings → Helpers → Run helpers)')
   else if (mode === 'herdr') skip('direct', 'Direct mode: not needed inside Herdr')
@@ -1286,7 +1293,8 @@ export const healthLine = (set: Settings, checks: readonly Check[], status: Help
   const mode = helperMode()
   if (mode === 'herdr') return { ok: true, text: `✓ Router on · helpers: Herdr${providers.length ? ` (${providers.join(', ')})` : ''}` }
   if (mode === 'direct') {
-    const why = set.helpers.run === 'direct' ? 'set in Settings' : checks.some(c => c.id === 'hc' && c.state === 'fail') ? "no Herdr's hc" : 'no Herdr terminal'
+    // The reason is what is missing, whatever state its check shows (in auto mode a missing Herdr is a skip, not a failure).
+    const why = set.helpers.run === 'direct' ? 'set in Settings' : checks.some(c => c.id === 'hc' && c.state !== 'ok') ? "no Herdr's hc" : 'no Herdr terminal'
 
     return { ok: true, text: `✓ Router on · helpers: direct mode (${why})` }
   }

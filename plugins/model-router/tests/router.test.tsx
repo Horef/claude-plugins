@@ -2723,11 +2723,24 @@ test('health checks come in order, each failure with its fix, and what depends o
   // Not in a Herdr terminal, no direct provider: the terminal and direct mode fail, with fixes.
   const noTerm = healthChecks({ set: on, st: { status: 'ready', config: { providers: { kiro: { cli_found: true } } }, hc: true, terminal: false }, rules: false })
   expect(states(noTerm)).toMatchObject({ enabled: 'ok', script: 'ok', python: 'ok', cli: 'ok', hc: 'ok', terminal: 'fail', direct: 'fail', rules: 'skip' })
-  expect(noTerm.find(c => c.id === 'terminal')?.fix).toBe('Start Claude from a Herdr terminal, or use direct mode.')
+  // In auto mode the fixes name both ways out; with "Herdr only" they do not offer an update for direct mode.
+  expect(noTerm.find(c => c.id === 'terminal')?.fix).toBe('Start Claude from a Herdr terminal, or update herdr-delegate to 0.15+ for direct mode.')
+  const herdrOnly = mergeSettings({ helpers: { enabled: true, run: 'herdr' } })
+  expect(healthChecks({ set: herdrOnly, st: { status: 'ready', config: { providers: { kiro: {} } }, hc: true, terminal: false }, rules: false }).find(c => c.id === 'terminal')?.fix).toBe('Start Claude from a Herdr terminal, or use direct mode.')
 
-  // No hc: the terminal check is skipped; direct mode works, so the rules are checked.
+  // Auto mode running direct: a missing Herdr is no failure (no ✗ under a ✓ line), each check says direct mode runs instead.
   const direct = healthChecks({ set: on, st: { status: 'ready', config: cfg, hc: false, terminal: false }, rules: true })
-  expect(states(direct)).toMatchObject({ hc: 'fail', terminal: 'skip', direct: 'ok', rules: 'ok' })
+  expect(states(direct)).toMatchObject({ hc: 'skip', terminal: 'skip', direct: 'ok', rules: 'ok' })
+  expect(direct.find(c => c.id === 'hc')?.text).toBe("Herdr's hc not found: direct mode runs helpers instead")
+  expect(direct.find(c => c.id === 'terminal')?.text).toBe('Not inside a Herdr terminal: direct mode runs helpers instead')
+  const hcNoTerm = healthChecks({ set: on, st: { status: 'ready', config: cfg, hc: true, terminal: false }, rules: true })
+  expect(states(hcNoTerm)).toMatchObject({ hc: 'ok', terminal: 'skip', direct: 'ok' })
+  expect(hcNoTerm.filter(c => c.state === 'fail')).toEqual([])
+  expect(hcNoTerm.find(c => c.id === 'terminal')?.text).toBe('Not inside a Herdr terminal: direct mode runs helpers instead')
+  // The no-hc case with a mode of none still fails, with both ways in its fix.
+  const neither = healthChecks({ set: on, st: { status: 'ready', config: { providers: { kiro: {} } }, hc: false, terminal: false }, rules: false })
+  expect(states(neither)).toMatchObject({ hc: 'fail', terminal: 'skip', direct: 'fail' })
+  expect(neither.find(c => c.id === 'hc')?.fix).toBe('Install Herdr and put hc on your PATH, or update herdr-delegate to 0.15+ for direct mode.')
 
   // Inside Herdr direct mode does not matter; the setting "direct" skips the Herdr checks.
   expect(states(healthChecks({ set: on, st: { status: 'ready', config: cfg, hc: true, terminal: true }, rules: false }))).toMatchObject({ terminal: 'ok', direct: 'skip', rules: 'fail' })
@@ -2751,6 +2764,9 @@ test('the health line: quiet when helpers are off or can run, the first failing 
   expect(healthLine(on, [], 'ready', ['Kiro', 'Copilot']).text).toBe('✓ Router on · helpers: Herdr (Kiro, Copilot)')
   setHelperConfig(helperDefaults(), 'direct')
   expect(healthLine(on, checks, 'ready').text).toBe('✓ Router on · helpers: direct mode (no Herdr terminal)')
+  // The reason comes from what is missing, now that a missing hc is skipped, not failed, in direct mode.
+  const viaDirect = healthChecks({ set: on, st: { status: 'ready', config: { providers: { kiro: { direct: true } } }, hc: false, terminal: false }, rules: true })
+  expect(healthLine(on, viaDirect, 'ready').text).toBe("✓ Router on · helpers: direct mode (no Herdr's hc)")
   setHelperConfig(undefined)
 })
 
@@ -2803,11 +2819,11 @@ test('outside a Herdr terminal with no headless helper, helpers cannot run: no h
     const pane = await $.ui.mount({ ...PANE, surface } as never)
     expect(await pane.find(text(/^✗ Helpers can't run: this chat is not inside a Herdr terminal$/))).toBeTruthy()
     // The checks and their fixes are one click away.
-    expect(await pane.find(text(/^Start Claude from a Herdr terminal, or use direct mode\.$/))).toBeFalsy()
+    expect(await pane.find(text(/^Start Claude from a Herdr terminal, or update herdr-delegate to 0\.15\+ for direct mode\.$/))).toBeFalsy()
     await pane.press({ key: 'health-why' })
     expect(await pane.find(text(/^✓ herdr-delegate's helpers\.py found$/))).toBeTruthy()
     expect(await pane.find(text(/^✗ This chat is not inside a Herdr terminal$/))).toBeTruthy()
-    expect(await pane.find(text(/^Start Claude from a Herdr terminal, or use direct mode\.$/))).toBeTruthy()
+    expect(await pane.find(text(/^Start Claude from a Herdr terminal, or update herdr-delegate to 0\.15\+ for direct mode\.$/))).toBeTruthy()
     await pane.press({ key: 'health-why' })
     await pane.unmount()
   }
