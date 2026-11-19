@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   models: [],
   prices: {},
   log: true,
+  herdrView: true,
 }
 
 // Context limits offered for here-step effort, in tokens.

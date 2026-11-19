@@ -7,6 +7,7 @@ import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, set
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
 import { SEED_NOTES, checkNote, findNote, mergeNotes, parseNotesFile } from '../hooks/notes'
+import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from '../hooks/snapshot'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -3389,4 +3390,71 @@ test('status and report carry the model check', async ($, on) => {
   expect(report).toContain(`- New in the last 14 days: agy:gemini-5-xenon (${ago(0)})`)
   expect(report).toContain(`- No longer offered in the last 14 days: kiro:glm-4 (since ${ago(3)})`)
   expect(report).toContain(`- Pending proposals: 0; model notes: ${SEED_NOTES.length}`)
+})
+
+test('Herdr view state: the snapshot as display strings, a stable chat key, files older than two days to delete', async () => {
+  const done = { ...newStep('s1.a', 'Read the code', 'light', 'agent'), status: 'done' as const, cost: 0.02, mainCost: 0.1, verdict: 'ok' as const, why: 'fine' }
+  const list: Step[] = [
+    { ...newStep('s1', 'Review', 'standard', 'agent'), group: true, status: 'running' },
+    { ...done, parent: 's1' },
+    { ...newStep('s1.b', 'Write tests', 'deep', 'agent'), parent: 's1', status: 'running' },
+    newStep('s2', 'Summarise', 'light', 'here'),
+  ]
+  const snap = buildSnapshot({
+    router: '0.25.0', chat: 'abc', cwd: '/work/x', at: new Date('2026-11-19T08:00:00Z'), status: 'pending', health: { ok: true, text: 'Router on · helpers off' },
+    list, set: DEFAULT_SETTINGS, main: { cost: 1, model: 'opus' }, planBaseCost: 0.4,
+    totals: { mainCost: 1, agentCost: 0.02, mainEquivalent: 0.1, steps: 1, helper: EMPTY_HELPER },
+  })
+  expect(snap).toMatchObject({ version: 1, chat: 'abc', cwd: '/work/x', status: 'pending', statusText: 'awaiting your approval', news: [] })
+  expect(snap.steps.map(x => [x.id, x.depth, x.where, x.on])).toEqual([
+    ['s1', 0, '', 'rated standard · 1/2 done'],
+    ['s1.a', 1, 'subagent', 'haiku/low'],
+    ['s1.b', 1, 'subagent', 'opus/high'],
+    ['s2', 0, 'this chat', ''],
+  ])
+  expect(snap.steps[1]).toMatchObject({ status: 'done', tier: 'light', cost: '≈$0.02', verdict: 'verdict ok: fine' })
+  expect(snap.cost.plan[0]).toBe('Main chat · opus: ≈$0.60')
+  expect(snap.cost.plan[2]).toMatch(/^Saved: ≈\$0\.08 \(/)
+  // A later time alone is no change.
+  expect(snapshotKey({ ...snap, at: '2030-01-01T00:00:00.000Z' })).toBe(snapshotKey(snap))
+
+  expect(newsLines(undefined)).toEqual([])
+  expect(
+    newsLines({ checked: '2026-11-19', models: [{ key: 'm', name: 'Sonnet 5.6', providers: 'Kiro', summary: 'faster' }, { key: 'n', name: 'glm-6', providers: 'Kiro' }], proposals: [{ key: 'p', tier: 'standard', label: 'Kiro', from: 'a/low', to: 'b/low', why: 'cheaper' }] }),
+  ).toEqual(['New models (2) · checked 2026-11-19', 'Sonnet 5.6 · Kiro · faster', 'glm-6 · Kiro · notes not written yet', 'standard Kiro: a/low → b/low · cheaper'])
+  expect(chatKeyOf('a/b c..d', () => 'r')).toBe('abcd')
+  expect(chatKeyOf(undefined, () => 'rand1')).toBe('rand1')
+  const now = new Date('2026-11-19T08:00:00Z')
+  expect(
+    oldStateFiles([{ name: 'new.json', at: '2026-11-18T09:00:00Z' }, { name: 'old.json', at: '2026-11-16T09:00:00Z' }, { name: 'bad.json' }, { name: 'x y.json', at: '2020-01-01T00:00:00Z' }, { name: 'sample.txt' }], now),
+  ).toEqual(['old.json', 'bad.json'])
+})
+
+test('Herdr view state: written under <config>/model-router/state when ~/.config/herdr-app exists, with the plan, throttled to one write a second; old files removed at the start', async ($, on) => {
+  const files = new Map<string, string>([[`${HOME}/.config/model-router/state/gone.json`, JSON.stringify({ at: '2020-01-01T00:00:00Z' })]])
+  const rm: string[][] = []
+  const dir = `${HOME}/.config/model-router/state`
+  const setup = () => {
+    on('fs.exists', (_, e) => ({ value: (e as { path: string }).path === `${HOME}/.config/herdr-app` }))
+    on('fs.list', (_, e) => ((e as { path: string }).path === dir ? { value: [{ name: 'gone.json', kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false }] } : { deny: 'ENOENT' }))
+    on('process.run', (_, e) => {
+      rm.push((e as { argv: string[] }).argv)
+
+      return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+  }
+  await boot($, on, [], [], files, setup)
+  expect(rm.at(-1)).toEqual(['rm', '-f', '--', `${dir}/gone.json`])
+  const name = () => [...files.keys()].filter(k => k.startsWith(`${dir}/`) && !k.endsWith('gone.json'))
+  expect(name()).toHaveLength(1)
+  const read = () => JSON.parse(files.get(name()[0]!)!) as { chat: string; status: string; steps: { id: string; title: string }[] }
+  expect(read().steps).toEqual([])
+
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'a1', title: 'List files', tier: 'light', where: 'agent' }] } as never)
+  // Inside the second: not written yet; at its end the latest state is.
+  expect(read().steps).toEqual([])
+  await new Promise(r => setTimeout(r, 1300))
+  expect(read().status).toBe('approved')
+  expect(read().steps.map(x => x.id)).toEqual(['a1'])
+  expect(read().chat).toBe(name()[0]!.slice(dir.length + 1, -5))
 })

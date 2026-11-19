@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.26.0 (2026-11-19)
+- a state file per chat (~/.config/model-router/state) and a read-only Herdr mod (herdr/) that shows the plan, health, cost and new models in a docked right pane with normal scrolling, reading chats on remote machines through Herdr; Show in Herdr setting
+
 ## 0.25.0 (2026-11-19)
 - new and gone models noticed by themselves (helpers.py models --cached/--json, a weekly background check, new Claude model ids); model notes (seed plus ~/.config/model-router/model-notes.json); the plan tool's models input for notes and proposals; a New models card with Apply and Dismiss; VERSION constant follows the plugin again
 
