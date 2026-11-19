@@ -11,7 +11,8 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   skills: {},
   openPane: false,
-  compact: false,
+  expandAll: false,
+  openGroups: [],
   // Off by default: without it the rules, the plan tool and the pane are those of 0.9.3.
   helpers: {
     enabled: false,
@@ -38,6 +39,14 @@ export const DEFAULT_SETTINGS: Settings = {
   log: true,
   herdrView: true,
 }
+
+// Spend presets: the three tiers' model and effort in one choice (Settings → Basics). Balanced is the shipped default;
+// tiers that match none show as Custom.
+export const PRESETS: { id: string; label: string; tiers: Record<Tier, { model: Model; effort: Effort }> }[] = [
+  { id: 'thrifty', label: 'Thrifty', tiers: { light: { model: 'haiku', effort: 'low' }, standard: { model: 'sonnet', effort: 'low' }, deep: { model: 'opus', effort: 'medium' } } },
+  { id: 'balanced', label: 'Balanced', tiers: { light: { model: 'haiku', effort: 'low' }, standard: { model: 'sonnet', effort: 'medium' }, deep: { model: 'opus', effort: 'high' } } },
+  { id: 'best', label: 'Best quality', tiers: { light: { model: 'haiku', effort: 'high' }, standard: { model: 'sonnet', effort: 'high' }, deep: { model: 'opus', effort: 'high' } } },
+]
 
 // Context limits offered for here-step effort, in tokens.
 export const EFFORT_LIMITS = [20_000, 40_000, 80_000, 150_000]

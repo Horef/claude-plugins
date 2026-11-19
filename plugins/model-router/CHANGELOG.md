@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.27.0 (2026-11-19)
+- one pane layout on every surface (health, new models, plan, cost, footer; steps as two-line rows with details on click, Expand all replaces Minimal view); Settings as five Basics (Spend presets Thrifty/Balanced/Best quality) and seven closed groups with summaries; plain words (this chat, Claude agent, other subscription, effort) and a glossary; resets confirm
+
 ## 0.26.0 (2026-11-19)
 - a state file per chat (~/.config/model-router/state) and a read-only Herdr mod (herdr/) that shows the plan, health, cost and new models in a docked right pane with normal scrolling, reading chats on remote machines through Herdr; Show in Herdr setting
 
