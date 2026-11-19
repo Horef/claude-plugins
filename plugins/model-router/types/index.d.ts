@@ -193,6 +193,8 @@ export type Settings = {
   prices: Record<string, Price>
   /** Write the diagnostics log (~/.config/model-router/log/YYYY-MM-DD.jsonl). */
   log: boolean
+  /** Write the state file the Herdr view reads (~/.config/model-router/state/<chat>.json), when ~/.config/herdr-app exists. */
+  herdrView: boolean
 }
 
 export type HereEffortSettings = {

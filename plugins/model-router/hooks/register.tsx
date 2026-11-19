@@ -134,6 +134,8 @@ import {
 } from './logic'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
+import { buildSnapshot, chatKeyOf, oldStateFiles, snapshotKey } from './snapshot'
+import type { RouterState } from './snapshot'
 import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
 
 // --- State: the session's (atoms) and what is remembered across sessions ($.store) --
@@ -235,6 +237,100 @@ async function pruneLogs($: EngineInterface) {
     if (old.length) await $.process.run(['rm', '-f', '--', ...old.map(n => `${dir}/${n}`)], { timeoutMs: 10_000 })
   } catch (err) {
     await fault($, 'prune-logs', err)
+  }
+}
+
+// --- The state file for the Herdr view: <config base>/model-router/state/<chat>.json -------------------
+//
+// Short display strings of the plan and the money, so a Herdr mod can show them in a scrollable pane. Written only when
+// ~/.config/herdr-app exists (checked at the chat's start), at most once a second, and only when something changed.
+
+const chatKey = atom({ plugin: 'model-router', key: 'chatKey' } as const, '')
+const STATE_EVERY_MS = 1000
+const state = { on: false, cwd: '', last: 0, key: '', timer: false }
+
+const stateDir = async ($: EngineInterface) => {
+  const base = await configBase($)
+
+  return base ? `${base}/model-router/state` : undefined
+}
+
+/** At a chat's start: is Herdr here, which chat is this, and clear out files of chats older than two days. Never throws. */
+async function startState($: EngineInterface, e: { cwd?: string; sessionId?: unknown }) {
+  try {
+    state.on = false
+    state.last = 0
+    state.key = ''
+    state.cwd = e.cwd ?? ''
+    const base = await configBase($)
+    if (!base || !(await $.fs.exists(`${base}/herdr-app`))) return
+    state.on = true
+    if (!(await read($, chatKey))) {
+      const key = chatKeyOf(e.sessionId, () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`)
+      await update($, chatKey, () => key)
+    }
+    const dir = await stateDir($)
+    if (!dir) return
+    const names = (await $.fs.list(dir)).filter(x => x.kind === 'file').map(x => x.name)
+    const files = await Promise.all(names.map(async name => {
+      try {
+        return { name, at: (JSON.parse(String(await $.fs.read(`${dir}/${name}`))) as { at?: string }).at }
+      } catch {
+        return { name }
+      }
+    }))
+    const old = oldStateFiles(files, new Date())
+    if (old.length) await $.process.run(['rm', '-f', '--', ...old.map(n => `${dir}/${n}`)], { timeoutMs: 10_000 })
+  } catch (err) {
+    diag.lastError = `state: ${String(err).slice(0, 200)}`
+  }
+}
+
+/** Writes the state file when what it shows has changed: at most once a second (a change inside that second is written at its end). Never throws. */
+async function publishState($: EngineInterface) {
+  try {
+    if (!state.on || !(await read($, settings)).herdrView) return
+    const wait = state.last + STATE_EVERY_MS - Date.now()
+    if (wait > 0) {
+      if (!state.timer && typeof setTimeout === 'function') {
+        state.timer = true
+        setTimeout(() => {
+          state.timer = false
+          void publishState($)
+        }, wait)
+      }
+
+      return
+    }
+    const dir = await stateDir($)
+    const key = await read($, chatKey)
+    if (!dir || !key) return
+    const set = await read($, settings)
+    const hs = await read($, helperCfg)
+    const checks = healthChecks({ set, st: hs, rules: (await read($, delivery)).inChat && (await read($, toldHelpers)) === helperRuleSig(set) })
+    const health = healthLine(set, checks, hs.status, liveProviders(set))
+    const snap: RouterState = buildSnapshot({
+      router: VERSION,
+      chat: key,
+      cwd: state.cwd,
+      at: new Date(),
+      status: await read($, planStatus),
+      health: { ok: health.ok, text: health.text },
+      list: await read($, steps),
+      set,
+      learned: await learnedOf($),
+      main: await read($, main),
+      planBaseCost: (await read($, planBase)).mainCost,
+      totals: await read($, chatTotals),
+    })
+    const same = snapshotKey(snap)
+    if (same === state.key) return
+    state.key = same
+    state.last = Date.now()
+    // One line, so the Herdr view can read the newest files in one command, here or on another machine.
+    await $.fs.write(`${dir}/${key}.json`, `${JSON.stringify(snap)}\n`)
+  } catch (err) {
+    diag.lastError = `state: ${String(err).slice(0, 200)}`
   }
 }
 
@@ -612,6 +708,7 @@ async function summary($: EngineInterface) {
 
 async function refreshStatus($: EngineInterface) {
   $.ui.status(await summary($))
+  await publishState($)
 }
 
 /** Changes the plan's steps; a group's status follows its parts. */
@@ -2635,6 +2732,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             void editSettings($, s => ({ ...s, openPane: !s.openPane })),
             differs.openPane,
           )}
+          {switchRow('herdr-view', 'Show in Herdr', 'A scrollable view of the plan in Herdr (read-only), for plans too long for this pane. Writes ~/.config/model-router/state/ when ~/.config/herdr-app exists.', set.herdrView, () =>
+            void editSettings($, s => ({ ...s, herdrView: !s.herdrView })),
+            set.herdrView !== D.herdrView,
+          )}
 
           {group('Experiment', 'Here steps run on this chat\'s model; this tries lowering its thinking level for them instead.')}
           {switchRow(
@@ -3286,6 +3387,7 @@ export const register: Register = on => {
     await ready($)
     await logEvent($, 'start', { version: VERSION, surface: surfaceNow, model: (await read($, main)).model })
     await pruneLogs($)
+    await startState($, e as { cwd?: string; sessionId?: unknown })
     // The kinds the rules list are those of the history now, so the rules stay the same all chat.
     const kinds = kindsOf(await read($, history))
     await update($, ruleKinds, () => kinds)

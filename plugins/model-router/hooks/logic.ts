@@ -420,6 +420,7 @@ export const mergeSettings = (stored: Partial<Settings> | undefined): Settings =
   models: Array.isArray(stored?.models) ? stored.models.filter(m => typeof m === 'string' && !MODELS.includes(m)) : [],
   prices: { ...(stored?.prices && typeof stored.prices === 'object' ? stored.prices : {}) },
   log: stored?.log !== false,
+  herdrView: stored?.herdrView !== false,
 })
 
 // --- What the agent knows of each step ----------------------------------------------
