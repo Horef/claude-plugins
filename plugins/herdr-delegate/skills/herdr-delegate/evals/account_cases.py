@@ -91,7 +91,7 @@ view = cfg["providers"]["claudeuni"]
 check((view["kind"], view["order"], view["unit"], view["label"], view["cli_found"], view["self"]) == ("claude", 50, "% of 7d", "uni", True, False), "config exposes kind, order, unit, label, cli_found, self", str(view))
 check(cfg["providers"]["kiro"]["order"] == 10 and cfg["providers"]["codex"]["order"] == 30 and cfg["providers"]["agy"]["order"] == 40, "shipped orders")
 check(cfg["default_orders"]["standard"] == ["codex-standard", "claudeuni-standard"], "default orders: installed providers by order", str(cfg["default_orders"]))
-check(helpers.ORDER["argon"] == ["agy-argon", "copilot-argon"] and "copilot-fusion-max" not in helpers.ORDER["deep"], "argon puts agy first; fusion is in no tier")
+check(helpers.ORDER["argon"] == ["agy-second", "copilot-second"] == helpers.ORDER["second"] and "copilot-fusion-max" not in helpers.ORDER["deep"], "second (alias argon) puts agy first; fusion is in no tier")
 check(helpers.ORDER["fusion"] == ["copilot-fusion-max", "copilot-fusion-high"], "fusion is opt-in by group")
 
 # --- self-skip
