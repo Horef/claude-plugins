@@ -83,38 +83,50 @@ export default class ModelRouter extends View {
       return root.p(10).child(div().text_color(t.muted).child("No router state yet. Start a Claude Code chat with model-router 0.25 or later."));
     }
 
-    const head = v_flex().gap(2).p(10).border_b(1).border_color(t.border)
-      .child(div().font_semibold().text_color(t.foreground).child(`Model router · ${state.statusText}`))
-      .child(div().text_color(t.dim).truncate().child(`${where}${state.cwd ? ` · ${state.cwd}` : ""}`))
-      .child(div().text_color(state.health.ok ? t.muted : t.blocked).child(state.health.text));
+    // The same order and words as the pane in Claude Code: health line, plan header, rows of two lines, then cost.
+    const leaves = state.steps.filter((s) => !s.group);
+    const done = leaves.filter((s) => s.status === "done").length;
+    const planHead = state.steps.length === 0 ? "" :
+      `Plan · ${done} of ${leaves.length} done${state.status === "pending" ? " · awaiting your approval" : ""}`;
 
+    const head = v_flex().gap(2).p(10).border_b(1).border_color(t.border)
+      .child(div().text_color(state.health.ok ? t.foreground : t.blocked).child(state.health.text))
+      .child(div().text_color(t.dim).truncate().child(`${where}${state.cwd ? ` · ${state.cwd}` : ""}`))
+      .when(planHead !== "", (el) => el.child(div().pt(4).font_semibold().text_color(t.foreground).child(planHead)));
+
+    // Line 1: status, id, the title (wrapping). Line 2, quiet: level, where it runs, cost, verdict, kind.
     const stepRow = (s) => {
       const color = s.status === "done" ? t.muted : t.foreground;
-      const line = [s.where, s.on].filter(Boolean).join(" · ");
-      const extra = [s.cost, ...s.notes].filter(Boolean).join(" · ");
+      const facts = [s.where, s.on, s.cost, s.verdict, ...s.notes].filter(Boolean).join(" · ");
       return v_flex().id(`mr-step-${s.id}`).gap(1).pl(Math.min(s.depth, 3) * 12).py(4)
-        .child(h_flex().gap(6)
-          .child(div().text_color(s.status === "running" ? t.working : color).child(GLYPH[s.status] ?? "○"))
-          .child(div().text_color(tier[s.tier] ?? t.muted).child(s.id))
-          .child(div().flex_1().text_color(color).font_semibold().child(s.title)))
-        .child(h_flex().gap(6).pl(16)
-          .child(div().text_color(tier[s.tier] ?? t.muted).child(s.group ? "" : s.tier))
-          .child(div().flex_1().text_color(t.muted).child(line)))
-        .when(extra !== "", (el) => el.child(div().pl(16).text_color(t.dim).child(extra)))
-        .when(s.verdict !== "", (el) => el.child(div().pl(16).text_color(/weak/.test(s.verdict) ? t.blocked : t.muted).child(s.verdict)))
+        .child(h_flex().gap(6).items_start()
+          .child(div().flex_none().text_color(s.status === "running" ? t.working : color).child(GLYPH[s.status] ?? "○"))
+          .child(div().flex_none().text_color(tier[s.tier] ?? t.muted).child(s.id))
+          .child(div().flex_1().min_w_0().text_color(color).font_semibold().child(s.title)))
+        .child(h_flex().gap(6).pl(16).items_start()
+          .child(div().flex_none().text_color(tier[s.tier] ?? t.muted).child(s.group ? "" : s.tier))
+          .child(div().flex_1().min_w_0().text_color(t.muted).child(facts)))
         .when(s.fallback !== "", (el) => el.child(div().pl(16).text_color(t.blocked).child(s.fallback)));
     };
 
-    const section = (title, lines, key) => v_flex().id(key).gap(2).pt(8)
-      .child(div().text_color(t.dim).child(title))
-      .children(lines.map((l) => div().text_color(t.muted).child(l)));
+    // Cost: one line a scope, as the pane's cost line.
+    // Cost: the money on one line a scope, as the pane's cost line; the Off-Claude line under it.
+    const costLine = (title, lines, key) => {
+      const money = lines.filter((l) => !/^Off Claude/.test(l)), off = lines.filter((l) => /^Off Claude/.test(l));
+      return v_flex().id(key).pt(8)
+        .child(div().text_color(t.dim).child(title))
+        .child(div().text_color(t.muted).child(money.join(" · ")))
+        .children(off.map((l) => div().text_color(t.muted).child(l)));
+    };
 
     const body = v_flex().id("mr-body").flex_1().min_h(0).overflow_y_scrollbar().px(10).pb(10)
-      .when(state.steps.length === 0, (el) => el.child(div().pt(8).text_color(t.muted).child("No plan in this chat.")))
+      .when(state.news.length > 0, (el) => el.child(v_flex().id("mr-news").pt(8)
+        .child(div().text_color(t.foreground).child(state.news[0]))
+        .children(state.news.slice(1).map((l) => div().text_color(t.muted).child(l)))))
+      .when(state.steps.length === 0, (el) => el.child(div().pt(8).text_color(t.muted).child("No plan yet. Multi-step tasks show their steps here.")))
       .children(state.steps.map(stepRow))
-      .child(section("This plan", state.cost.plan, "mr-cost-plan"))
-      .child(section("This chat", state.cost.chat, "mr-cost-chat"))
-      .when(state.news.length > 0, (el) => el.child(section(state.news[0], state.news.slice(1), "mr-news")));
+      .child(costLine("This plan", state.cost.plan, "mr-cost-plan"))
+      .child(costLine("This chat", state.cost.chat, "mr-cost-chat"));
 
     return root.child(head).child(body);
   }
