@@ -4,6 +4,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
 import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
+import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -283,11 +284,13 @@ const boot = async (
   agents: { id: string; description: string }[] = [],
   files = new Map<string, string>(),
   setup?: () => void,
+  env: Record<string, string> = { HC_TERMINAL_ID: 'w1:t1' },
 ) => {
   asker = undefined
   const store = new Map<string, unknown>([['autoApprove', true], ...init])
-  // The settings mirror lives in a file under the home directory: here, a map of paths to text.
-  mock.env(on, { HOME: HOME })
+  // The settings mirror lives in a file under the home directory: here, a map of paths to text. By default this chat
+  // runs inside a Herdr terminal, as on the owner's machine.
+  mock.env(on, { HOME: HOME, ...env })
   on('fs.read', (_, e) => {
     const text = files.get((e as { path: string }).path)
 
@@ -315,7 +318,11 @@ const boot = async (
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('ui.status', () => ({ value: undefined }))
+  const statuses: (string | undefined)[] = []
+  on('ui.status', (_, e) => {
+    statuses.push((e as { text?: string }).text)
+    return { value: undefined }
+  })
   on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
   on('agent.list', () => ({ value: agents.map(a => ({ ...a, type: 'general-purpose', status: 'running' })) }))
   on('turn.step', async function* (_, e) {
@@ -347,7 +354,7 @@ const boot = async (
     return st.result
   }
 
-  return { store, registered, calls, rows, step, sent, files }
+  return { store, registered, calls, rows, step, sent, files, statuses }
 }
 
 const wheres = (r: Registered | undefined) => r?.inputSchema?.properties?.steps?.items?.properties?.where?.enum
@@ -786,7 +793,9 @@ test('moving or switching off a helper changes the order in the rules, one note 
   expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light')
   await $.turn.start({ text: 'second', turnId: 't1' })
   expect(lastRow(rows)).toContain('light: copilot-light,kiro-light;')
-  expect(lastRow(rows).match(/Helper orders changed/g)?.length).toBe(1)
+  expect(lastRow(rows).match(/Helpers changed/g)?.length).toBe(1)
+  // The note carries the whole helper rule, so the chat need not piece it together from rule 6.
+  expect(lastRow(rows)).toContain('this replaces rule 6: where = ')
 
   // Switching the helper back on puts it last; "Reset to default order" restores the defaults.
   await pane.press({ key: 'helper-on:light:agy-light' })
@@ -913,7 +922,7 @@ test('a plan nests three levels: ids extend the parent\'s, the tree is shown to 
   const level1 = tool.inputSchema.properties.steps.items.properties.parts.items.properties
   expect(level1.parts.items.properties.parts.items.properties.count).toBeTruthy()
   expect(tool.inputSchema.properties.done.items.anyOf[0]).toEqual({ type: 'string' })
-  expect(tool.inputSchema.properties.done.items.anyOf[1].properties.verdict.enum).toEqual(['ok', 'weak', 'overkill'])
+  expect(tool.inputSchema.properties.done.items.anyOf[1].properties.verdict.enum).toEqual(['ok', 'weak', 'overkill', 'cut-short'])
   expect(tool.inputSchema.properties.done.items.anyOf[1].properties.usage).toBeUndefined()
   expect(tool.inputSchema.properties.start).toBeUndefined()
 
@@ -1919,10 +1928,12 @@ const OFFERED = {
  * helpers.py as the router sees it: the installed skill's folders, its files, and the python runs, answered from a config the
  * `set` and `custom` commands change. `ran` holds every argv; `fail` makes a subcommand exit 1 with that stderr.
  */
-const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o: { present?: boolean; oldScript?: string; noHc?: boolean; noCli?: boolean } = {}) => {
+const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o: { present?: boolean; oldScript?: string; noHc?: boolean; noCli?: boolean; direct?: string[] } = {}) => {
   const present = o.present ?? true
   const cfg = helperDefaults()
   if (o.noCli) for (const p of Object.values(cfg.providers)) (p as { cli_found?: boolean }).cli_found = false
+  // herdr-delegate 0.15+ marks the providers it can run headless.
+  for (const name of o.direct ?? []) ((cfg.providers as Record<string, { direct?: boolean }>)[name]!).direct = true
   const ran: string[][] = []
   const hcRuns: string[][] = []
   const fail: Record<string, string> = {}
@@ -2120,9 +2131,9 @@ test('without Herdr\'s hc there are no helpers either: its own message, no helpe
   const files = new Map<string, string>()
   const world = helperWorld(on, files, { noHc: true })
   const { rows, registered } = await boot($, on, [HELPERS_ON], [], files, world.setup)
-  // hc was looked for; helpers.py was not run for a config.
+  // hc was looked for; helpers.py was run for its config (direct mode needs it), which offers no direct provider.
   expect(world.hcRuns[0]).toEqual(['hc', '--version'])
-  expect(world.ran).toEqual([])
+  expect(world.argsOf('config').length).toBe(1)
   expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
   for (const t of ['light', 'standard', 'deep'] as const) expect(helperList(mergeSettings({ helpers: { enabled: true } }), t)).toEqual([])
 
@@ -2673,4 +2684,318 @@ test('without a strange-loop genome file on this machine, advice queues no stran
   const res = await $.tool.call({ tool: PLAN, done: [{ id: 'r1', verdict: 'weak' }] } as never)
   expect(String(res.result)).not.toContain('strange-loop')
   expect(store.get('genomeNoted')).toBeUndefined()
+})
+
+
+// --- 0.24: helper mode and health, the log and the report, cut short, fallbacks, empty states -------------------
+
+const NO_TERMINAL: Record<string, string> = {}
+const logPath = () => `${HOME}/.config/model-router/log/${logFileName(new Date())}`
+const logEvents = (files: Map<string, string>) => (files.get(logPath()) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+
+test('the helper mode: Herdr inside a Herdr terminal, else direct when a provider runs headless and the setting allows it, else none', () => {
+  const f = (hc: boolean, terminal: boolean, direct: boolean) => ({ hc, terminal, direct })
+  expect(helperModeOf('auto', f(true, true, true))).toBe('herdr')
+  expect(helperModeOf('auto', f(true, false, true))).toBe('direct')
+  expect(helperModeOf('auto', f(false, false, true))).toBe('direct')
+  expect(helperModeOf('auto', f(true, false, false))).toBe('none')
+  expect(helperModeOf('herdr', f(true, false, true))).toBe('none')
+  expect(helperModeOf('herdr', f(true, true, false))).toBe('herdr')
+  expect(helperModeOf('direct', f(true, true, true))).toBe('direct')
+  expect(helperModeOf('direct', f(true, true, false))).toBe('none')
+})
+
+test('health checks come in order, each failure with its fix, and what depends on a failure is skipped', () => {
+  const on = mergeSettings({ helpers: { enabled: true } })
+  const states = (cs: { id: string; state: string }[]) => Object.fromEntries(cs.map(c => [c.id, c.state]))
+  const cfg = { providers: { kiro: { cli_found: true }, copilot: { cli_found: true, direct: true } } }
+
+  // Off: everything after the switch is skipped.
+  const off = healthChecks({ set: mergeSettings({}), st: { status: 'unknown' }, rules: false })
+  expect(off.map(c => c.id)).toEqual(['enabled', 'script', 'python', 'cli', 'hc', 'terminal', 'direct', 'rules'])
+  expect(states(off)).toEqual({ enabled: 'fail', script: 'skip', python: 'skip', cli: 'skip', hc: 'skip', terminal: 'skip', direct: 'skip', rules: 'skip' })
+
+  // No helpers.py: its fix names the install line with the marketplace.
+  const missing = healthChecks({ set: on, st: { status: 'missing', marketplace: 'mk' }, rules: false })
+  expect(missing.find(c => c.id === 'script')?.fix).toBe('Install the herdr-delegate plugin: /plugin install herdr-delegate@mk, then Look again.')
+  expect(states(missing).python).toBe('skip')
+
+  // Not in a Herdr terminal, no direct provider: the terminal and direct mode fail, with fixes.
+  const noTerm = healthChecks({ set: on, st: { status: 'ready', config: { providers: { kiro: { cli_found: true } } }, hc: true, terminal: false }, rules: false })
+  expect(states(noTerm)).toMatchObject({ enabled: 'ok', script: 'ok', python: 'ok', cli: 'ok', hc: 'ok', terminal: 'fail', direct: 'fail', rules: 'skip' })
+  expect(noTerm.find(c => c.id === 'terminal')?.fix).toBe('Start Claude from a Herdr terminal, or use direct mode.')
+
+  // No hc: the terminal check is skipped; direct mode works, so the rules are checked.
+  const direct = healthChecks({ set: on, st: { status: 'ready', config: cfg, hc: false, terminal: false }, rules: true })
+  expect(states(direct)).toMatchObject({ hc: 'fail', terminal: 'skip', direct: 'ok', rules: 'ok' })
+
+  // Inside Herdr direct mode does not matter; the setting "direct" skips the Herdr checks.
+  expect(states(healthChecks({ set: on, st: { status: 'ready', config: cfg, hc: true, terminal: true }, rules: false }))).toMatchObject({ terminal: 'ok', direct: 'skip', rules: 'fail' })
+  const onlyDirect = mergeSettings({ helpers: { enabled: true, run: 'direct' } })
+  expect(states(healthChecks({ set: onlyDirect, st: { status: 'ready', config: cfg, hc: false, terminal: false }, rules: true }))).toMatchObject({ hc: 'skip', terminal: 'skip', direct: 'ok' })
+
+  // A config with no installed CLI fails there, and the rest is skipped.
+  const noCli = healthChecks({ set: on, st: { status: 'ready', config: { providers: { kiro: { cli_found: false } } }, hc: true, terminal: true }, rules: false })
+  expect(states(noCli)).toMatchObject({ cli: 'fail', hc: 'skip', terminal: 'skip', direct: 'skip' })
+})
+
+test('the health line: quiet when helpers are off or can run, the first failing check when they cannot', () => {
+  setHelperConfig(undefined)
+  const on = mergeSettings({ helpers: { enabled: true } })
+  expect(healthLine(mergeSettings({}), [], 'unknown')).toEqual({ ok: true, text: 'Router on · helpers off' })
+  const checks = healthChecks({ set: on, st: { status: 'ready', config: { providers: { kiro: {} } }, hc: true, terminal: false }, rules: false })
+  const broken = healthLine(on, checks, 'ready')
+  expect(broken.ok).toBe(false)
+  expect(broken.text).toBe("✗ Helpers can't run: this chat is not inside a Herdr terminal")
+  setHelperConfig(helperDefaults(), 'herdr')
+  expect(healthLine(on, [], 'ready', ['Kiro', 'Copilot']).text).toBe('✓ Router on · helpers: Herdr (Kiro, Copilot)')
+  setHelperConfig(helperDefaults(), 'direct')
+  expect(healthLine(on, checks, 'ready').text).toBe('✓ Router on · helpers: direct mode (no Herdr terminal)')
+  setHelperConfig(undefined)
+})
+
+test('log and report names, old log files, and the history line when there is no advice', () => {
+  const d = new Date(2026, 10, 19, 9, 5)
+  expect(logFileName(d)).toBe('2026-11-19.jsonl')
+  expect(reportFileName(d)).toBe('report-20261119-0905.md')
+  expect(oldLogFiles(['2026-11-01.jsonl', '2026-11-04.jsonl', '2026-11-05.jsonl', '2026-11-19.jsonl', 'notes.txt'], d)).toEqual(['2026-11-01.jsonl', '2026-11-04.jsonl'])
+  expect(historyLine([])).toBe('History: no runs yet; advice starts after 3 runs of a kind.')
+  const run = { key: 'k', tier: 'light', model: 'haiku', effort: 'low', cost: 0, setupHeavy: false, rerun: false, at: '2026-11-19' } as HistoryEntry
+  expect(historyLine([run, run])).toBe('History: 2 runs; advice needs 3 on one rung.')
+  const md = reportMarkdown({
+    version: '9.9.9', at: d, platform: 'macos', surface: 'terminal', set: mergeSettings({ helpers: { enabled: true }, log: false }),
+    checks: [{ id: 'terminal', state: 'fail', text: 'This chat is not inside a Herdr terminal', fix: 'Start Claude from a Herdr terminal, or use direct mode.' }],
+    mode: 'none', st: { status: 'ready' }, history: 4, lifetime: { steps: 2, plans: 1, helperSteps: 3 }, events: ['{"ev":"start"}'],
+  })
+  expect(md).toContain('Router version: 9.9.9')
+  expect(md).toContain('- helpers.enabled: true')
+  expect(md).toContain('- log: false')
+  expect(md).toContain('✗ This chat is not inside a Herdr terminal — fix: Start Claude from a Herdr terminal')
+  expect(md).toContain('```\n{"ev":"start"}\n```')
+})
+
+test('cut short says nothing about the model: left out of advice and auto mode, counted apart, and accepted as a verdict', () => {
+  expect(asVerdict('cut-short')).toBe('cut-short')
+  expect(asVerdict('Cut short')).toBe('cut-short')
+  const set = mergeSettings({ autoMinRuns: 3, autoOkPercent: 90 })
+  const at = (i: number) => `2026-11-1${i}`
+  const run = (verdict: string, i: number) => ({ key: `k${i}`, tier: 'light', kind: 'search', model: 'haiku', effort: 'low', cost: 0, setupHeavy: false, rerun: false, verdict, at: at(i) }) as HistoryEntry
+  // Three cut short and two ok: under three judged runs, so no advice and nothing learned.
+  const h = [run('cut-short', 1), run('cut-short', 2), run('cut-short', 3), run('ok', 4), run('ok', 5)]
+  expect(suggestions(h, set)).toEqual([])
+  expect(learned2(h, set)).toEqual({})
+  // Weak runs cut short do not raise the rung either.
+  const w = [run('weak', 1), run('cut-short', 2), run('cut-short', 3), run('ok', 4), run('ok', 5), run('ok', 6)]
+  expect(suggestions(w, set)).toEqual([])
+  expect(verdictLine({ ok: 1, weak: 0, overkill: 0, none: 0, cutShort: 2 })).toBe('1 ok, 2 cut short')
+})
+
+test('outside a Herdr terminal with no headless helper, helpers cannot run: no helper in the tool or the rules, and the pane and the status line say why', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  const { registered, rows, statuses } = await boot($, on, [HELPERS_ON], [], files, world.setup, NO_TERMINAL)
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
+  expect(statuses.at(-1)).toContain('helpers ✗')
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows).toLowerCase()).not.toContain('helper')
+
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const pane = await $.ui.mount({ ...PANE, surface } as never)
+    expect(await pane.find(text(/^✗ Helpers can't run: this chat is not inside a Herdr terminal$/))).toBeTruthy()
+    // The checks and their fixes are one click away.
+    expect(await pane.find(text(/^Start Claude from a Herdr terminal, or use direct mode\.$/))).toBeFalsy()
+    await pane.press({ key: 'health-why' })
+    expect(await pane.find(text(/^✓ herdr-delegate's helpers\.py found$/))).toBeTruthy()
+    expect(await pane.find(text(/^✗ This chat is not inside a Herdr terminal$/))).toBeTruthy()
+    expect(await pane.find(text(/^Start Claude from a Herdr terminal, or use direct mode\.$/))).toBeTruthy()
+    await pane.press({ key: 'health-why' })
+    await pane.unmount()
+  }
+  // The minimal view keeps the health line.
+  const mini = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await mini.press({ key: 'minimal' })
+  expect(await mini.find(text(/^✗ Helpers can't run/))).toBeTruthy()
+  await mini.unmount()
+
+  const status = await $.tool.call({ tool: PLAN, status: true } as never)
+  expect(String(status.result)).toContain('"helperMode":"none"')
+  expect(String(status.result)).toContain('fail terminal: This chat is not inside a Herdr terminal')
+  expect(String(status.result)).toContain('"log":"/home/tester/.config/model-router/log/')
+  expect(String(status.result)).toContain('"history":0')
+})
+
+test('direct mode: without a Herdr terminal a headless helper runs through helpers.py run; the setting can forbid it', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { direct: ['copilot'] })
+  const { registered, rows, store } = await boot($, on, [HELPERS_ON], [], files, world.setup, NO_TERMINAL)
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here', 'helper'])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const rules = lastRow(rows)
+  expect(rules).toContain(`python3 ${SCRIPT} run <template> --brief <file> --cwd <dir>`)
+  expect(rules).toContain('run_in_background')
+  expect(rules).toContain(`python3 ${SCRIPT} pick <order>`)
+  expect(rules).toContain('fallback: \\"<short reason>\\"')
+  expect(rules).not.toContain('helpers.py usage')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^✓ Router on · helpers: direct mode \(no Herdr terminal\)$/))).toBeTruthy()
+  // "Herdr only" forbids direct mode: helpers cannot run, the plan tool drops "helper", and the chat is told.
+  await pane.press({ key: 'settings' })
+  await pane.select({ key: 'helpers-run', value: 'herdr' } as never)
+  expect((store.get('settings') as { helpers: { run: string } }).helpers.run).toBe('herdr')
+  expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
+  expect(await pane.find(text(/^✗ Helpers can't run: this chat is not inside a Herdr terminal$/))).toBeTruthy()
+  await pane.unmount()
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  expect(lastRow(rows)).toContain('Helpers are now off: run every step as a subagent or here')
+})
+
+test('inside Herdr the health line names the helpers, and Herdr mode keeps rule 6 as it was', async ($, on) => {
+  const { rows } = await boot($, on, [HELPERS_ON])
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await pane.find(text(/^✓ Router on · helpers: Herdr \(Kiro, Copilot, Antigravity\)$/))).toBeTruthy()
+  await pane.unmount()
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows)).toContain('load the herdr-delegate skill and follow it')
+  expect(lastRow(rows)).not.toContain('--brief')
+})
+
+test('rules delivered with helpers off: switching them on sends the helper rule at the next turn, once', async ($, on) => {
+  const { rows } = await boot($, on, [])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows).toLowerCase()).not.toContain('helper')
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'helpers' })
+  await $.turn.start({ text: 'second', turnId: 't1' })
+  const note = lastRow(rows)
+  expect(note).toContain('Helpers changed; this replaces rule 6: where = ')
+  expect(note).toContain('kiro-deep,copilot-deep,agy-deep')
+  const count = rows.appended().length
+  await $.turn.start({ text: 'third', turnId: 't2' })
+  expect(rows.appended().length).toBe(count)
+  // "Use helpers for" changed mid-chat: the chat hears the new rule.
+  await pane.select({ key: 'helpers-use', value: 'all' } as never)
+  await pane.unmount()
+  await $.turn.start({ text: 'fourth', turnId: 't3' })
+  expect(lastRow(rows)).toContain('every self-contained step that would otherwise be')
+})
+
+test('the log: one JSON line per event, ids and models but never titles; off in Settings writes nothing', async ($, on) => {
+  const { files } = await boot($, on, [HELPERS_ON], [{ id: 'x1', description: '[a1] secret title' }])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'a1', title: 'Secret title', tier: 'light', where: 'agent', kind: 'search' }, { id: 'h1', title: 'Other secret', tier: 'deep', where: 'helper' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[a1] secret title', prompt: 'the brief text' })
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', fallback: 'picker found nothing' }] } as never)
+  await $.tool.call({ tool: PLAN, done: [{ id: 'a1', verdict: 'ok', why: 'private reason' }] } as never)
+  const evs = logEvents(files)
+  expect(evs.map(e => e.ev)).toEqual(expect.arrayContaining(['start', 'health', 'rules', 'plan', 'route', 'fallback', 'verdict']))
+  expect(evs.find(e => e.ev === 'route')).toMatchObject({ id: 'a1', model: 'haiku', effort: 'low', source: 'tier' })
+  expect(evs.find(e => e.ev === 'fallback')).toMatchObject({ id: 'h1', reason: 'picker found nothing' })
+  expect(evs.find(e => e.ev === 'plan')).toMatchObject({ steps: [{ id: 'a1', tier: 'light', where: 'agent', kind: 'search' }, { id: 'h1', tier: 'deep', where: 'helper' }] })
+  const raw = files.get(logPath()) ?? ''
+  expect(raw).not.toMatch(/secret|brief text|private reason/i)
+  expect(typeof evs[0]!.t).toBe('string')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'log' })
+  await pane.unmount()
+  const before = files.get(logPath())
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'b1', title: 'Next', tier: 'light', where: 'agent' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[b1] next', prompt: 'go' })
+  expect(files.get(logPath())).toBe(before)
+})
+
+test('Write report: the file lands under ~/.config/model-router with the checks and the last log events, and the pane says where; /router report too', async ($, on) => {
+  const { files } = await boot($, on, [HELPERS_ON], [], new Map(), undefined, NO_TERMINAL)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'health-why' })
+  await pane.press({ key: 'health-report' })
+  const shown = await pane.find(text(/^Report written: ~\/\.config\/model-router\/report-\d{8}-\d{4}\.md — send this file$/))
+  expect(shown).toBeTruthy()
+  const path = [...files.keys()].find(k => /\/model-router\/report-\d{8}-\d{4}\.md$/.test(k))!
+  expect(path.startsWith(`${HOME}/.config/model-router/`)).toBe(true)
+  const md = files.get(path)!
+  expect(md).toContain('## Health checks')
+  expect(md).toContain('✗ This chat is not inside a Herdr terminal — fix:')
+  expect(md).toContain('- helpers.enabled: true')
+  expect(md).toContain('"ev":"start"')
+  // The same button sits in Settings → Diagnostics.
+  await pane.press({ key: 'settings' })
+  expect(await pane.find({ type: 'Button', key: 'settings-report' } as never)).toBeTruthy()
+  await pane.unmount()
+  const ran = await $.command.run({ command: 'router', args: 'report' } as never)
+  expect(String((ran as { text?: string }).text)).toMatch(/^Model router report written: ~\/\.config\/model-router\/report-/)
+})
+
+test('a run cut short: no rerun when delegated again, out of the advice, and the card\'s link marks it and puts the verdict back', async ($, on) => {
+  const { store } = await boot($, on, [], [{ id: 'x1', description: '[s1] list' }])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'List', tier: 'light', where: 'agent', kind: 'search' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[s1] list', prompt: 'go' })
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'x1' } as never)
+  await $.tool.call({ tool: PLAN, done: [{ id: 's1', verdict: 'weak', why: 'lost' }] } as never)
+  const history = () => store.get('history') as HistoryEntry[]
+  expect(history().at(-1)?.verdict).toBe('weak')
+
+  // The card's quiet link marks the run cut short, in the plan and in its history entry; again puts "weak" back.
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'cut:s1' })
+  expect(history().at(-1)?.verdict).toBe('cut-short')
+  expect(await pane.find(text(/^cut short: says nothing about the model/))).toBeTruthy()
+  await pane.press({ key: 'cut:s1' })
+  expect(history().at(-1)?.verdict).toBe('weak')
+  await pane.press({ key: 'cut:s1' })
+  await pane.unmount()
+
+  // Delegated again after a cut-short run: not a rerun.
+  await $.tool.call({ tool: 'Agent', description: '[s1] list', prompt: 'go' })
+  expect(history().at(-1)?.rerun).toBe(false)
+  const text1 = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(text1.result)).toContain('[s1] List: light, haiku/low, kind search, running')
+  const steps = await $.tool.call({ tool: PLAN, status: true } as never)
+  expect(String(steps.result)).toContain('"history":1')
+})
+
+test('a helper step that falls back: start with a reason, or an Agent call without one; the card and the totals say so', async ($, on) => {
+  const { store } = await boot($, on, [HELPERS_ON], [{ id: 'x2', description: '[h2] survey' }])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Sweep', tier: 'light', where: 'helper' }, { id: 'h2', title: 'Survey', tier: 'deep', where: 'helper' }] } as never)
+  await $.tool.call({ tool: PLAN, start: [{ id: 'h1', fallback: 'out of quota' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[h2] survey', prompt: 'go' })
+  const plan = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(plan.result)).toContain('[h1] Sweep: light, haiku/low, planned')
+  expect(String(plan.result)).not.toContain('runs helper')
+  const life = store.get('lifetime') as { fallbacks?: number; lastFallback?: string }
+  expect(life.fallbacks).toBe(2)
+  expect(life.lastFallback).toBe('no reason given')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^ran as a subagent: out of quota$/))).toBeTruthy()
+  expect(await pane.find(text(/^ran as a subagent: no reason given$/))).toBeTruthy()
+  expect(await pane.find(text(/^Off Claude: no helper steps yet · 2 ran as subagents: no reason given$/))).toBeTruthy()
+  await pane.press({ key: 'cost-view:all' })
+  expect(await pane.find(text(/^Off Claude: no helper steps yet · 2 ran as subagents: no reason given$/))).toBeTruthy()
+  expect(await pane.find(text(/delegated steps \(0 on helpers\) in 1 plans/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('empty states: helpers on and none run yet; no history yet, or runs without advice; never a heading with nothing under it', async ($, on) => {
+  await boot($, on, [HELPERS_ON])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^Off Claude: no helper steps yet$/))).toBeTruthy()
+  expect(await pane.find(text(/^History: no runs yet; advice starts after 3 runs of a kind\.$/))).toBeTruthy()
+  await pane.press({ key: 'minimal' })
+  expect(await pane.find(text(/^Off Claude: no helper steps yet$/))).toBeTruthy()
+  expect(await pane.find(text(/^History: no runs yet/))).toBeTruthy()
+  expect(await pane.find(text(/^What the history says$/))).toBeFalsy()
+  await pane.unmount()
+})
+
+test('with runs but no advice the minimal view shows the history\'s one line, not an empty heading', async ($, on) => {
+  const run = { key: 'k1', tier: 'light', where: 'agent', model: 'haiku', effort: 'low', cost: 0.01, setupHeavy: false, rerun: false, verdict: 'ok', at: '2026-11-18T00:00:00.000Z' }
+  await boot($, on, [['history', [run, { ...run, key: 'k2' }]], ['settings', { compact: true }]])
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await pane.find(text(/^History: 2 runs; advice needs 3 on one rung\.$/))).toBeTruthy()
+  expect(await pane.find(text(/^What the history says$/))).toBeFalsy()
+  await pane.unmount()
 })

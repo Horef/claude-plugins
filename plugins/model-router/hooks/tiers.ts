@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
     fusion: 'off',
     script: '',
     kinds: {},
+    run: 'auto',
   },
   hereEffort: { enabled: false, maxContext: 40_000 },
   kinds: {},
@@ -34,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoOkPercent: 90,
   models: [],
   prices: {},
+  log: true,
 }
 
 // Context limits offered for here-step effort, in tokens.
