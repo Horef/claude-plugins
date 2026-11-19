@@ -31,7 +31,8 @@ import {
   fmtTok,
   fmtUsd,
   genomeNote,
-  helperEfforts,
+  fitEffort,
+  modelEfforts,
   helperFacts,
   helperGain,
   helperItems,
@@ -187,6 +188,10 @@ const paneView = atom({ plugin: 'model-router', key: 'paneView' } as const, { to
 const showGlossary = atom({ plugin: 'model-router', key: 'showGlossary' } as const, false)
 const showCostDetails = atom({ plugin: 'model-router', key: 'showCostDetails' } as const, false)
 const editOrder = atom({ plugin: 'model-router', key: 'editOrder' } as const, '')
+const picking = atom({ plugin: 'model-router', key: 'picking' } as const, '')
+/** The open terminal list's buttons (the picker, then its options) as last drawn, and the element holding the ring:
+ * while the ring is on one of them, ↑ ↓ move it along the list instead of scrolling the pane. */
+const pickNav = { keys: [] as string[], focused: '' }
 const showHelperGrid = atom({ plugin: 'model-router', key: 'showHelperGrid' } as const, false)
 const confirmReset = atom({ plugin: 'model-router', key: 'confirmReset' } as const, '')
 const resetNote = atom({ plugin: 'model-router', key: 'resetNote' } as const, '')
@@ -1225,14 +1230,14 @@ async function changeHelperTier($: EngineInterface, provider: string, tier: stri
     try {
       const r = await runHelpers($, st.script, ['set', provider, tier, `model=${next.model}`, `effort=${next.effort}`])
       if (r.exitCode !== 0) {
-        await update($, helperCfg, x => ({ ...x, message: firstLine(r.stderr || r.stdout) || `helpers.py set failed (exit ${r.exitCode})` }))
+        await update($, helperCfg, x => ({ ...x, message: firstLine(r.stderr || r.stdout) || `helpers.py set failed (exit ${r.exitCode})`, messageAt: `${provider}:${tier}` }))
         return false
       }
     } catch (err) {
-      await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
+      await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}`, messageAt: `${provider}:${tier}` }))
       return false
     }
-    await update($, helperCfg, x => ({ ...x, message: undefined }))
+    await update($, helperCfg, x => ({ ...x, message: undefined, messageAt: undefined }))
     await loadHelperConfig($)
 
     return true
@@ -2184,15 +2189,55 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     return status === 'approved' && own.status !== 'done' && !!known[s.id] && knownChanges(known[s.id]!, knownOf(own, set, learned)).length > 0
   }
 
-  // A picker where the surface has one, else a button that cycles.
-  const pick = (key: string, value: string, options: readonly Option[], onPick: (v: string) => void) =>
-    Select ? (
-      <Select key={key} value={value} options={options} onSelect={v => onPick(v)} />
-    ) : (
-      <Button key={key} onPress={() => onPick(cycle(options.map(o => o.value), value))}>
-        {`${options.find(o => o.value === value)?.label ?? value}${tty ? ' ⇄' : ''}`}
-      </Button>
-    )
+  // A picker where the surface has one. In the terminal, a list of up to three cycles on Enter (⇄); a longer one
+  // opens its options under the row (▾), one button each with the current one marked, and a press picks and closes.
+  const openPick = await read($, picking)
+  if (tty) pickNav.keys = []
+  const optKey = (key: string, v: string) => `${key}:opt:${v}`
+  const togglePick = async (key: string, value: string) => {
+    const opening = openPick !== key
+    await update($, picking, () => (opening ? key : ''))
+    const to = opening ? optKey(key, value) : key
+    // The ring a plugin moves is noted here too: the engine may not tell this plugin's own ui.focus hook.
+    if (!(await $.ui.focus({ requestId: PANE, key: to }).catch(() => ({ deny: 'failed' }))).deny) pickNav.focused = to
+  }
+  const pick = (key: string, value: string, options: readonly Option[], onPick: (v: string) => void) => {
+    const label = options.find(o => o.value === value)?.label ?? value
+    if (Select) return <Select key={key} value={value} options={options} onSelect={v => onPick(v)} />
+    if (!tty || options.length <= 3) {
+      return (
+        <Button key={key} onPress={() => onPick(cycle(options.map(o => o.value), value))}>
+          {`${label}${tty ? ' ⇄' : ''}`}
+        </Button>
+      )
+    }
+    const open = openPick === key
+    if (open) pickNav.keys = [key, ...options.map(o => optKey(key, o.value))]
+
+    return [
+      <Button key={key} onPress={() => void togglePick(key, value)}>{`${label} ${open ? '▴' : '▾'}`}</Button>,
+      open ? (
+        <Box key={`${key}:list`} flexDirection="column" width="100%" paddingLeft={2}>
+          {options.map(o => (
+            <Button
+              key={optKey(key, o.value)}
+              plain
+              dimColor={o.value !== value}
+              onPress={() =>
+                void (async () => {
+                  await update($, picking, () => '')
+                  if (o.value !== value) onPick(o.value)
+                  await $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
+                })()
+              }
+            >
+              {`${o.value === value ? '●' : '○'} ${o.label}`}
+            </Button>
+          ))}
+        </Box>
+      ) : null,
+    ]
+  }
 
   // A settings row: the name and what it changes on the left, its control on the right.
   const settingRow = (key: string, label: string, help: string | undefined, control: unknown, isCustom = false, below?: unknown) => (
@@ -2415,7 +2460,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       <Text key={`count:${s.id}`} dimColor size="footnote">{`×${s.count}${s.status !== 'done' && (s.runs ?? 0) > 0 ? ` · ${s.runs} finished` : ''}`}</Text>
     ) : null
   // A helper step: the helper and the model it reported, then its usage and time.
-  const helperInfo = (s: Step) => (isHelperRun(s) && s.helper ? <Text key={`helper:${s.id}`} size="footnote" weight="medium">{helperName(s)}</Text> : null)
+  const helperInfo = (s: Step) =>
+    isHelperRun(s) && s.helper ? (
+      <Text key={`helper:${s.id}`} size="footnote" weight={s.status === 'done' ? undefined : 'medium'} dimColor={s.status === 'done'}>{helperName(s)}</Text>
+    ) : null
   const helperFactsText = (s: Step) => {
     const facts = isHelperRun(s) ? helperFacts(s) : ''
 
@@ -2480,18 +2528,32 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       {isOpen(s) ? '▾' : '▸'}
     </Button>
   )
-  // Line 1 of a row: the opener, status, id, title (wrapping) and tags.
-  const rowHead = (s: Step, tags: unknown[]) => (
-    <Box flexDirection="row" columnGap="sm" alignItems="center">
+  // Line 1 of a row: the opener, status, id and the title, which alone wraps (the id never breaks: "s14." over "a").
+  // Tags (kind, count, a group's progress) go on line 2, so a narrow pane gives the title its whole width.
+  const rowHead = (s: Step) => (
+    <Box flexDirection="row" columnGap="sm" alignItems="flex-start">
       {opener(s)}
       <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-      <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+      <Box flexShrink={0}>
+        <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+      </Box>
       <Box flexShrink={1}>
         <Text weight={s.group ? 'semibold' : 'medium'} wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
       </Box>
-      {tags as never}
     </Box>
   )
+  // A finished step's line 2 says where it ran, in quiet text: its pickers would change nothing now.
+  const ranOn = (s: Step) => {
+    const now = runsOn(s, set, learned)
+    const text =
+      s.where === 'here'
+        ? `${whereLabel('here')} · rated ${s.tier}`
+        : s.where === 'agent'
+          ? `${whereLabel('agent')} · ${s.tier} · ${s.resolvedModel ?? now.model} ${now.effort}`
+          : `${whereLabel('helper', tight)} · ${s.tier}`
+
+    return <Text key={`ran:${s.id}`} dimColor size="footnote" wrap="wrap">{text}</Text>
+  }
 
   // A group: its title, how many parts are done and what they cost together. Its level only rates it.
   const groupRow = (s: Step) => {
@@ -2501,11 +2563,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return (
       <Box key={`card:${s.id}`} flexDirection="column">
-        {rowHead(s, [
-          <Text key={`rated:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>,
-          <Text key={`parts:${s.id}`} dimColor size="footnote">{`${r.done}/${r.total} done`}</Text>,
-          r.cost > 0 ? <Text key={`gcost:${s.id}`} dimColor size="footnote" tabular>{`≈${fmtUsd(r.cost)}`}</Text> : null,
-        ])}
+        {rowHead(s)}
+        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={4}>
+          <Text key={`rated:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>
+          <Text key={`parts:${s.id}`} dimColor size="footnote">{`· ${r.done}/${r.total} done`}</Text>
+          {r.cost > 0 ? <Text key={`gcost:${s.id}`} dimColor size="footnote" tabular>{`· ≈${fmtUsd(r.cost)}`}</Text> : null}
+        </Box>
         {isOpen(s) && (r.cost > 0 || moved) ? (
           <Box key={`details:${s.id}`} flexDirection="column" paddingLeft={4}>
             {r.cost > 0 && (
@@ -2532,9 +2595,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return (
       <Box key={`card:${s.id}`} flexDirection="column">
-        {rowHead(s, [countTag(s), kindTag(s)])}
+        {rowHead(s)}
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={4}>
-          {stepPickers(s)}
+          {s.status === 'done' ? ranOn(s) : stepPickers(s)}
+          {countTag(s)}
+          {kindTag(s)}
           {s.cost > 0 && !s.unpriced && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
           {s.unpriced && <Text key={`unpriced:${s.id}`} color="warning" size="footnote">{fmtCost(s.cost, true)}</Text>}
           {helperInfo(s)}
@@ -2617,7 +2682,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ['verdict', 'ok · weak (needed more) · overkill (a cheaper model would do) · cut short (stopped by a fault, not counted)'],
     ['effort', 'how long the model thinks before it answers: low, medium, high, xhigh, max'],
     ['saved', 'what delegated steps cost less than the same work on this chat’s model'],
-    ...(tty ? ([['⇄', 'a button that picks the next option on Enter']] as [string, string][]) : []),
+    ...(tty
+      ? ([
+          ['⇄', 'a button that picks the next option on Enter'],
+          ['▾', 'a button that lists its options under it; Enter on one picks it'],
+        ] as [string, string][])
+      : []),
   ]
   const planSection = (
     <Box key="section:plan" flexDirection="column" rowGap="xs">
@@ -2661,12 +2731,22 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
       {glossaryOpen && list.length > 0 && (
         <Box key="glossary-list" flexDirection="column" paddingLeft={2}>
-          {GLOSSARY.map(([term, what]) => (
-            <Text key={`term:${term}`} size="footnote" wrap="wrap">
-              <Text weight="medium">{term}</Text>
-              <Text dimColor>{`: ${what}`}</Text>
-            </Text>
-          ))}
+          {/* The terminal gives each term its own line and indents what it means, so the list scans as a list. */}
+          {GLOSSARY.map(([term, what]) =>
+            tty ? (
+              <Box key={`term:${term}`} flexDirection="column">
+                <Text weight="medium" size="footnote">{term}</Text>
+                <Box paddingLeft={2}>
+                  <Text dimColor size="footnote" wrap="wrap">{what}</Text>
+                </Box>
+              </Box>
+            ) : (
+              <Text key={`term:${term}`} size="footnote" wrap="wrap">
+                <Text weight="medium">{term}</Text>
+                <Text dimColor>{`: ${what}`}</Text>
+              </Text>
+            ),
+          )}
         </Box>
       )}
       {heldCount > 0 && (
@@ -2680,7 +2760,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text dimColor size="footnote" wrap="wrap">✎ edits wait until you send them</Text>
         </Box>
       )}
-      <Box flexDirection="column" rowGap="xs">
+      {/* In the terminal a blank row between steps: without it the rows read as one block of text. */}
+      <Box flexDirection="column" rowGap={tty ? 1 : 'xs'}>
         {list.map(row)}
       </Box>
       {list.length > 0 && (
@@ -2769,7 +2850,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     <Box key="section:cost" flexDirection="column" rowGap="xs">
       <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
         <Button key="cost-view" plain onPress={() => void update($, costView, v => cycle(VIEWS.map(x => x.value), v) as CostView)}>
-          {`${VIEWS.find(x => x.value === view)?.label ?? 'This plan'} ▾`}
+          {`${VIEWS.find(x => x.value === view)?.label ?? 'This plan'} ${tty ? '⇄' : '▾'}`}
         </Button>
         <Text key="cost-line" size="footnote" tabular wrap="wrap">
           <Text dimColor>{`main${m.model && view !== 'all' ? ` (${m.model})` : ''} `}</Text>
@@ -3191,23 +3272,33 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   const r = helperTierRung(hcfg, provider, tier)!
                   const d = helperDiffers(provider, tier)
 
+                  const efforts = modelEfforts(hcfg, hs.models, provider, r.model)
+
                   return (
-                    <Box key={`helper-tier:${provider}:${tier}`} flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={2}>
+                    <Box key={`helper-tier:${provider}:${tier}`} flexDirection="column" paddingLeft={2}>
+                    <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
                       <Text color={isTier(tier) ? TIER_COLOR[tier] : undefined} size="footnote">{tier}</Text>
                       {pick(
                         `helper-model:${provider}:${tier}`,
                         r.model,
                         offeredModels(hcfg, hs.models, provider).map(x => ({ value: x, label: x })),
-                        v => void changeHelperTier($, provider, tier, { model: v }),
+                        // A model that lacks the tier's level takes its nearest one (agy's gpt-oss-120b: medium only).
+                        v => void changeHelperTier($, provider, tier, { model: v, effort: fitEffort(hcfg, hs.models, provider, v, r.effort) }),
                       )}
                       {dot(`helper-model:${provider}:${tier}`, d.model)}
                       {pick(
                         `helper-effort:${provider}:${tier}`,
                         r.effort,
-                        helperEfforts(hcfg, provider, r.effort).map(x => ({ value: x, label: `${x} effort` })),
+                        // The levels this model comes at (agy lists them per model), and the current one if it is not among them.
+                        (efforts.includes(r.effort) ? efforts : [...efforts, r.effort]).map(x => ({ value: x, label: `${x} effort` })),
                         v => void changeHelperTier($, provider, tier, { effort: v }),
                       )}
                       {dot(`helper-effort:${provider}:${tier}`, d.effort)}
+                    </Box>
+                    {/* A change helpers.py refused: said under the row that asked for it, not only at the top of the group. */}
+                    {hs.message && hs.messageAt === `${provider}:${tier}` ? (
+                      <Text key={`helper-tier-error:${provider}:${tier}`} color="warning" size="footnote" wrap="wrap">{hs.message}</Text>
+                    ) : null}
                     </Box>
                   )
                 })}
@@ -4110,4 +4201,18 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, renderPane)
+  // An open terminal list: ↑ ↓ walk its options (and back up to its button) while the ring is on one of them.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, ($, e, next) => {
+    pickNav.focused = e.element ?? ''
+
+    return next(e)
+  })
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const at = pickNav.keys.indexOf(pickNav.focused)
+    if (e.origin.kind !== 'person' || e.pointer || Math.abs(e.by) !== 1 || at < 0) return next(e)
+    const to = pickNav.keys[Math.min(Math.max(at + e.by, 0), pickNav.keys.length - 1)]!
+    if (to !== pickNav.focused && !(await $.ui.focus({ requestId: PANE, key: to }).catch(() => ({ deny: 'failed' }))).deny) pickNav.focused = to
+
+    return {}
+  })
 }

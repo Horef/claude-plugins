@@ -93,6 +93,8 @@ export type HelperState = {
   warnings: string[]
   /** What went wrong, in a line, for the pane. */
   message?: string
+  /** The grid row (`<provider>:<tier>`) whose change failed: the message is shown under it too. */
+  messageAt?: string
   busy?: boolean
   /** The marketplace this plugin came from, for the install line shown when helpers.py or hc is missing. */
   marketplace?: string
@@ -420,6 +422,8 @@ declare module 'claude-code' {
       showCostDetails: boolean
       /** The tier whose helper order is being edited in Settings ('' for none). */
       editOrder: string
+      /** The terminal picker whose options are listed under it (its key; '' for none). */
+      picking: string
       /** Settings → Other subscriptions → Helper models: the full picker grid is open. */
       showHelperGrid: boolean
       /** A reset waiting for its second click: 'history', 'stats' or 'tiers' ('' for none); and what the last one did. */

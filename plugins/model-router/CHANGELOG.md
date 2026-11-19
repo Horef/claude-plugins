@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.29.0 (2026-11-19)
+- terminal pickers open a list, readable plan rows, helper model button no longer sticks, Herdr view as a right sidebar
+
 ## 0.28.0 (2026-11-19)
 - strengths: kinds map to the model notes' tags (KIND_TAGS, editable per kind); Try suggestions under the advice for kinds without enough history (Apply sets the kind default or helper choice, Dismiss remembered); a model map in Settings > Learning showing what each kind would run on now
 

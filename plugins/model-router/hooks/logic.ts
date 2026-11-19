@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUN
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.28.0'
+export const VERSION = '0.29.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -1120,6 +1120,30 @@ export const helperEfforts = (cfg: HelperConfig, provider: string, current?: str
   const own = cfg.providers[provider]?.efforts ?? []
 
   return current && !own.includes(current) ? [...own, current] : own
+}
+
+/** The levels a model is offered at where the provider's ids carry the level (agy: `claude-sonnet-5-5-high`, while
+ * `gpt-oss-120b` comes at medium only); elsewhere, or for a model the last check did not list, the provider's own. */
+export const modelEfforts = (cfg: HelperConfig, cache: ModelsCache | undefined, provider: string, model: string) => {
+  const prov = cfg.providers[provider]
+  const own = prov?.efforts ?? []
+  if (!prov || !(prov.model_id ?? '{model}').endsWith('-{effort}')) return own
+  const ids = cache?.[provider]?.models ?? []
+  const at = own.filter(e => ids.includes(`${model}-${e}`))
+
+  return at.length > 0 ? at : own
+}
+
+/** The level a helper tier keeps when its model changes: the same where the new model has it, else the nearest
+ * one it has (the higher on a tie), so `helpers.py set` never gets a model and level the CLI does not offer. */
+export const fitEffort = (cfg: HelperConfig, cache: ModelsCache | undefined, provider: string, model: string, effort: string) => {
+  const ok = modelEfforts(cfg, cache, provider, model)
+  if (ok.length === 0 || ok.includes(effort)) return effort
+  const order = cfg.providers[provider]?.efforts ?? ok
+  const at = order.indexOf(effort)
+  const gap = (e: string) => Math.abs(order.indexOf(e) - at)
+
+  return [...ok].sort((a, b) => gap(a) - gap(b) || order.indexOf(b) - order.indexOf(a))[0]!
 }
 
 /** Whether a tier's model and level differ from the shipped defaults; a tier the defaults lack counts as different. */

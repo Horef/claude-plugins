@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-19 (evening): model-router 0.29.0, terminal fixes and the Herdr sidebar
+Owner feedback on 0.28 (screenshots): a settings list "stopped" at Antigravity light; the terminal pane read as a wall of text; the Herdr view needed a command each time.
+- Built a pty driver (scratchpad, pyte) that runs `claude` at a fixed size, presses keys and dumps the pane with the focus marked; it showed the scroll was fine and the ⇄ button was stuck: agy's next model, `gpt-oss-120b`, has only medium, so `helpers.py set ... effort=high` refused and the error showed far above.
+- Fixes: `modelEfforts`/`fitEffort` (a model change takes the nearest offered level; the effort picker lists the model's levels; the error shows under its row); terminal pickers with more than three options open a ▾ list (↑↓ walk it through `ui.scroll`/`ui.focus` hooks); plan rows: unbreakable id, title alone wraps, tags on line 2, finished steps as quiet text, a blank row between steps, glossary term over meaning.
+- Herdr: `herdr/sidebar.py` installs the mod, clones `main` to `main-router` with a `router` column on the right and binds ⌘⇧R; the view now follows the pane's order and wraps titles. Run on this Mac.
+- Commands: `claude plugin test plugins/model-router` 125 pass; `loop.py eval model-router` exit 0; `herdr-app check ~/.config/herdr-app/mods/model-router` passed; `herdr-app shot` looked at.
+
 ## 2026-11-19 - model-router 0.24-0.28 and herdr-delegate 0.15: health, direct mode, new models, one layout, Herdr view
 
 - Owner request: the router was hard to use for his father, whose helper statistics stayed empty with no logs to tell why; new models (Gemini 4 Neon, GA 2026-11-18) should be noticed and proposed; a proposal (claude.ai artifact) was approved whole. Code read found the likely cause: outside a Herdr terminal helpers were offered, failed, and fell back to subagents silently; helpers switched on mid-chat never got their rule (O3, O4); quota-cut runs counted as weak (O5); `helpers.py models` missed new codenames (O33).
