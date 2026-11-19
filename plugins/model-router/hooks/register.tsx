@@ -131,12 +131,17 @@ import {
   reportWarnings,
   staleProviders,
   toAsk,
+  applyPreset,
+  presetOf,
+  stepOpen,
+  tiersSummary,
+  whereLabel,
 } from './logic'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
 import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from './snapshot'
 import type { RouterState } from './snapshot'
-import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
+import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRESETS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
 
 // --- State: the session's (atoms) and what is remembered across sessions ($.store) --
 
@@ -174,6 +179,13 @@ const modelNotes = atom({ plugin: 'model-router', key: 'modelNotes' } as const, 
 const modelFeedback = atom({ plugin: 'model-router', key: 'modelFeedback' } as const, {})
 const showCardNotes = atom({ plugin: 'model-router', key: 'showCardNotes' } as const, false)
 const showAllNotes = atom({ plugin: 'model-router', key: 'showAllNotes' } as const, false)
+const paneView = atom({ plugin: 'model-router', key: 'paneView' } as const, { toggled: {} })
+const showGlossary = atom({ plugin: 'model-router', key: 'showGlossary' } as const, false)
+const showCostDetails = atom({ plugin: 'model-router', key: 'showCostDetails' } as const, false)
+const editOrder = atom({ plugin: 'model-router', key: 'editOrder' } as const, '')
+const showHelperGrid = atom({ plugin: 'model-router', key: 'showHelperGrid' } as const, false)
+const confirmReset = atom({ plugin: 'model-router', key: 'confirmReset' } as const, '')
+const resetNote = atom({ plugin: 'model-router', key: 'resetNote' } as const, '')
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews' }
 const EFFORT_LOG_CAP = 200
@@ -724,6 +736,7 @@ async function editStep($: EngineInterface, id: string, fn: (s: Step) => Step) {
 
 async function clearPlan($: EngineInterface) {
   await update($, steps, () => [])
+  await update($, paneView, v => ({ ...v, toggled: {} }))
   await update($, draft, () => ({}))
   await update($, planStatus, () => 'none')
   await refreshStatus($)
@@ -1998,20 +2011,24 @@ const cycle = (values: readonly string[], one: string) => values[(values.indexOf
 
 type RenderArgs = Parameters<Hook<'ui.render'>>
 
+// The pane, one layout on every surface (0.26): health line, new-models card, plan, cost, footer.
+// Layer 1: the plan as rows of two lines, one cost line, the footer. Layer 2: a step's details (▸),
+// the glossary (?), cost details, and the Settings groups. Settings replace plan, cost and footer while open.
 export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const ui = $.ui.resolve(e)
   const { Box, Text, Button } = ui
   const hasFields = e.surface !== 'mobile'
-  // The terminal gives the pane few rows and scrolls only with the keyboard: draw it compact.
   const tty = e.surface === 'terminal'
-  const site = e.props as { isFocused?: boolean; scroll?: { offset: number } }
+  const site = e.props as { isFocused?: boolean; scroll?: { offset: number }; bodyColumns?: number }
+  // A narrow terminal gets the short word for helpers.
+  const tight = tty && (site.bodyColumns ?? 80) < 50
   // The terminal draws a Select's list inline, pushing its neighbours about, and only a
   // pick closes it: there a button that cycles to the next option on Enter reads better.
   const Select = hasFields && !tty && 'Select' in ui ? ui.Select : undefined
   const Input = hasFields && 'Input' in ui ? ui.Input : undefined
 
   const plan = await read($, steps)
-  // Edits to a running plan wait in a draft: the cards show them laid over the plan's own values.
+  // Edits to a running plan wait in a draft: the rows show them laid over the plan's own values.
   const held = await read($, draft)
   const list = plan.map(x => applyDraft(x, held[x.id]))
   const planOf = (id: string) => plan.find(x => x.id === id)
@@ -2026,6 +2043,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const isSettingsOpen = await read($, showSettings)
   const pathOpen = await read($, showHelperPath)
   const known = await read($, told)
+  const pv = await read($, paneView)
+  const glossaryOpen = await read($, showGlossary)
+  const costOpen = await read($, showCostDetails)
+  const orderEdit = await read($, editOrder)
+  const gridOpen = await read($, showHelperGrid)
+  const asking = await read($, confirmReset)
+  const resetText = await read($, resetNote)
 
   // Groups are the sum of their parts: counted once, through the parts.
   const work = leavesOf(list)
@@ -2037,9 +2061,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const base = await read($, planBase)
   const life = await read($, lifetime)
   const switches = await read($, effortLog)
-  // Minimal view: only the steps and their settings, no explanatory text, so a long plan fits.
-  const mini = set.compact
-  const hint = mini ? undefined : modelHint(list, m.model)
+  const hint = modelHint(list, m.model)
   const advice = suggestions(past, set)
   // Helper models: what helpers.py holds (read at the start and after a change), and the advice the history gives for them.
   const hs = await read($, helperCfg)
@@ -2047,7 +2069,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   // Helpers are on and can run (helpers.py, hc and a helper CLI found): only then are orders and models shown.
   const helpersOn = helpersLive(set)
   const helperAdvice = set.helpers.enabled ? helperSuggestions(past, set, hcfg, hs.models) : []
-  // Auto mode: the rung each kind has learned, for the cards (nothing while it is off).
+  // Auto mode: the rung each kind has learned, for the rows (nothing while it is off).
   const learned = set.autoRoute ? learnedRungs(past, set) : undefined
   // The health line: quiet when helpers are off or can run; the first failing check, with the full list one click away, when not.
   const checks = healthChecks({ set, st: hs, rules: (await read($, delivery)).inChat && (await read($, toldHelpers)) === helperRuleSig(set) })
@@ -2066,7 +2088,6 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   // Settings that differ from the defaults get a quiet dot, so it shows which of your own values are active.
   const D = DEFAULT_SETTINGS
   const differs = {
-    compact: set.compact !== D.compact,
     always,
     auto,
     openPane: set.openPane !== D.openPane,
@@ -2080,6 +2101,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     autoOkPercent: set.autoOkPercent !== D.autoOkPercent,
     run: set.helpers.run !== D.helpers.run,
     log: set.log !== D.log,
+    herdrView: set.herdrView !== D.herdrView,
   }
   // A model's price differs when Settings set one other than the default table's (or any, for a new model).
   const priceDiffers = (x: string) => !!set.prices[x] && JSON.stringify(set.prices[x]) !== JSON.stringify(PRICES[x])
@@ -2090,19 +2112,24 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   })
   const orderDiffers = (t: Tier) => orderIsCustom(set, t)
   const helperDiffers = (provider: string, tier: string) => helperTierDiffers(hcfg, hs.defaults, provider, tier)
-  const helperModelsDiffer =
-    set.helpers.enabled &&
-    (set.helpers.script !== D.helpers.script ||
-      Object.keys(set.helpers.kinds).length > 0 ||
-      (!!hcfg && helperProviders(hcfg, set).some(p => helperTierNames(hcfg, p).some(t => helperDiffers(p, t).model || helperDiffers(p, t).effort))))
+  const helperTiersDiffering = hcfg
+    ? helperProviders(hcfg, set).flatMap(p => helperTierNames(hcfg, p).filter(t => helperDiffers(p, t).model || helperDiffers(p, t).effort).map(t => ({ provider: p, tier: t })))
+    : []
+  // What each Settings group holds that differs from the defaults: the dot on its closed header.
+  const groupDiffers = {
+    models: TIER_ORDER.some(t => tierDiffers(t).model || tierDiffers(t).effort),
+    helpers:
+      set.helpers.enabled &&
+      (differs.run || differs.fusion || set.helpers.script !== D.helpers.script || Object.keys(set.helpers.kinds).length > 0 || helperTiersDiffering.length > 0 || TIER_ORDER.some(orderDiffers)),
+    learning: differs.autoRoute || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0,
+    prices: set.models.length > 0 || models.some(priceDiffers),
+    skills: Object.keys(set.skills).length > 0,
+    diagnostics: differs.log || differs.herdrView,
+    advanced: differs.hereEffort || differs.hereLimit || TIER_ORDER.some(t => tierDiffers(t).scope),
+  }
+  const preset = presetOf(set)
   const anyDiffers =
-    helperModelsDiffer ||
-    Object.values(differs).some(Boolean) ||
-    Object.keys(set.skills).length > 0 ||
-    Object.keys(set.kinds).length > 0 ||
-    set.models.length > 0 ||
-    models.some(priceDiffers) ||
-    TIER_ORDER.some(t => Object.values(tierDiffers(t)).some(Boolean) || (set.helpers.enabled && orderDiffers(t)))
+    Object.values(groupDiffers).some(Boolean) || differs.always || differs.auto || differs.openPane || differs.helpers || differs.use || preset !== 'balanced'
   const dot = (key: string, on: boolean) =>
     on ? (
       <Text key={`dflt:${key}`} dimColor size="footnote">
@@ -2117,12 +2144,6 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return status === 'approved' && own.status !== 'done' && !!known[s.id] && knownChanges(known[s.id]!, knownOf(own, set, learned)).length > 0
   }
-  const notedLine = (s: Step) =>
-    changeNoted(s) ? (
-      <Text key={`noted:${s.id}`} color="suggestion" size="footnote">
-        change noted, applies from the next turn
-      </Text>
-    ) : null
 
   // A picker where the surface has one, else a button that cycles.
   const pick = (key: string, value: string, options: readonly Option[], onPick: (v: string) => void) =>
@@ -2134,46 +2155,60 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Button>
     )
 
-  // A settings row: what the switch does on the left, On/Off on the right.
-  const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void, isCustom = false) => (
-    <Box key={`row:${key}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs" marginTop={mini ? 0 : 1}>
-      <Box flexDirection="column" flexShrink={1}>
-        <Box flexDirection="row" columnGap="xs">
-          <Text weight="medium">{label}</Text>
-          {dot(key, isCustom)}
+  // A settings row: the name and what it changes on the left, its control on the right.
+  const settingRow = (key: string, label: string, help: string | undefined, control: unknown, isCustom = false, below?: unknown) => (
+    <Box key={`row:${key}`} flexDirection="column">
+      <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
+        <Box flexDirection="column" flexShrink={1}>
+          <Box flexDirection="row" columnGap="xs">
+            <Text weight="medium">{label}</Text>
+            {dot(key, isCustom)}
+          </Box>
+          {help ? <Text dimColor size="footnote" wrap="wrap">{help}</Text> : null}
         </Box>
-        {!mini && <Text dimColor size="footnote" wrap="wrap">{help}</Text>}
+        {control as never}
       </Box>
+      {(below ?? null) as never}
+    </Box>
+  )
+  const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void, isCustom = false) =>
+    settingRow(
+      key,
+      label,
+      help,
       <Button key={key} variant={isOn ? 'primary' : 'secondary'} onPress={onPress}>
         {isOn ? 'On' : 'Off'}
-      </Button>
-    </Box>
-  )
+      </Button>,
+      isCustom,
+    )
 
-  // A settings group starts with a coloured band, so the groups tell apart at a glance.
-  const group = (title: string, help?: string) => (
-    <Box key={`group:${title}`} flexDirection="column" marginTop={1}>
-      <Box flexDirection="row">
-        <Text backgroundColor="suggestion" color="inverseText" weight="semibold">{` ${title.toUpperCase()} `}</Text>
+  // A Settings group: one line when closed (name, what is inside, a dot when something differs); open, its rows under it.
+  const settingsGroup = (id: string, name: string, summary: string, flagged: { fail?: boolean; custom?: boolean }, body: () => unknown) => {
+    const isOpen = set.openGroups.includes(id)
+
+    return (
+      <Box key={`settings-group:${id}`} flexDirection="column" rowGap="xs">
+        <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+          <Button
+            key={`group:${id}`}
+            plain
+            onPress={() => void editSettings($, s => ({ ...s, openGroups: s.openGroups.includes(id) ? s.openGroups.filter(x => x !== id) : [...s.openGroups, id] }))}
+          >
+            {`${isOpen ? '▾' : '▸'} ${name}`}
+          </Button>
+          <Text key={`group-summary:${id}`} size="footnote" color={flagged.fail ? 'warning' : undefined} dimColor={!flagged.fail} wrap="wrap">
+            {summary}
+          </Text>
+          {dot(`group:${id}`, !!flagged.custom)}
+        </Box>
+        {isOpen ? (
+          <Box key={`group-body:${id}`} flexDirection="column" rowGap="xs" paddingLeft={2}>
+            {body() as never}
+          </Box>
+        ) : null}
       </Box>
-      {help && !mini ? <Text dimColor size="footnote" wrap="wrap">{help}</Text> : null}
-    </Box>
-  )
-
-  const section = (title: string, aside?: string) => (
-    <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" marginTop={mini ? 1 : 'xs'}>
-      <Text weight="semibold">{title}</Text>
-      {aside ? <Text dimColor size="footnote">{aside}</Text> : null}
-    </Box>
-  )
-
-  const stat = (label: string, value: string, color?: string, sub?: string) => (
-    <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={12}>
-      <Text dimColor size="caption" wrap="wrap">{label}</Text>
-      <Text weight="semibold" tabular color={color}>{value}</Text>
-      {sub ? <Text size="caption" tabular color={color}>{sub}</Text> : null}
-    </Box>
-  )
+    )
+  }
 
   // Write report, with where it went (or why not) right beside it.
   const reportRow = (key: string) => (
@@ -2185,8 +2220,20 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     </Box>
   )
   const checkGlyph = { ok: '✓', fail: '✗', skip: '–' } as const
+  // The helper checks with their fixes: under the health line's Why, and in Settings → Other subscriptions.
+  const checkList = (where: string) =>
+    checks.map(c => (
+      <Box key={`check:${where}:${c.id}`} flexDirection="column">
+        <Text size="footnote" color={c.state === 'fail' ? 'warning' : undefined} dimColor={c.state === 'skip'} wrap="wrap">{`${checkGlyph[c.state]} ${c.text}`}</Text>
+        {c.state === 'fail' && c.fix ? (
+          <Box paddingLeft={2}>
+            <Text dimColor size="footnote" wrap="wrap">{c.fix}</Text>
+          </Box>
+        ) : null}
+      </Box>
+    ))
   const healthRow = (
-    <Box key="health" flexDirection="column" rowGap="xs">
+    <Box key="section:health" flexDirection="column" rowGap="xs">
       <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
         <Text key="health-line" size="footnote" color={health.ok ? undefined : 'warning'} dimColor={health.ok} wrap="wrap">
           {health.text}
@@ -2199,16 +2246,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>
       {!health.ok && healthOpen && (
         <Box key="health-checks" flexDirection="column" rowGap="xs" paddingLeft={2}>
-          {checks.map(c => (
-            <Box key={`check:${c.id}`} flexDirection="column">
-              <Text size="footnote" color={c.state === 'fail' ? 'warning' : undefined} dimColor={c.state === 'skip'} wrap="wrap">{`${checkGlyph[c.state]} ${c.text}`}</Text>
-              {c.state === 'fail' && c.fix ? (
-                <Box paddingLeft={2}>
-                  <Text dimColor size="footnote" wrap="wrap">{c.fix}</Text>
-                </Box>
-              ) : null}
-            </Box>
-          ))}
+          {checkList('health')}
           {reportRow('health-report')}
         </Box>
       )}
@@ -2219,7 +2257,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const applied = Object.entries(feedback).filter(([k, f]) => f.ok && !nm?.proposals.some(p => p.key === k))
   const modelsCard =
     nm || applied.length > 0 ? (
-      <Box key="new-models" flexDirection="column" rowGap="xs" borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY={mini ? 0 : 'xs'}>
+      <Box key="section:news" flexDirection="column" rowGap="xs" borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY={tty ? 0 : 'xs'}>
         {nm && (
           <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
             <Text weight="semibold">{`New models (${nm.models.length || nm.proposals.length})`}</Text>
@@ -2227,8 +2265,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Box>
         )}
         {nm?.models.map(m => (
-          <Text key={`new-model:${m.key}`} size="footnote" dimColor={!m.note} wrap={mini || tty ? 'truncate' : 'wrap'}>
-            {cardModelLine(m, mini || tty ? 50 : undefined)}
+          <Text key={`new-model:${m.key}`} size="footnote" dimColor={!m.note} wrap={tty ? 'truncate' : 'wrap'}>
+            {cardModelLine(m, tty ? 50 : undefined)}
           </Text>
         ))}
         {nm?.proposals.map(p => {
@@ -2238,7 +2276,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           return (
             <Box key={`proposal:${p.key}`} flexDirection="column">
               <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm" rowGap="xs">
-                <Text size="footnote" wrap={mini || tty ? 'truncate' : 'wrap'}>{line}</Text>
+                <Text size="footnote" wrap={tty ? 'truncate' : 'wrap'}>{line}</Text>
                 <Button key={`model-apply:${p.key}`} onPress={() => void applyProposal($, p.key, line)}>
                   Apply
                 </Button>
@@ -2251,7 +2289,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           )
         })}
         {applied.map(([k, f]) => (
-          <Text key={`proposal-done:${k}`} color="success" size="footnote" wrap={mini || tty ? 'truncate' : 'wrap'}>{`✓ ${f.line} · ${f.text}`}</Text>
+          <Text key={`proposal-done:${k}`} color="success" size="footnote" wrap={tty ? 'truncate' : 'wrap'}>{`✓ ${f.line} · ${f.text}`}</Text>
         ))}
         {nm && nm.models.some(m => m.note) && (
           <Button key="model-card-notes" plain onPress={() => void update($, showCardNotes, v => !v)}>
@@ -2276,117 +2314,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>
     ) : null
 
-  const savedOf = (t: Totals) => Math.max(0, t.mainEquivalent - t.agentCost)
-  const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—')
-  const since = (iso?: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '')
-  const VIEWS: { value: CostView; label: string }[] = [
-    { value: 'plan', label: 'This plan' },
-    { value: 'chat', label: 'This chat' },
-    { value: 'all', label: 'All time' },
-  ]
+  // --- Plan ---------------------------------------------------------------------
 
-  // The money at the top: one span at a time, picked with a small segmented switch.
-  // Saved as a share of what the same work would have cost with no routing:
-  // main chat + what the subagents' tokens would have cost on the main model.
-  const savedStat = (amount: number, mainSpent: number, equivalent: number) =>
-    stat(
-      'Saved',
-      amount > 0 ? `≈${fmtUsd(amount)}` : '—',
-      amount > 0 ? 'success' : undefined,
-      amount > 0 ? `${pct(amount, mainSpent + equivalent)} of the total` : undefined,
-    )
-
-  const costCard = () => {
-    const planMain = Math.max(0, m.cost - base.mainCost)
-    const chatSaved = savedOf(chat)
-    const lifeSaved = savedOf(life)
-    // Some tokens ran on a model with no price: their money is "?".
-    const planUnpriced = list.some(x => x.unpriced)
-    // What was moved to helpers, in each provider's own unit, for the span picked; with helpers on and none run yet, an empty state.
-    // Helper steps that ran as subagents instead are counted beside it, with the latest reason.
-    const fell = view === 'plan' ? planFallbacks(list) : view === 'chat' ? { n: chat.fallbacks ?? 0, reason: chat.lastFallback } : { n: life.fallbacks ?? 0, reason: life.lastFallback }
-    const movedLine = helperLine(view === 'plan' ? helperTotalsOf(list) : view === 'chat' ? chat.helper : life.helper)
-    const moved = movedLine
-      ? `${movedLine}${fallbackLine(fell.n, fell.reason)}`
-      : set.helpers.enabled || fell.n > 0
-        ? `Off Claude: no helper steps yet${fallbackLine(fell.n, fell.reason)}`
-        : undefined
-    const body =
-      view === 'plan' ? (
-        <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
-          {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, fmtCost(planMain, m.unpriced))}
-          {stat('Subagents', fmtCost(agentCost, planUnpriced))}
-          {savedStat(saved, planMain, list.reduce((n, x) => n + x.mainCost, 0))}
-        </Box>
-      ) : view === 'chat' ? (
-        <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
-          {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, fmtCost(m.cost, m.unpriced))}
-          {stat('Subagents', fmtCost(chat.agentCost, chat.unpriced))}
-          {savedStat(chatSaved, m.cost, chat.mainEquivalent)}
-        </Box>
-      ) : (
-        <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
-          {savedStat(lifeSaved, life.mainCost, life.mainEquivalent)}
-          {stat('Subagents cost', `≈${fmtUsd(life.agentCost)}`)}
-          {stat('On main model', `≈${fmtUsd(life.mainEquivalent)}`)}
-        </Box>
-      )
-    const viewSwitch = (
-      <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
-        {VIEWS.map(v => (
-          <Button key={`cost-view:${v.value}`} plain={v.value !== view ? true : undefined} variant={v.value === view ? 'primary' : undefined} onPress={() => void update($, costView, () => v.value)}>
-            {v.label}
-          </Button>
-        ))}
-      </Box>
-    )
-    if (tty || mini) {
-      // Two rows: the switch, then main · subagents · saved on one line.
-      const [mainSpent, agents, savedNow, equivalent] =
-        view === 'plan'
-          ? [planMain, agentCost, saved, list.reduce((n, x) => n + x.mainCost, 0)]
-          : view === 'chat'
-            ? [m.cost, chat.agentCost, chatSaved, chat.mainEquivalent]
-            : [life.mainCost, life.agentCost, lifeSaved, life.mainEquivalent]
-      const [mainOpen, agentsOpen] = view === 'plan' ? [m.unpriced, planUnpriced] : view === 'chat' ? [m.unpriced, chat.unpriced] : [false, false]
-      return (
-        <Box flexDirection="column">
-          {viewSwitch}
-          <Text size="footnote" tabular wrap="wrap">
-            <Text dimColor>{`main${m.model && view !== 'all' ? ` (${m.model})` : ''} `}</Text>
-            {fmtCost(mainSpent, mainOpen)}
-            <Text dimColor> · subagents </Text>
-            {fmtCost(agents, agentsOpen)}
-            <Text dimColor> · saved </Text>
-            <Text color={savedNow > 0 ? 'success' : undefined}>
-              {savedNow > 0 ? `≈${fmtUsd(savedNow)} (${pct(savedNow, mainSpent + equivalent)})` : '—'}
-            </Text>
-          </Text>
-          {moved && <Text size="footnote" wrap="wrap">{moved}</Text>}
-        </Box>
-      )
-    }
-    const foot =
-      view === 'plan'
-        ? `Since this plan was posted${base.at ? ` (${new Date(base.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })})` : ''}. A new plan starts a new count.`
-        : view === 'chat'
-          ? `Since this chat was opened or its plugins reloaded: ${chat.steps + chat.helper.steps} delegated steps${chat.helper.steps || set.helpers.enabled ? ` (${chat.helper.steps} on helpers)` : ''}. Earlier turns are not counted.`
-          : `Since ${since(life.since)}: ${life.steps + life.helper.steps} delegated steps${life.helper.steps || set.helpers.enabled ? ` (${life.helper.steps} on helpers)` : ''} in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
-    return (
-      <Box flexDirection="column" rowGap="xs" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
-        {viewSwitch}
-        {body}
-        {moved && <Text size="footnote" wrap="wrap">{moved}</Text>}
-        <Text dimColor size="caption" wrap="wrap">{foot}</Text>
-      </Box>
-    )
-  }
-
-  // The four pickers of a step: where it runs, tier, and (for a subagent) model and thinking.
+  // The four pickers of a step: where it runs, its level, and (for a Claude agent) model and effort.
   const stepPickers = (s: Step) => {
-    // The default a step runs on without picks of its own: its tier's, its kind's, or what auto mode learned.
+    // The default a step runs on without picks of its own: its level's, its kind's, or what auto mode learned.
     const base = baseRung(s, set, learned)
-    const from = base.source === 'tier' ? 'tier' : base.source === 'kind' ? 'kind' : 'auto'
+    const from = base.source === 'tier' ? 'level' : base.source === 'kind' ? 'kind' : 'auto'
     // An edit not yet sent carries a mark beside its picker.
     const mark = (field: keyof StepDraft) =>
       held[s.id] && field in held[s.id]! ? (
@@ -2400,15 +2334,15 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         `where:${s.id}`,
         s.where,
         [
-          { value: 'agent', label: 'subagent' },
-          { value: 'here', label: 'here' },
-          ...(helpersLive(set) || s.where === 'helper' ? [{ value: 'helper', label: 'helper' }] : []),
+          { value: 'agent', label: whereLabel('agent') },
+          { value: 'here', label: whereLabel('here') },
+          ...(helpersLive(set) || s.where === 'helper' ? [{ value: 'helper', label: whereLabel('helper', tight) }] : []),
         ],
         v => void paneEdit($, s.id, { where: v as Where }),
       ),
       mark('where'),
-      // On a here step the tier is a rating, not a setting of this chat: a label, not a picker.
-      // Sending the step to a subagent brings the picker back.
+      // On a here step the level is a rating, not a setting of this chat: a label, not a picker.
+      // Sending the step to a Claude agent brings the picker back.
       s.where === 'here' ? (
         <Text key={`tier:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>
       ) : (
@@ -2436,8 +2370,6 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ]
   }
 
-  // Minimal view: two lines a step, no border and no explanation. The title, then the
-  // pickers with the cost and any rerun beside them.
   // N identical agents at once: "×4", and how many have finished while it runs.
   const countTag = (s: Step) =>
     s.count && s.count > 1 ? (
@@ -2450,8 +2382,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return facts ? <Text key={`facts:${s.id}`} dimColor size="footnote" tabular>{facts}</Text> : null
   }
-  // The kind of work, and where the rung comes from when it is not the tier: "auto: sonnet · high (learned, 5 runs)".
   const kindTag = (s: Step) => (s.kind ? <Text key={`kind:${s.id}`} dimColor size="footnote">{s.kind}</Text> : null)
+  // Where the rung comes from when it is not the level: "auto: sonnet · high (learned, 5 runs)".
   const rungFrom = (s: Step) => {
     if (s.where !== 'agent' || (s.model && s.effort)) return null
     const b = baseRung(s, set, learned)
@@ -2469,23 +2401,30 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     return p.template ? (
       <Text key={`pick:${s.id}`} color="suggestion" size="footnote" wrap="wrap">{`launch ${p.template} · ${p.model} ${p.effort} · ${pickSource(p)}`}</Text>
     ) : (
-      <Text key={`pick:${s.id}`} color="warning" size="footnote" wrap="wrap">{`no template for ${p.model} ${p.effort} (${p.error ?? 'unknown'}): the tier order applies`}</Text>
+      <Text key={`pick:${s.id}`} color="warning" size="footnote" wrap="wrap">{`no template for ${p.model} ${p.effort} (${p.error ?? 'unknown'}): the order applies`}</Text>
     )
   }
-  // The lead's verdict on a finished delegated step, or that it has none yet.
+  // The lead's verdict on a finished delegated step: one word on the row, the why and "cut short?" in the details.
+  const hasVerdictLine = (s: Step) => isDelegated(s) && s.status === 'done'
+  const verdictColor = (s: Step) => (s.verdict === 'weak' ? 'warning' : s.verdict === 'overkill' ? 'suggestion' : undefined)
+  const verdictWord = (s: Step) =>
+    hasVerdictLine(s) ? (
+      <Text key={`verdict-word:${s.id}`} color={verdictColor(s)} dimColor={!s.verdict || s.verdict === 'ok' || s.verdict === 'cut-short'} size="footnote">
+        {s.verdict === 'cut-short' ? 'cut short' : (s.verdict ?? 'no verdict yet')}
+      </Text>
+    ) : null
   const verdictText = (s: Step) => {
-    if (!isDelegated(s) || s.status !== 'done') return null
-    const color = s.verdict === 'weak' ? 'warning' : s.verdict === 'overkill' ? 'suggestion' : undefined
+    if (!hasVerdictLine(s)) return null
     const label =
       s.verdict === 'cut-short'
-        ? `cut short${mini ? '' : ': says nothing about the model, left out of the advice'}`
+        ? 'cut short: says nothing about the model, left out of the advice'
         : s.verdict
-          ? `verdict ${s.verdict}${s.why && !mini ? `: ${s.why}` : ''}`
+          ? `verdict ${s.verdict}${s.why ? `: ${s.why}` : ''}`
           : 'no verdict yet'
 
     return (
       <Box key={`verdict-row:${s.id}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center">
-        <Text key={`verdict:${s.id}`} color={color} dimColor={!s.verdict || s.verdict === 'ok' || s.verdict === 'cut-short'} size="footnote" wrap="wrap">
+        <Text key={`verdict:${s.id}`} color={verdictColor(s)} dimColor={!s.verdict || s.verdict === 'ok' || s.verdict === 'cut-short'} size="footnote" wrap="wrap">
           {label}
         </Text>
         {/* A run stopped by a lost connection, a quota or a crash: one quiet link takes it out of the advice; again puts it back. */}
@@ -2495,163 +2434,121 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>
     )
   }
-  // A helper step that ran as a subagent instead, and why.
-  const fallbackText = (s: Step) =>
-    s.fallback ? <Text key={`fallback:${s.id}`} dimColor size="footnote" wrap="wrap">{`ran as a subagent: ${s.fallback}`}</Text> : null
-  // A step whose tokens ran on a model with no price: its money is "?".
-  const unpricedText = (s: Step) =>
-    s.unpriced ? <Text key={`unpriced:${s.id}`} color="warning" size="footnote">{fmtCost(s.cost, true)}</Text> : null
 
-  // A group: its title, how many parts are done and what they cost together. Its tier only rates it.
-  const groupCard = (s: Step) => {
-    const r = rollupOf(list, s)
-    const head = (
-      <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
-        <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-        <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
-        <Text weight="semibold" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
-        <Text color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>
-        <Text dimColor size="footnote">{`${r.done}/${r.total} done`}</Text>
-        {r.cost > 0 && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(r.cost)}`}</Text>}
+  const isOpen = (s: Step) => stepOpen(pv, set, s.id)
+  const opener = (s: Step) => (
+    <Button key={`open:${s.id}`} plain onPress={() => void update($, paneView, v => ({ ...v, toggled: { ...v.toggled, [s.id]: !stepOpen(v, set, s.id) } }))}>
+      {isOpen(s) ? '▾' : '▸'}
+    </Button>
+  )
+  // Line 1 of a row: the opener, status, id, title (wrapping) and tags.
+  const rowHead = (s: Step, tags: unknown[]) => (
+    <Box flexDirection="row" columnGap="sm" alignItems="center">
+      {opener(s)}
+      <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
+      <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+      <Box flexShrink={1}>
+        <Text weight={s.group ? 'semibold' : 'medium'} wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
       </Box>
-    )
+      {tags as never}
+    </Box>
+  )
+
+  // A group: its title, how many parts are done and what they cost together. Its level only rates it.
+  const groupRow = (s: Step) => {
+    const r = rollupOf(list, s)
     const moved = helperLine(r.helper)
-    if (mini) {
-      return (
-        <Box key={`card:${s.id}`} flexDirection="column">
-          {head}
-          {moved && <Text dimColor size="footnote" wrap="wrap">{moved}</Text>}
-        </Box>
-      )
-    }
     const tokens = r.usage.input + r.usage.cacheWrite + r.usage.output
 
     return (
-      <Box key={`card:${s.id}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={s.status === 'running' ? 'warning' : 'subtle'} paddingX="sm" paddingY={tty ? undefined : 'xs'}>
-        {head}
-        {r.cost > 0 && (
-          <Text dimColor size="footnote" tabular>
-            ≈{fmtUsd(r.cost)} · {fmtTok(tokens)} tok + {fmtTok(r.usage.cacheRead)} cached
-            {r.mainCost > r.cost ? ` · saved ≈${fmtUsd(r.mainCost - r.cost)}` : ''}
-          </Text>
-        )}
-        {moved && <Text dimColor size="footnote" wrap="wrap">{moved}</Text>}
-      </Box>
-    )
-  }
-
-  const miniCard = (s: Step) => {
-    const own = planOf(s.id) ?? s
-    const up = own.where === 'agent' && own.status === 'done' ? nextRung(runsOn(own, set, learned), set) : undefined
-
-    return (
       <Box key={`card:${s.id}`} flexDirection="column">
-        <Box flexDirection="row" columnGap="sm">
-          <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-          <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
-          <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
-          {countTag(s)}
-          {kindTag(s)}
-        </Box>
-        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
-          {stepPickers(s)}
-          {s.cost > 0 && !s.unpriced && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
-          {unpricedText(s)}
-          {rungFrom(s)}
-          {pickLine(s)}
-          {verdictText(s)}
-          {fallbackText(s)}
-          {helperInfo(s)}
-          {helperFactsText(s)}
-          {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
-          {hereNeeds(s, set, m.model) && <Text color="warning" size="footnote">{`⚠ rated for ${hereNeeds(s, set, m.model)}`}</Text>}
-          {up && (
-            <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
-              {`↑ ${rungLabel(up)}`}
-            </Button>
-          )}
-        </Box>
-        {changeNoted(s) && <Box paddingLeft={2}>{notedLine(s)}</Box>}
+        {rowHead(s, [
+          <Text key={`rated:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>,
+          <Text key={`parts:${s.id}`} dimColor size="footnote">{`${r.done}/${r.total} done`}</Text>,
+          r.cost > 0 ? <Text key={`gcost:${s.id}`} dimColor size="footnote" tabular>{`≈${fmtUsd(r.cost)}`}</Text> : null,
+        ])}
+        {isOpen(s) && (r.cost > 0 || moved) ? (
+          <Box key={`details:${s.id}`} flexDirection="column" paddingLeft={4}>
+            {r.cost > 0 && (
+              <Text dimColor size="footnote" tabular wrap="wrap">
+                ≈{fmtUsd(r.cost)} · {fmtTok(tokens)} tok + {fmtTok(r.usage.cacheRead)} cached
+                {r.mainCost > r.cost ? ` · saved ≈${fmtUsd(r.mainCost - r.cost)}` : ''}
+              </Text>
+            )}
+            {moved && <Text dimColor size="footnote" wrap="wrap">{moved}</Text>}
+          </Box>
+        ) : null}
       </Box>
     )
   }
 
-  const card = (s: Step) => {
-    if (s.group) return groupCard(s)
-    if (mini) return miniCard(s)
+  // A step: two lines (title; pickers, cost, verdict, rerun), its details under it when open.
+  const stepRow = (s: Step) => {
+    if (s.group) return groupRow(s)
     const now = runsOn(s, set, learned)
     const own = planOf(s.id) ?? s
     const up = own.where === 'agent' && own.status === 'done' ? nextRung(runsOn(own, set, learned), set) : undefined
     const tokens = s.usage.input + s.usage.cacheWrite + s.usage.output
+    const needs = hereNeeds(s, set, m.model)
+
     return (
-      <Box
-        key={`card:${s.id}`}
-        flexDirection="column"
-        rowGap="xs"
-        borderStyle="round"
-        borderColor={s.status === 'running' ? 'warning' : 'subtle'}
-        paddingX="sm"
-        paddingY={tty ? undefined : 'xs'}
-      >
-        <Box flexDirection="row" columnGap="sm" alignItems="center">
-          <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-          <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
-          <Text weight="medium" wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
-          {countTag(s)}
-          {kindTag(s)}
-        </Box>
-        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
+      <Box key={`card:${s.id}`} flexDirection="column">
+        {rowHead(s, [countTag(s), kindTag(s)])}
+        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={4}>
           {stepPickers(s)}
-        </Box>
-        {rungFrom(s)}
-        {pickLine(s)}
-        {notedLine(s)}
-        {s.where === 'here' && (
-          <Text dimColor size="footnote" wrap="wrap">
-            {tty
-              ? `Runs in this chat on ${m.model ?? 'its model'} and its thinking level; the tier is a rating, used if you send it to a subagent (then you can change it).`
-              : `Done in this chat, on ${m.model ?? "this chat's model"} and its thinking level, which the tier cannot change. The tier rates the step and only picks a model if you send it to a subagent.`}
-          </Text>
-        )}
-        {hereNeeds(s, set, m.model) && (
-          <Text color="warning" size="footnote" wrap="wrap">
-            {`Rated ${s.tier} (${hereNeeds(s, set, m.model)}), but this chat runs on ${m.model}: send it to a subagent, or switch this chat's model.`}
-          </Text>
-        )}
-        {s.where === 'here' && s.effortNote && set.hereEffort.enabled && (
-          <Text color={s.effortNote.startsWith('Kept') ? 'warning' : undefined} dimColor={!s.effortNote.startsWith('Kept')} size="footnote" wrap="wrap">
-            {s.effortNote}
-          </Text>
-        )}
-        {s.where === 'helper' && !s.helper && (
-          <Text dimColor size="footnote" wrap="wrap">
-            {`Runs on another subscription's agent (${helperOrder(set, s.tier)}); a subagent if none is usable.`}
-          </Text>
-        )}
-        {helperInfo(s)}
-        {helperFactsText(s)}
-        {s.cost > 0 && !s.unpriced && (
-          <Text dimColor size="footnote" tabular>
-            ≈{fmtUsd(s.cost)} · {fmtTok(tokens)} tok + {fmtTok(s.usage.cacheRead)} cached
-            {s.mainCost > s.cost ? ` · saved ≈${fmtUsd(s.mainCost - s.cost)}` : ''}
-            {s.reruns > 0 ? ` · rerun ${s.reruns}×` : ''}
-          </Text>
-        )}
-        {s.unpriced && (
-          <Text color="warning" size="footnote" tabular wrap="wrap">
-            {`${fmtCost(s.cost, true)} · ${fmtTok(tokens)} tok + ${fmtTok(s.usage.cacheRead)} cached · no price for ${s.resolvedModel ?? now.model}: left out of savings (Settings → Models)`}
-          </Text>
-        )}
-        {verdictText(s)}
-        {fallbackText(s)}
-        {s.setupHeavy && (
-          <Text color="warning" size="footnote">Mostly start-up cost: a step this small is cheaper done here.</Text>
-        )}
-        {up && (
-          <Box flexDirection="row">
+          {s.cost > 0 && !s.unpriced && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
+          {s.unpriced && <Text key={`unpriced:${s.id}`} color="warning" size="footnote">{fmtCost(s.cost, true)}</Text>}
+          {helperInfo(s)}
+          {verdictWord(s)}
+          {needs && <Text color="warning" size="footnote">{`⚠ rated for ${needs}`}</Text>}
+          {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
+          {changeNoted(s) && <Text key={`noted:${s.id}`} color="suggestion" size="footnote">change noted, applies from the next turn</Text>}
+          {up && (
             <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
               {`↑ Rerun on ${rungLabel(up)}`}
             </Button>
+          )}
+        </Box>
+        {isOpen(s) && (
+          <Box key={`details:${s.id}`} flexDirection="column" rowGap="xs" paddingLeft={4}>
+            {rungFrom(s)}
+            {pickLine(s)}
+            {s.where === 'here' && (
+              <Text dimColor size="footnote" wrap="wrap">
+                {`Runs in this chat on ${m.model ?? 'its model'} at its own effort; the level is a rating, used if you send it to a Claude agent (then you can change it).`}
+              </Text>
+            )}
+            {needs && (
+              <Text color="warning" size="footnote" wrap="wrap">
+                {`Rated ${s.tier} (${needs}), but this chat runs on ${m.model}: send it to a Claude agent, or switch this chat's model.`}
+              </Text>
+            )}
+            {s.where === 'here' && s.effortNote && set.hereEffort.enabled && (
+              <Text color={s.effortNote.startsWith('Kept') ? 'warning' : undefined} dimColor={!s.effortNote.startsWith('Kept')} size="footnote" wrap="wrap">
+                {s.effortNote}
+              </Text>
+            )}
+            {s.where === 'helper' && !s.helper && (
+              <Text dimColor size="footnote" wrap="wrap">
+                {`Runs on another subscription's agent (${helperOrder(set, s.tier)}); a Claude agent if none is usable.`}
+              </Text>
+            )}
+            {helperFactsText(s)}
+            {s.cost > 0 && !s.unpriced && (
+              <Text dimColor size="footnote" tabular wrap="wrap">
+                ≈{fmtUsd(s.cost)} · {fmtTok(tokens)} tok + {fmtTok(s.usage.cacheRead)} cached
+                {s.mainCost > s.cost ? ` · saved ≈${fmtUsd(s.mainCost - s.cost)}` : ''}
+                {s.reruns > 0 ? ` · rerun ${s.reruns}×` : ''}
+              </Text>
+            )}
+            {s.unpriced && (
+              <Text color="warning" size="footnote" tabular wrap="wrap">
+                {`${fmtCost(s.cost, true)} · ${fmtTok(tokens)} tok + ${fmtTok(s.usage.cacheRead)} cached · no price for ${s.resolvedModel ?? now.model}: left out of savings (Settings → Models and prices)`}
+              </Text>
+            )}
+            {verdictText(s)}
+            {s.fallback ? <Text key={`fallback:${s.id}`} dimColor size="footnote" wrap="wrap">{`ran as a Claude agent: ${s.fallback}`}</Text> : null}
+            {s.setupHeavy && <Text color="warning" size="footnote" wrap="wrap">Mostly start-up cost: a step this small is cheaper done here.</Text>}
           </Box>
         )}
       </Box>
@@ -2664,142 +2561,719 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return indent > 0 ? (
       <Box key={`row:${s.id}`} flexDirection="column" paddingLeft={indent}>
-        {card(s)}
+        {stepRow(s)}
       </Box>
     ) : (
-      card(s)
+      stepRow(s)
     )
   }
 
+  const allOpen = list.length > 0 && list.every(isOpen)
+  const GLOSSARY: [string, string][] = [
+    ['light · standard · deep', 'how hard a step is; it picks the model a Claude agent or other subscription runs on'],
+    ['this chat', 'the step is done here, on this chat’s own model and effort'],
+    ['Claude agent', 'a separate Claude helper (a subagent) on the level’s model'],
+    ['other subscription', 'an agent of another account or service (Copilot, Codex, Kiro, Antigravity), through herdr-delegate'],
+    ['kind', 'the sort of work (write-code, code-review…); the router learns per kind which model does it well'],
+    ['verdict', 'ok · weak (needed more) · overkill (a cheaper model would do) · cut short (stopped by a fault, not counted)'],
+    ['effort', 'how long the model thinks before it answers: low, medium, high, xhigh, max'],
+    ['saved', 'what delegated steps cost less than the same work on this chat’s model'],
+    ...(tty ? ([['⇄', 'a button that picks the next option on Enter']] as [string, string][]) : []),
+  ]
+  const planSection = (
+    <Box key="section:plan" flexDirection="column" rowGap="xs">
+      {list.length === 0 ? (
+        <Box flexDirection="column">
+          <Text key="plan-empty" size="footnote" wrap="wrap">No plan yet. Multi-step tasks show their steps here.</Text>
+          {!always && <Text dimColor size="footnote" wrap="wrap">Turn on "Plan every message" in Settings to plan every message.</Text>}
+        </Box>
+      ) : (
+        <Box flexDirection="column" rowGap="xs">
+          <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+            <Text key="plan-head" weight="semibold" wrap="wrap">
+              {`Plan · ${done} of ${work.length} done`}
+              {status === 'pending' ? <Text color="warning">{' · awaiting your approval'}</Text> : null}
+            </Text>
+            <Box flexDirection="row" columnGap="sm">
+              <Button key="glossary" plain onPress={() => void update($, showGlossary, v => !v)}>
+                {glossaryOpen ? '? ▾' : '?'}
+              </Button>
+              <Button
+                key="expand-all"
+                plain
+                onPress={() =>
+                  void (async () => {
+                    await update($, paneView, () => ({ all: !allOpen, toggled: {} }))
+                    // Remembered for new chats too, as the Minimal view was.
+                    await editSettings($, s => ({ ...s, expandAll: !allOpen }))
+                  })()
+                }
+              >
+                {allOpen ? 'Collapse all' : 'Expand all'}
+              </Button>
+            </Box>
+          </Box>
+          {status === 'pending' && (
+            <Text dimColor size="footnote" wrap="wrap">
+              Change steps here, then pick "Run it" in the chat; "Change the steps" to add, drop or reword.
+            </Text>
+          )}
+        </Box>
+      )}
+      {glossaryOpen && list.length > 0 && (
+        <Box key="glossary-list" flexDirection="column" paddingLeft={2}>
+          {GLOSSARY.map(([term, what]) => (
+            <Text key={`term:${term}`} size="footnote" wrap="wrap">
+              <Text weight="medium">{term}</Text>
+              <Text dimColor>{`: ${what}`}</Text>
+            </Text>
+          ))}
+        </Box>
+      )}
+      {heldCount > 0 && (
+        <Box key="draft-bar" flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+          <Button key="draft-send" variant="primary" onPress={() => void sendDraft($)}>
+            {`Send changes (${heldCount})`}
+          </Button>
+          <Button key="draft-discard" plain onPress={() => void discardDraft($)}>
+            Discard
+          </Button>
+          <Text dimColor size="footnote" wrap="wrap">✎ edits wait until you send them</Text>
+        </Box>
+      )}
+      <Box flexDirection="column" rowGap="xs">
+        {list.map(row)}
+      </Box>
+      {list.length > 0 && (
+        <Box flexDirection="row">
+          <Button key="clear" plain dimColor onPress={() => void clearPlan($)}>Clear plan</Button>
+        </Box>
+      )}
+    </Box>
+  )
+
+  // --- Cost -----------------------------------------------------------------------
+
+  const savedOf = (t: Totals) => Math.max(0, t.mainEquivalent - t.agentCost)
+  const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—')
+  const since = (iso?: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '')
+  const VIEWS: { value: CostView; label: string }[] = [
+    { value: 'plan', label: 'This plan' },
+    { value: 'chat', label: 'This chat' },
+    { value: 'all', label: 'All time' },
+  ]
+  const stat = (label: string, value: string, color?: string, sub?: string) => (
+    <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={12}>
+      <Text dimColor size="caption" wrap="wrap">{label}</Text>
+      <Text weight="semibold" tabular color={color}>{value}</Text>
+      {sub ? <Text size="caption" tabular color={color}>{sub}</Text> : null}
+    </Box>
+  )
+  // Saved as a share of what the same work would have cost with no routing:
+  // main chat + what the subagents' tokens would have cost on the main model.
+  const savedStat = (amount: number, mainSpent: number, equivalent: number) =>
+    stat('Saved', amount > 0 ? `≈${fmtUsd(amount)}` : '—', amount > 0 ? 'success' : undefined, amount > 0 ? `${pct(amount, mainSpent + equivalent)} of the total` : undefined)
+
+  const planMain = Math.max(0, m.cost - base.mainCost)
+  const chatSaved = savedOf(chat)
+  const lifeSaved = savedOf(life)
+  // Some tokens ran on a model with no price: their money is "?".
+  const planUnpriced = list.some(x => x.unpriced)
+  const planEquivalent = list.reduce((n, x) => n + x.mainCost, 0)
+  const [mainSpent, agents, savedNow, equivalent] =
+    view === 'plan'
+      ? [planMain, agentCost, saved, planEquivalent]
+      : view === 'chat'
+        ? [m.cost, chat.agentCost, chatSaved, chat.mainEquivalent]
+        : [life.mainCost, life.agentCost, lifeSaved, life.mainEquivalent]
+  const [mainOpen, agentsOpen] = view === 'plan' ? [m.unpriced, planUnpriced] : view === 'chat' ? [m.unpriced, chat.unpriced] : [false, false]
+  // What was moved to helpers, in each provider's own unit, for the span picked; with helpers on and none run yet, an empty state.
+  // Helper steps that ran as subagents instead are counted beside it, with the latest reason.
+  const fell = view === 'plan' ? planFallbacks(list) : view === 'chat' ? { n: chat.fallbacks ?? 0, reason: chat.lastFallback } : { n: life.fallbacks ?? 0, reason: life.lastFallback }
+  const movedLine = helperLine(view === 'plan' ? helperTotalsOf(list) : view === 'chat' ? chat.helper : life.helper)
+  const moved = movedLine
+    ? `${movedLine}${fallbackLine(fell.n, fell.reason)}`
+    : set.helpers.enabled || fell.n > 0
+      ? `Off Claude: no helper steps yet${fallbackLine(fell.n, fell.reason)}`
+      : undefined
+  const tiles =
+    view === 'plan' ? (
+      <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
+        {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, fmtCost(planMain, m.unpriced))}
+        {stat('Subagents', fmtCost(agentCost, planUnpriced))}
+        {savedStat(saved, planMain, planEquivalent)}
+      </Box>
+    ) : view === 'chat' ? (
+      <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
+        {stat(`Main chat${m.model ? ` · ${m.model}` : ''}`, fmtCost(m.cost, m.unpriced))}
+        {stat('Subagents', fmtCost(chat.agentCost, chat.unpriced))}
+        {savedStat(chatSaved, m.cost, chat.mainEquivalent)}
+      </Box>
+    ) : (
+      <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
+        {savedStat(lifeSaved, life.mainCost, life.mainEquivalent)}
+        {stat('Subagents cost', `≈${fmtUsd(life.agentCost)}`)}
+        {stat('On main model', `≈${fmtUsd(life.mainEquivalent)}`)}
+      </Box>
+    )
+  const foot =
+    view === 'plan'
+      ? `Since this plan was posted${base.at ? ` (${new Date(base.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })})` : ''}. A new plan starts a new count.`
+      : view === 'chat'
+        ? `Since this chat was opened or its plugins reloaded: ${chat.steps + chat.helper.steps} delegated steps${chat.helper.steps || set.helpers.enabled ? ` (${chat.helper.steps} on helpers)` : ''}. Earlier turns are not counted.`
+        : `Since ${since(life.since)}: ${life.steps + life.helper.steps} delegated steps${life.helper.steps || set.helpers.enabled ? ` (${life.helper.steps} on helpers)` : ''} in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
   const stats = rungStats(past)
   const kinds = kindStats(past)
-  const mapped = Object.entries(set.skills)
-  const unmapped = seen.filter(n => !(n in set.skills))
+  const hasAdvice = advice.length > 0 || helperAdvice.length > 0
 
-  return (
-    <Box flexDirection="column" rowGap={mini ? 0 : tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
-      {healthRow}
-      {modelsCard}
-      {tty && (
-        <Text dimColor size="caption" wrap="wrap">
-          {site.isFocused
-            ? '↑↓ scroll · Tab buttons · Esc back to the prompt'
-            : `${(site.scroll?.offset ?? 0) > 0 ? '↑ scrolled · ' : ''}ctrl+x tab, then ↑↓ to scroll${status === 'pending' && !mini ? ' (after answering the plan question)' : ''}`}
+  const costSection = (
+    <Box key="section:cost" flexDirection="column" rowGap="xs">
+      <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+        <Button key="cost-view" plain onPress={() => void update($, costView, v => cycle(VIEWS.map(x => x.value), v) as CostView)}>
+          {`${VIEWS.find(x => x.value === view)?.label ?? 'This plan'} ▾`}
+        </Button>
+        <Text key="cost-line" size="footnote" tabular wrap="wrap">
+          <Text dimColor>{`main${m.model && view !== 'all' ? ` (${m.model})` : ''} `}</Text>
+          {fmtCost(mainSpent, mainOpen)}
+          <Text dimColor> · subagents </Text>
+          {fmtCost(agents, agentsOpen)}
+          <Text dimColor> · saved </Text>
+          <Text color={savedNow > 0 ? 'success' : undefined}>{savedNow > 0 ? `≈${fmtUsd(savedNow)} (${pct(savedNow, mainSpent + equivalent)})` : '—'}</Text>
         </Text>
-      )}
-      <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-        <Box flexDirection="column">
-          <Text size="heading" weight="semibold">Model router</Text>
-          <Text dimColor size="footnote">
-            {list.length === 0 ? 'No plan yet' : `${done} of ${work.length} steps done`}
-            {status === 'pending' ? ' · awaiting your approval' : ''}
-          </Text>
-        </Box>
-        <Box flexDirection="row" flexWrap="wrap" justifyContent="flex-end" columnGap="sm">
-          <Button key="minimal" plain onPress={() => void editSettings($, x => ({ ...x, compact: !x.compact }))}>
-            {mini ? 'Minimal ✓' : 'Minimal'}
-          </Button>
-          <Button key="settings" plain onPress={() => void (async () => {
-            if (!isSettingsOpen) await refreshShared($)
-            await update($, showSettings, v => !v)
-          })()}>
-            {isSettingsOpen ? 'Settings ▾' : 'Settings ▸'}
-          </Button>
-        </Box>
       </Box>
+      {moved && <Text key="moved-line" size="footnote" wrap="wrap">{moved}</Text>}
+      <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+        <Text key="history-line" dimColor size="footnote" wrap="wrap">
+          {hasAdvice ? `History: ${past.length} run${past.length === 1 ? '' : 's'}; advice below.` : historyLine(past)}
+        </Text>
+        <Button key="cost-details" plain onPress={() => void update($, showCostDetails, v => !v)}>
+          {costOpen ? 'Details ▾' : 'Details ▸'}
+        </Button>
+      </Box>
+      {costOpen && (
+        <Box key="cost-detail-body" flexDirection="column" rowGap="xs" paddingLeft={2}>
+          {tiles}
+          <Text dimColor size="caption" wrap="wrap">{foot}</Text>
+          {stats.map(r => (
+            <Box key={`rung:${r.label}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" columnGap="sm">
+              <Text mono size="footnote">{r.label}</Text>
+              <Text dimColor size="footnote" tabular wrap="wrap">
+                {r.n} runs · {r.reruns} reruns{r.isHelper ? '' : ` · ≈${fmtUsd(r.avgCost)} each`}{r.setupHeavy ? ` · ${r.setupHeavy} start-up heavy` : ''}
+                {verdictLine(r.verdicts) ? ` · ${verdictLine(r.verdicts)}` : ''}
+              </Text>
+            </Box>
+          ))}
+          {kinds.map(k => (
+            <Box key={`kind-stats:${k.kind}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" columnGap="sm">
+              <Text size="footnote">{k.kind}</Text>
+              <Text dimColor size="footnote" tabular wrap="wrap">
+                {`${k.n} runs · ${k.reruns} reruns${verdictLine(k.verdicts) ? ` · ${verdictLine(k.verdicts)}` : ''}`}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {advice.map(a => {
+        const key = a.kind ? `kind:${a.kind}` : `tier:${a.tier}`
+        const what = a.kind ? `${a.kind}'s default` : `the ${a.tier} level`
 
-      {isSettingsOpen && (
-        <Box key="settings-panel" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX="md" paddingY={mini ? 0 : 'sm'}>
-          <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-            <Text size="heading" weight="semibold">Settings</Text>
-            <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
-              Done
+        return (
+          <Box key={`advice:${key}`} flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+            <Text size="footnote" color={a.isRaise ? 'warning' : 'success'}>{a.isRaise ? '↑' : '↓'}</Text>
+            <Box flexShrink={1}>
+              <Text size="footnote" wrap="wrap">
+                {a.why}: {a.isRaise ? 'raise' : 'try lowering'} {what} to {rungLabel(a.to)}.
+              </Text>
+            </Box>
+            <Button key={a.kind ? `apply-kind:${a.kind}` : `apply:${a.tier}`} variant="primary" onPress={() => void applySuggestion($, a)}>
+              {`Apply: ${rungLabel(a.to)}`}
             </Button>
           </Box>
-          {anyDiffers && (
-            <Text dimColor size="footnote">
-              • differs from the default
-            </Text>
-          )}
+        )
+      })}
+      {helperAdvice.map(a => {
+        const key = a.kind ? `kind:${a.kind}` : `tier:${a.provider}:${a.tier}`
+        const what = a.kind ? `${a.kind}'s helper` : `${a.provider}'s ${a.tier} helper`
 
-          {group('Behaviour')}
-          {switchRow('compact', 'Minimal view', 'Show only the steps and their settings, with no explanatory text, so a long plan fits without scrolling.', mini, () =>
-            void editSettings($, x => ({ ...x, compact: !x.compact })),
-            differs.compact,
-          )}
-          {switchRow('always', 'Always plan', 'Plan before any message that needs tools, not only multi-step ones.', always, () => void setAlways($, !always), differs.always)}
-          {switchRow('auto', 'Auto-approve', 'Run new plans without asking first.', auto, () => void setAuto($, !auto), differs.auto)}
-          {switchRow('open-pane', 'Open pane on start', 'Open this pane in every new chat.', set.openPane, () =>
-            void editSettings($, s => ({ ...s, openPane: !s.openPane })),
-            differs.openPane,
-          )}
-          {switchRow('herdr-view', 'Show in Herdr', 'A scrollable view of the plan in Herdr (read-only), for plans too long for this pane. Writes ~/.config/model-router/state/ when ~/.config/herdr-app exists.', set.herdrView, () =>
-            void editSettings($, s => ({ ...s, herdrView: !s.herdrView })),
-            set.herdrView !== D.herdrView,
-          )}
+        return (
+          <Box key={`helper-advice:${key}`} flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+            <Text size="footnote" color={a.isRaise ? 'warning' : 'success'}>{a.isRaise ? '↑' : '↓'}</Text>
+            <Box flexShrink={1}>
+              <Text size="footnote" wrap="wrap">
+                {a.why}: {a.isRaise ? 'raise' : 'try lowering'} {what} from {helperRungLabel(a.from)} to {a.provider} {helperRungLabel(a.to)}.
+              </Text>
+            </Box>
+            <Button key={a.kind ? `apply-helper-kind:${a.kind}` : `apply-helper:${a.provider}:${a.tier}`} variant="primary" onPress={() => void applyHelperAdvice($, a)}>
+              {`Apply: ${a.provider} ${helperRungLabel(a.to)}`}
+            </Button>
+          </Box>
+        )
+      })}
+      {hint && <Text key="model-hint" color="suggestion" size="footnote" wrap="wrap">{hint}</Text>}
+    </Box>
+  )
 
-          {group('Experiment', 'Here steps run on this chat\'s model; this tries lowering its thinking level for them instead.')}
-          {switchRow(
-            'here-effort',
-            'Adjust effort of here steps',
-            'While a here step runs, send this chat\'s requests at its tier\'s thinking level, lower or higher than the chat\'s own. A change of level makes the API write the conversation to the cache again, so only while the chat is under the limit below.',
-            set.hereEffort.enabled,
-            () => void editHereEffort($, { enabled: !set.hereEffort.enabled }),
-            differs.hereEffort,
+  const footer = (
+    <Box key="section:footer" flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs" alignItems="center">
+      <Button
+        key="settings"
+        plain
+        onPress={() =>
+          void (async () => {
+            await refreshShared($)
+            await update($, showSettings, () => true)
+          })()
+        }
+      >
+        Settings ▸
+      </Button>
+      {reportRow('footer-report')}
+    </Box>
+  )
+
+  // --- Settings -----------------------------------------------------------------------
+
+  const mapped = Object.entries(set.skills)
+  const unmapped = seen.filter(n => !(n in set.skills))
+  const helperState = !set.helpers.enabled
+    ? 'off'
+    : helperMode() === 'herdr'
+      ? 'ready · Herdr'
+      : helperMode() === 'direct'
+        ? 'ready · direct'
+        : hs.status === 'unknown'
+          ? 'looking for them…'
+          : `✗ ${health.failing ? health.failing.text : 'cannot run'}`
+  const helperFails = set.helpers.enabled && helperState.startsWith('✗')
+  const PRESET_OPTIONS: Option[] = [...PRESETS.map(p => ({ value: p.id, label: p.label })), { value: 'custom', label: 'Custom' }]
+  const openGroup = (id: string) => editSettings($, s => (s.openGroups.includes(id) ? s : { ...s, openGroups: [...s.openGroups, id] }))
+  const scopeOn = TIER_ORDER.filter(t => set.tiers[t].scopeNote)
+  const noPrice = models.filter(x => !priceOf(x, set)).length
+  const notesCount = Object.keys(allNotes).length
+  const kindsTuned = Object.keys(set.kinds).length
+
+  // The three resets: the first click names what goes, the second does it.
+  const RESETS: Record<string, { key: string; label: string; ask: string; verb: string; done: string; run: () => Promise<void> }> = {
+    tiers: {
+      key: 'reset-tiers',
+      label: 'Reset models per level',
+      ask: 'Really put the three levels back to Balanced, scope notes off?',
+      verb: 'Reset',
+      done: 'Models per level reset.',
+      run: () => editSettings($, s => ({ ...s, tiers: DEFAULT_SETTINGS.tiers })),
+    },
+    history: {
+      key: 'clear-history',
+      label: `Clear history (${past.length} run${past.length === 1 ? '' : 's'})`,
+      ask: `Really clear ${past.length} run${past.length === 1 ? '' : 's'}? The advice and auto mode start again.`,
+      verb: 'Clear',
+      done: 'History cleared.',
+      run: () => editHistory($, () => []),
+    },
+    stats: {
+      key: 'reset-stats',
+      label: 'Reset statistics',
+      ask: `Really reset the all-time statistics (since ${since(life.since)})?`,
+      verb: 'Reset',
+      done: 'Statistics reset.',
+      run: () => editLifetime($, () => newLifetime()),
+    },
+  }
+  const resetRows = Object.entries(RESETS).map(([id, r]) =>
+    asking === id ? (
+      <Box key={`reset-ask:${id}`} flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+        <Text color="warning" size="footnote" wrap="wrap">{r.ask}</Text>
+        <Button
+          key="reset-confirm"
+          variant="primary"
+          onPress={() =>
+            void (async () => {
+              await r.run()
+              await update($, confirmReset, () => '')
+              await update($, resetNote, () => r.done)
+            })()
+          }
+        >
+          {r.verb}
+        </Button>
+        <Button key="reset-keep" plain onPress={() => void update($, confirmReset, () => '')}>
+          Keep
+        </Button>
+      </Box>
+    ) : (
+      <Box key={`reset-row:${id}`} flexDirection="row">
+        <Button
+          key={r.key}
+          plain
+          dimColor
+          onPress={() =>
+            void (async () => {
+              await update($, resetNote, () => '')
+              await update($, confirmReset, () => id)
+            })()
+          }
+        >
+          {r.label}
+        </Button>
+      </Box>
+    ),
+  )
+
+  const helpersBody = () => {
+    if (!set.helpers.enabled) {
+      return [
+        <Text key="helpers-off-note" dimColor size="footnote" wrap="wrap">
+          Off: every step runs in this chat or as a Claude agent. Turn on under "Other subscriptions" above to send long self-contained steps to agents of
+          your other subscriptions or Claude accounts, started by herdr-delegate.
+        </Text>,
+      ]
+    }
+    const pathRow = (
+      <Box key="helpers-path" flexDirection="column" rowGap="xs">
+        <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+          {!helpersOn && (
+            <Button key="helpers-reload" plain onPress={() => void loadHelperConfig($)}>
+              Look again
+            </Button>
           )}
-          {set.hereEffort.enabled && (
-            <Box key="here-effort-limit-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm">
-              <Text dimColor size="footnote">Switch only while the chat is under</Text>
-              {dot('here-effort-limit', differs.hereLimit)}
-              {pick(
-                'here-effort-limit',
-                String(set.hereEffort.maxContext),
-                EFFORT_LIMITS.map(n => ({ value: String(n), label: `${kTok(n)} tokens` })),
-                v => void editHereEffort($, { maxContext: Number(v) }),
+          <Button key="helpers-path-toggle" plain dimColor onPress={() => void update($, showHelperPath, v => !v)}>
+            {pathOpen ? 'Hide path' : 'Set path by hand'}
+          </Button>
+          {dot('helper-script', set.helpers.script !== D.helpers.script)}
+        </Box>
+        {pathOpen && Input && (
+          <Input
+            key="helpers-script"
+            placeholder={`Path to helpers.py (now: ${set.helpers.script || 'the newest installed herdr-delegate'}; empty to look it up)`}
+            submitLabel="Set"
+            onSubmit={v => {
+              const path = asScriptPath(v)
+              if (path !== undefined || !v.trim()) void editHelpers($, { script: path ?? '' })
+            }}
+          />
+        )}
+      </Box>
+    )
+    const runRow = settingRow(
+      'run',
+      'Run helpers',
+      `Through Herdr in a Herdr terminal, else directly (helpers.py run). Now: ${helperMode() === 'none' ? 'cannot run' : helperMode()}.`,
+      pick(
+        'helpers-run',
+        set.helpers.run,
+        [
+          { value: 'auto', label: 'Herdr, else direct' },
+          { value: 'herdr', label: 'Herdr only' },
+          { value: 'direct', label: 'direct only' },
+        ],
+        v => void editHelpers($, { run: v === 'herdr' || v === 'direct' ? v : 'auto' }),
+      ),
+      differs.run,
+    )
+    if (!helpersOn) {
+      return [
+        <Box key="helper-checks" flexDirection="column" rowGap="xs">{checkList('settings')}</Box>,
+        runRow,
+        <Box key="helpers-none" flexDirection="column" rowGap="xs">
+          {hs.status === 'unknown' && <Text dimColor size="footnote">Not read yet.</Text>}
+          {hs.status === 'error' && <Text color="warning" size="footnote" wrap="wrap">{hs.message ?? 'helpers.py did not answer.'}</Text>}
+          {hs.status === 'ready' && noHelperCli() && (
+            <Text key="helpers-no-cli" color="warning" size="footnote" wrap="wrap">No helper CLI is installed: install at least one (Kiro, Copilot, Codex, Antigravity, or another Claude account), then look again. Until then helpers are off and the rules do not mention them.</Text>
+          )}
+          {(hs.status === 'missing' || hs.status === 'nohc') && (
+            <Box key="helpers-how" flexDirection="column">
+              <Text size="footnote" wrap="wrap">
+                {hs.status === 'nohc'
+                  ? "Helpers run through Herdr's hc, which was not found on your PATH. Model-router works without it: every step runs as a Claude agent."
+                  : 'Helpers are agents on other subscriptions or accounts. They are optional: model-router works without them, running every step as a Claude agent.'}
+              </Text>
+              <Text dimColor size="footnote" wrap="wrap">To enable them:</Text>
+              {hs.status === 'missing' && (
+                <Text dimColor size="footnote" wrap="wrap">{`1. Install herdr-delegate from the same marketplace: /plugin install herdr-delegate@${hs.marketplace ?? 'horef-claude-plugins'}`}</Text>
               )}
+              <Text dimColor size="footnote" wrap="wrap">{`${hs.status === 'missing' ? '2' : '1'}. Install Herdr's hc and put it on your PATH.`}</Text>
+              <Text dimColor size="footnote" wrap="wrap">{`${hs.status === 'missing' ? '3' : '2'}. Install at least one helper CLI: Kiro, Copilot, Codex, Antigravity, or another Claude account.`}</Text>
             </Box>
           )}
-          {switches.length > 0 && (
-            <Text dimColor size="footnote" wrap="wrap">
-              {`${switches.length} switch${switches.length === 1 ? '' : 'es'} so far: ${kTok(switches.reduce((n, x) => n + x.cacheWrite, 0))} tokens written to the cache, ${kTok(switches.reduce((n, x) => n + x.cacheRead, 0))} read on the request after each switch. Mostly written means the switch cost a cache rewrite.`}
-            </Text>
-          )}
+        </Box>,
+        pathRow,
+      ]
+    }
 
-          {group('Tiers', `Model and thinking level for steps sent to a subagent. "Here" steps always use this chat's model.${tty ? ' ⇄ buttons: Enter picks the next option.' : ''}`)}
-          {TIER_ORDER.map(t => {
-            const ts = set.tiers[t]
-            const edit = (patch: Partial<typeof ts>) =>
-              void editSettings($, s => ({ ...s, tiers: { ...s.tiers, [t]: { ...s.tiers[t], ...patch } } }))
-            return (
-              <Box key={`tierset:${t}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={TIER_COLOR[t]} paddingX="sm" paddingY={mini ? 0 : 'xs'} marginTop={mini ? 0 : 1}>
-                <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
-                  <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
-                  <Box flexDirection="row" columnGap="xs" alignItems="center">
-                    {dot(`scope:${t}`, tierDiffers(t).scope)}
-                    <Button key={`set-scope:${t}`} plain dimColor={!ts.scopeNote} onPress={() => edit({ scopeNote: !ts.scopeNote })}>
-                      {ts.scopeNote ? '✓ Scope note' : 'Scope note off'}
+    return [
+      <Box key="helper-checks" flexDirection="column" rowGap="xs">{checkList('settings')}</Box>,
+      runRow,
+      settingRow(
+        'fusion',
+        'Copilot Fusion',
+        "GitHub's router across Claude and GPT models, tried before the pinned Copilot helper. Measured 2026-11-01: Max is near Opus 5.5 at max effort for about half the cost; High is unmeasured.",
+        pick(
+          'helpers-fusion',
+          set.helpers.fusion,
+          [
+            { value: 'off', label: 'off' },
+            { value: 'deep', label: 'Max for deep' },
+            { value: 'both', label: 'High + Max' },
+          ],
+          v => void editHelpers($, { fusion: v === 'deep' || v === 'both' ? v : 'off' }),
+        ),
+        differs.fusion,
+      ),
+      // Order: one line a level; Edit swaps that line for its ↑ ↓ off / + controls, one level at a time.
+      <Box key="helper-order" flexDirection="column" rowGap="xs">
+        <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+          <Box flexDirection="column" flexShrink={1}>
+            <Text weight="medium">Order</Text>
+            <Text dimColor size="footnote" wrap="wrap">Per level, the first usable helper runs the step.</Text>
+          </Box>
+          <Button key="helper-reset" plain dimColor onPress={() => void editHelpers($, { tiers: { ...D.helpers.tiers } })}>
+            Reset to default order
+          </Button>
+        </Box>
+        {TIER_ORDER.map(t => {
+          const items = helperItems(set, t)
+          const off = helpersOff(set, t)
+          const short = (name: string) => name.split(`-${t}`).join('')
+          const editing = orderEdit === t
+
+          return (
+            <Box key={`helper-order:${t}`} flexDirection="column">
+              <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center">
+                <Text color={TIER_COLOR[t]} weight="semibold" size="footnote">{`${t}:`}</Text>
+                {!editing && <Text size="footnote" wrap="wrap">{helperOrder(set, t).split(`-${t}`).join('') || 'none'}</Text>}
+                {dot(`order:${t}`, orderDiffers(t))}
+                <Button key={`order-edit:${t}`} plain dimColor={!editing} onPress={() => void update($, editOrder, v => (v === t ? '' : t))}>
+                  {editing ? 'Done' : 'Edit'}
+                </Button>
+              </Box>
+              {editing &&
+                items.map((name, i) => (
+                  <Box key={`helper:${t}:${name}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
+                    <Text size="footnote">{`${i + 1}. ${templateLabel(name, short(name))}`}</Text>
+                    {i > 0 && (
+                      <Button key={`helper-up:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, -1))}>
+                        ↑
+                      </Button>
+                    )}
+                    {i < items.length - 1 && (
+                      <Button key={`helper-down:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, 1))}>
+                        ↓
+                      </Button>
+                    )}
+                    <Button key={`helper-off:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => l.filter(x => x !== name).join(','))}>
+                      off
                     </Button>
                   </Box>
+                ))}
+              {editing && off.length > 0 && (
+                <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
+                  <Text dimColor size="footnote">off:</Text>
+                  {off.map(name => (
+                    <Button key={`helper-on:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => [...l, name].join(','))}>
+                      {`+ ${templateLabel(name, short(name))}`}
+                    </Button>
+                  ))}
                 </Box>
-                {!mini && <Text dimColor size="footnote" wrap="wrap">{TIER_USE[t]}</Text>}
-                <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
-                  {pick(`set-model:${t}`, ts.model, models.map(x => ({ value: x, label: x })), v => edit({ model: v as typeof ts.model }))}
-                  {dot(`model:${t}`, tierDiffers(t).model)}
-                  {pick(`set-effort:${t}`, ts.effort, EFFORTS.map(x => ({ value: x, label: `${x} thinking` })), v => edit({ effort: v as typeof ts.effort }))}
-                  {dot(`effort:${t}`, tierDiffers(t).effort)}
-                </Box>
+              )}
+            </Box>
+          )
+        })}
+      </Box>,
+      // Helper models: only what differs from herdr-delegate's defaults; Change… opens the full grid.
+      <Box key="helper-models" flexDirection="column" rowGap="xs">
+        <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
+          <Box flexDirection="column" flexShrink={1}>
+            <Text weight="medium">Helper models</Text>
+            <Text dimColor size="footnote" wrap="wrap">Model and effort of each helper level, kept in herdr-delegate's helpers.py.</Text>
+          </Box>
+          <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
+            {hs.status === 'ready' && (
+              <Text dimColor size="footnote">{modelsChecked(hs.models) ? `checked ${modelsChecked(hs.models)}` : 'not checked yet'}</Text>
+            )}
+            {hs.status === 'ready' && (
+              <Button key="helpers-check" plain onPress={() => void checkModels($)}>
+                {hs.busy ? 'Checking…' : 'Check models'}
+              </Button>
+            )}
+          </Box>
+        </Box>
+        {hs.message && hs.status === 'ready' && <Text color="warning" size="footnote" wrap="wrap">{hs.message}</Text>}
+        {hs.warnings.map((w, i) => (
+          <Text key={`helper-warning:${i}`} color="warning" size="footnote" wrap="wrap">{w}</Text>
+        ))}
+        {!gridOpen &&
+          hcfg &&
+          (helperTiersDiffering.length === 0 ? (
+            <Text key="helper-models-default" dimColor size="footnote">All at herdr-delegate's defaults.</Text>
+          ) : (
+            helperTiersDiffering.map(({ provider, tier }) => {
+              const r = helperTierRung(hcfg, provider, tier)!
+
+              return (
+                <Text key={`helper-differs:${provider}:${tier}`} size="footnote" wrap="wrap">
+                  {`${hcfg.providers[provider]?.label ?? provider} ${tier}: ${r.model} ${r.effort} •`}
+                </Text>
+              )
+            })
+          ))}
+        {hcfg && (
+          <Box flexDirection="row">
+            <Button key="helper-grid" plain onPress={() => void update($, showHelperGrid, v => !v)}>
+              {gridOpen ? 'Hide the list' : 'Change…'}
+            </Button>
+          </Box>
+        )}
+        {gridOpen &&
+          hcfg &&
+          helperProviders(hcfg, set).map(provider => {
+            const prov = hcfg.providers[provider]!
+            const tiers = helperTierNames(hcfg, provider)
+            if (tiers.length === 0) return null
+
+            return (
+              <Box key={`helper-provider:${provider}`} flexDirection="column">
+                <Text weight="semibold" size="footnote">{prov.label ?? provider}</Text>
+                {tiers.map(tier => {
+                  const r = helperTierRung(hcfg, provider, tier)!
+                  const d = helperDiffers(provider, tier)
+
+                  return (
+                    <Box key={`helper-tier:${provider}:${tier}`} flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={2}>
+                      <Text color={isTier(tier) ? TIER_COLOR[tier] : undefined} size="footnote">{tier}</Text>
+                      {pick(
+                        `helper-model:${provider}:${tier}`,
+                        r.model,
+                        offeredModels(hcfg, hs.models, provider).map(x => ({ value: x, label: x })),
+                        v => void changeHelperTier($, provider, tier, { model: v }),
+                      )}
+                      {dot(`helper-model:${provider}:${tier}`, d.model)}
+                      {pick(
+                        `helper-effort:${provider}:${tier}`,
+                        r.effort,
+                        helperEfforts(hcfg, provider, r.effort).map(x => ({ value: x, label: `${x} effort` })),
+                        v => void changeHelperTier($, provider, tier, { effort: v }),
+                      )}
+                      {dot(`helper-effort:${provider}:${tier}`, d.effort)}
+                    </Box>
+                  )
+                })}
               </Box>
             )
           })}
-          {!mini && <Text dimColor size="footnote" wrap="wrap">
-            Scope note: one line added to that tier's briefs, asking the subagent to stay on its task and not start sessions or load extra tools.
-          </Text>}
+        {Object.entries(set.helpers.kinds).map(([kind, c]) => (
+          <Box key={`helper-kind:${kind}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+            <Box flexDirection="row" columnGap="xs" flexShrink={1}>
+              <Text mono size="footnote" wrap="truncate">{kind}</Text>
+              <Text size="footnote">{`→ ${c.provider} ${helperRungLabel(c)}`}</Text>
+              {dot(`helper-kind:${kind}`, true)}
+            </Box>
+            <Button
+              key={`helper-kind-reset:${kind}`}
+              plain
+              dimColor
+              onPress={() =>
+                void (async () => {
+                  await editSettings($, x => {
+                    const kinds = { ...x.helpers.kinds }
+                    delete kinds[kind]
 
-          {group('Learning', 'What the router learned per kind of work, from verdicts and reruns.')}
-          {switchRow(
+                    return { ...x, helpers: { ...x.helpers, kinds } }
+                  })
+                  await resolveHelperPicks($)
+                })()
+              }
+            >
+              reset
+            </Button>
+          </Box>
+        ))}
+      </Box>,
+      pathRow,
+    ]
+  }
+
+  const settingsPanel = (
+    <Box key="section:settings" flexDirection="column" rowGap="sm">
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+        <Text size="heading" weight="semibold">Settings</Text>
+        <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
+          Done
+        </Button>
+      </Box>
+      {anyDiffers && (
+        <Text dimColor size="footnote">
+          • differs from the default
+        </Text>
+      )}
+
+      {switchRow('auto', 'Ask me before a plan runs', 'Off: plans run at once, without the "Run it?" question.', !auto, () => void setAuto($, !auto), differs.auto)}
+      {switchRow('always', 'Plan every message', 'Plan before any message that needs tools, not only multi-step tasks.', always, () => void setAlways($, !always), differs.always)}
+      {settingRow(
+        'helpers',
+        'Other subscriptions',
+        'Send self-contained steps to agents of your other subscriptions or accounts (Copilot, Codex, Kiro…).',
+        pick(
+          'helpers',
+          set.helpers.enabled ? set.helpers.use : 'off',
+          [
+            { value: 'off', label: 'Off' },
+            { value: 'long', label: 'Long steps' },
+            { value: 'all', label: 'All steps' },
+          ],
+          v => void editHelpers($, v === 'off' ? { enabled: false } : { enabled: true, use: v === 'all' ? 'all' : 'long' }),
+        ),
+        differs.helpers || differs.use,
+        set.helpers.enabled ? (
+          <Text key="helpers-state" size="footnote" color={helperFails ? 'warning' : undefined} dimColor={!helperFails} wrap="wrap">
+            {helperState}
+          </Text>
+        ) : null,
+      )}
+      {settingRow(
+        'spend',
+        'Spend',
+        'The models and effort the three levels of step run on.',
+        pick('spend', preset, PRESET_OPTIONS, v =>
+          void (v === 'custom' ? openGroup('models') : editSettings($, s => applyPreset(s, v))),
+        ),
+        preset !== 'balanced',
+      )}
+      {switchRow('open-pane', 'Open the pane in new chats', 'Opens this pane whenever a chat starts.', set.openPane, () =>
+        void editSettings($, s => ({ ...s, openPane: !s.openPane })),
+        differs.openPane,
+      )}
+
+      <Box key="settings-groups" flexDirection="column" rowGap="xs" marginTop={1}>
+        {settingsGroup('models', 'Models per level', tiersSummary(set), { custom: groupDiffers.models }, () => [
+          ...TIER_ORDER.map(t => {
+            const ts = set.tiers[t]
+            const edit = (patch: Partial<typeof ts>) => void editSettings($, s => ({ ...s, tiers: { ...s.tiers, [t]: { ...s.tiers[t], ...patch } } }))
+
+            return (
+              <Box key={`tierset:${t}`} flexDirection="column">
+                <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
+                  <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
+                  {pick(`set-model:${t}`, ts.model, models.map(x => ({ value: x, label: x })), v => edit({ model: v as typeof ts.model }))}
+                  {dot(`model:${t}`, tierDiffers(t).model)}
+                  {pick(`set-effort:${t}`, ts.effort, EFFORTS.map(x => ({ value: x, label: `${x} effort` })), v => edit({ effort: v as typeof ts.effort }))}
+                  {dot(`effort:${t}`, tierDiffers(t).effort)}
+                </Box>
+                <Text dimColor size="footnote" wrap="wrap">{TIER_USE[t]}</Text>
+              </Box>
+            )
+          }),
+          <Text key="tiers-note" dimColor size="footnote" wrap="wrap">
+            For steps run by a Claude agent. Steps done in this chat use this chat's model.
+          </Text>,
+        ])}
+
+        {settingsGroup('helpers', 'Other subscriptions', !set.helpers.enabled ? 'off' : helperFails ? helperState : `${liveProviders(set).join(', ') || 'none'} · ${helperState.replace(/^ready · /, '')}`, { fail: helperFails, custom: groupDiffers.helpers }, helpersBody)}
+
+        {settingsGroup('learning', 'Learning', `auto ${set.autoRoute ? 'on' : 'off'} · ${kindsTuned ? `${kindsTuned} kind${kindsTuned === 1 ? '' : 's'} tuned` : 'no kinds tuned'}`, { custom: groupDiffers.learning }, () => [
+          switchRow(
             'auto-route',
             'Auto mode',
-            `A subagent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.${helpersLive(set) ? ' A helper step gets its model the same way.' : ''}`,
+            `A Claude agent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.${helpersLive(set) ? ' A helper step gets its model the same way.' : ''}`,
             set.autoRoute,
             () =>
               void (async () => {
@@ -2807,7 +3281,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                 await resolveHelperPicks($)
               })(),
             differs.autoRoute,
-          )}
+          ),
           <Box key="auto-thresholds" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="xs" rowGap="xs">
             <Text dimColor size="footnote">Auto picks a rung with at least</Text>
             {pick('auto-min-runs', String(set.autoMinRuns), withCurrent(AUTO_RUNS, set.autoMinRuns).map(n => ({ value: String(n), label: `${n} runs` })), v =>
@@ -2819,8 +3293,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               void editSettings($, s => ({ ...s, autoOkPercent: Number(v) })).then(() => resolveHelperPicks($)),
             )}
             {dot('auto-ok-percent', differs.autoOkPercent)}
-          </Box>
-          {Object.entries(set.kinds).map(([kind, r]) => (
+          </Box>,
+          ...Object.entries(set.kinds).map(([kind, r]) => (
             <Box key={`kind-default:${kind}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
               <Box flexDirection="row" columnGap="xs" flexShrink={1}>
                 <Text mono size="footnote" wrap="truncate">{kind}</Text>
@@ -2842,381 +3316,114 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                 reset
               </Button>
             </Box>
-          ))}
-          {!mini && Object.keys(set.kinds).length === 0 && (
-            <Text dimColor size="footnote" wrap="wrap">No kind has a default of its own yet: applying advice under "What the history says" sets one.</Text>
-          )}
+          )),
+          kindsTuned === 0 ? (
+            <Text key="kinds-none" dimColor size="footnote" wrap="wrap">No kind has a default of its own yet: applying the history's advice (under the cost) sets one.</Text>
+          ) : null,
+        ])}
 
-          {group('Models', 'Models the router knows: the defaults, any seen in a chat, and any you add. Prices are dollars per million tokens; a model with none shows its cost as "?" and is left out of savings.')}
-          {models.map(x => {
-            const p = priceOf(x, set)
-            const extra = !MODELS.includes(x)
+        {settingsGroup(
+          'prices',
+          'Models and prices',
+          `${models.length} models${noPrice ? ` · ${noPrice} without price` : ''} · ${notesCount} note${notesCount === 1 ? '' : 's'}`,
+          { fail: noPrice > 0, custom: groupDiffers.prices },
+          () => [
+            <Text key="prices-help" dimColor size="footnote" wrap="wrap">
+              Dollars per million tokens. A model with no price shows its cost as "?" and is left out of savings.
+            </Text>,
+            ...models.map(x => {
+              const p = priceOf(x, set)
+              const extra = !MODELS.includes(x)
 
-            return (
-              <Box key={`model-row:${x}`} flexDirection="column">
-                <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
-                  <Box flexDirection="row" columnGap="xs" flexShrink={1}>
-                    <Text mono size="footnote" wrap="truncate">{x}</Text>
-                    <Text dimColor={!!p} color={p ? undefined : 'warning'} size="footnote">
-                      {p ? `$${p.input} in · $${p.output} out` : 'no price'}
-                    </Text>
-                    {dot(`model:${x}`, extra || priceDiffers(x))}
-                  </Box>
-                  {extra && (
-                    <Button
-                      key={`model-remove:${x}`}
-                      plain
-                      dimColor
-                      onPress={() =>
-                        void editSettings($, s => {
-                          const prices = { ...s.prices }
-                          delete prices[x]
-                          return { ...s, models: s.models.filter(y => y !== x), prices }
-                        })
-                      }
-                    >
-                      remove
-                    </Button>
-                  )}
-                </Box>
-                {Input && (
-                  <Input
-                    key={`price:${x}`}
-                    placeholder={`Price for ${x}: input output, e.g. 2 10 (empty: ${PRICES[x] ? 'the default' : 'none'})`}
-                    submitLabel="Set"
-                    onSubmit={v => {
-                      const text = v.trim()
-                      const price = parsePrice(text)
-                      if (!text || price) {
-                        void editSettings($, s => {
-                          const prices = { ...s.prices }
-                          if (price) prices[x] = price
-                          else delete prices[x]
-                          return { ...s, prices }
-                        })
-                      }
-                    }}
-                  />
-                )}
-              </Box>
-            )
-          })}
-          {Input && (
-            <Input
-              key="add-model"
-              placeholder="Add a model by name, e.g. nova"
-              submitLabel="Add"
-              onSubmit={v => {
-                const name = modelOf(v.trim().toLowerCase())
-                if (name && name === v.trim().toLowerCase()) {
-                  void editSettings($, s => (knownModels(s).includes(name) ? s : { ...s, models: [...s.models, name] }))
-                }
-              }}
-            />
-          )}
-
-          <Box key="model-notes-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm" rowGap="xs" marginTop={mini ? 0 : 1}>
-            <Text size="footnote">{`Model notes (${Object.keys(allNotes).length}) · checked ${reportChecked(hs.report) ?? modelsChecked(hs.models) ?? 'never'}`}</Text>
-            {hs.status === 'ready' && (
-              <Button key="model-notes-check" plain onPress={() => void checkModels($)}>
-                {hs.busy ? 'Checking…' : 'Check now'}
-              </Button>
-            )}
-            <Button key="model-notes-toggle" plain onPress={() => void update($, showAllNotes, v => !v)}>
-              {allNotesOpen ? 'List ▾' : 'List ▸'}
-            </Button>
-          </Box>
-          {allNotesOpen &&
-            Object.values(allNotes)
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map(n => (
-                <Text key={`model-note:${n.id}`} size="footnote" wrap="wrap">{`${n.name} · ${n.tags.join(', ') || 'no tags'} · ${n.summary} · ${n.by} ${n.checked}`}</Text>
-              ))}
-
-          {group('Helpers', 'Optional: run long self-contained steps on agents from other subscriptions or Claude accounts, started by herdr-delegate through Herdr. Without them every step runs as a Claude subagent.')}
-          {switchRow('helpers', 'Helpers (other subscriptions)', 'Let plans send steps to a helper.', set.helpers.enabled, () =>
-            void editHelpers($, { enabled: !set.helpers.enabled }),
-            differs.helpers,
-          )}
-          {set.helpers.enabled && (
-            <Box key="helpers-run-row" flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs" marginTop={mini ? 0 : 1}>
-              <Box flexDirection="column" flexShrink={1}>
-                <Box flexDirection="row" columnGap="xs">
-                  <Text weight="medium">Run helpers</Text>
-                  {dot('run', differs.run)}
-                </Box>
-                {!mini && (
-                  <Text dimColor size="footnote" wrap="wrap">
-                    {`Through Herdr when this chat runs in a Herdr terminal; directly (helpers.py run, no Herdr; herdr-delegate 0.15+) otherwise. Now: ${helperMode() === 'none' ? 'cannot run' : helperMode()}.`}
-                  </Text>
-                )}
-              </Box>
-              {pick(
-                'helpers-run',
-                set.helpers.run,
-                [
-                  { value: 'auto', label: 'Herdr, else direct' },
-                  { value: 'herdr', label: 'Herdr only' },
-                  { value: 'direct', label: 'direct only' },
-                ],
-                v => void editHelpers($, { run: v === 'herdr' || v === 'direct' ? v : 'auto' }),
-              )}
-            </Box>
-          )}
-          {set.helpers.enabled && !helpersOn && (
-            <Box key="helpers-none" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
-              {hs.status === 'unknown' && <Text dimColor size="footnote">Not read yet.</Text>}
-              {hs.status === 'ready' && !noHelperCli() && health.failing && (
-                <Text key="helpers-failing" color="warning" size="footnote" wrap="wrap">{`${health.failing.text}. ${health.failing.fix ?? ''}`}</Text>
-              )}
-              {hs.status === 'error' && <Text color="warning" size="footnote" wrap="wrap">{hs.message ?? 'helpers.py did not answer.'}</Text>}
-              {hs.status === 'ready' && noHelperCli() && (
-                <Text key="helpers-no-cli" color="warning" size="footnote" wrap="wrap">No helper CLI is installed: install at least one (Kiro, Copilot, Codex, Antigravity, or another Claude account), then look again. Until then helpers are off and the rules do not mention them.</Text>
-              )}
-              {(hs.status === 'missing' || hs.status === 'nohc') && (
-                <Box key="helpers-how" flexDirection="column">
-                  <Text size="footnote" wrap="wrap">
-                    {hs.status === 'nohc'
-                      ? "Helpers run through Herdr's hc, which was not found on your PATH. Model-router works without it: every step runs as a Claude subagent."
-                      : 'Helpers are agents on other subscriptions or accounts. They are optional: model-router works without them, running every step as a Claude subagent.'}
-                  </Text>
-                  <Text dimColor size="footnote" wrap="wrap">To enable them:</Text>
-                  {hs.status === 'missing' && (
-                    <Text dimColor size="footnote" wrap="wrap">{`1. Install herdr-delegate from the same marketplace: /plugin install herdr-delegate@${hs.marketplace ?? 'horef-claude-plugins'}`}</Text>
-                  )}
-                  <Text dimColor size="footnote" wrap="wrap">{`${hs.status === 'missing' ? '2' : '1'}. Install Herdr's hc and put it on your PATH.`}</Text>
-                  <Text dimColor size="footnote" wrap="wrap">{`${hs.status === 'missing' ? '3' : '2'}. Install at least one helper CLI: Kiro, Copilot, Codex, Antigravity, or another Claude account.`}</Text>
-                </Box>
-              )}
-              <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
-                <Button key="helpers-reload" plain onPress={() => void loadHelperConfig($)}>
-                  Look again
-                </Button>
-                <Button key="helpers-path-toggle" plain dimColor onPress={() => void update($, showHelperPath, v => !v)}>
-                  {pathOpen ? 'Hide path' : 'Set path by hand'}
-                </Button>
-              </Box>
-              {pathOpen && Input && (
-                <Input
-                  key="helpers-script"
-                  placeholder={`Path to helpers.py (now: ${set.helpers.script || 'the newest installed herdr-delegate'}; empty to look it up)`}
-                  submitLabel="Set"
-                  onSubmit={v => {
-                    const path = asScriptPath(v)
-                    if (path !== undefined || !v.trim()) void editHelpers($, { script: path ?? '' })
-                  }}
-                />
-              )}
-            </Box>
-          )}
-          {helpersOn && (
-            <Box key="helpers-detail" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
-              <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
-                <Box flexDirection="column" flexShrink={1}>
-                  <Box flexDirection="row" columnGap="xs">
-                    <Text weight="medium">Use helpers for</Text>
-                    {dot('use', differs.use)}
-                  </Box>
-                  {!mini && (
-                    <Text dimColor size="footnote" wrap="wrap">
-                      {set.helpers.use === 'long'
-                        ? 'Long self-contained steps only; shorter ones stay subagents.'
-                        : 'Every self-contained step that would otherwise be a subagent.'}
-                    </Text>
-                  )}
-                </Box>
-                {pick(
-                  'helpers-use',
-                  set.helpers.use,
-                  [{ value: 'long', label: 'long steps' }, { value: 'all', label: 'all steps' }],
-                  v => void editHelpers($, { use: v === 'all' ? 'all' : 'long' }),
-                )}
-              </Box>
-              <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
-                <Box flexDirection="column" flexShrink={1}>
-                  <Box flexDirection="row" columnGap="xs">
-                    <Text weight="medium">Copilot Fusion</Text>
-                    {dot('fusion', differs.fusion)}
-                  </Box>
-                  {!mini && (
-                    <Text dimColor size="footnote" wrap="wrap">
-                      GitHub's router across Claude and GPT models; tried before the pinned Copilot helper. Measured 2026-11-01: Max is near Opus 5.5 at max effort for about half the cost; High is unmeasured.
-                    </Text>
-                  )}
-                </Box>
-                {pick(
-                  'helpers-fusion',
-                  set.helpers.fusion,
-                  [
-                    { value: 'off', label: 'off' },
-                    { value: 'deep', label: 'Max for deep' },
-                    { value: 'both', label: 'High + Max' },
-                  ],
-                  v => void editHelpers($, { fusion: v === 'deep' || v === 'both' ? v : 'off' }),
-                )}
-              </Box>
-              <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
-                <Text dimColor size="footnote" wrap="wrap">Helper order per tier, first usable wins:</Text>
-                <Button key="helper-reset" plain dimColor onPress={() => void editHelpers($, { tiers: { ...D.helpers.tiers } })}>
-                  Reset to default order
-                </Button>
-              </Box>
-              {TIER_ORDER.map(t => {
-                const items = helperItems(set, t)
-                const off = helpersOff(set, t)
-                const short = (name: string) => name.split(`-${t}`).join('')
-
-                return (
-                  <Box key={`helper-order:${t}`} flexDirection="column">
-                    <Box flexDirection="row" columnGap="xs" alignItems="center">
-                      <Text color={TIER_COLOR[t]} weight="semibold">{t}</Text>
-                      {dot(`order:${t}`, orderDiffers(t))}
-                    </Box>
-                    {items.map((name, i) => (
-                      <Box key={`helper:${t}:${name}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
-                        <Text size="footnote">{`${i + 1}. ${templateLabel(name, short(name))}`}</Text>
-                        {i > 0 && (
-                          <Button key={`helper-up:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, -1))}>
-                            ↑
-                          </Button>
-                        )}
-                        {i < items.length - 1 && (
-                          <Button key={`helper-down:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, 1))}>
-                            ↓
-                          </Button>
-                        )}
-                        <Button key={`helper-off:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => l.filter(x => x !== name).join(','))}>
-                          off
-                        </Button>
-                      </Box>
-                    ))}
-                    {off.length > 0 && (
-                      <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
-                        <Text dimColor size="footnote">off:</Text>
-                        {off.map(name => (
-                          <Button key={`helper-on:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => [...l, name].join(','))}>
-                            {`+ ${templateLabel(name, short(name))}`}
-                          </Button>
-                        ))}
-                      </Box>
-                    )}
-                    {!mini && helperList(set, t).length !== items.length && (
-                      <Text dimColor size="footnote" wrap="wrap">{`tried: ${helperOrder(set, t).split(`-${t}`).join('')}`}</Text>
-                    )}
-                  </Box>
-                )
-              })}
-              <Box key="helper-models" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
-                <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
-                  <Box flexDirection="column" flexShrink={1}>
-                    <Box flexDirection="row" columnGap="xs">
-                      <Text weight="medium">Helper models</Text>
-                      {dot('helper-script', set.helpers.script !== D.helpers.script)}
-                    </Box>
-                    {!mini && (
-                      <Text dimColor size="footnote" wrap="wrap">
-                        Model and thinking level of each helper tier, kept in herdr-delegate's helpers.py (a change runs its set command and rewrites the template).
+              return (
+                <Box key={`model-row:${x}`} flexDirection="column">
+                  <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+                    <Box flexDirection="row" columnGap="xs" flexShrink={1}>
+                      <Text mono size="footnote" wrap="truncate">{x}</Text>
+                      <Text dimColor={!!p} color={p ? undefined : 'warning'} size="footnote">
+                        {p ? `$${p.input} in · $${p.output} out` : 'no price'}
                       </Text>
-                    )}
-                  </Box>
-                  <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
-                    {hs.status === 'ready' && (
-                      <Text dimColor size="footnote">{modelsChecked(hs.models) ? `models checked ${modelsChecked(hs.models)}` : 'models not checked yet'}</Text>
-                    )}
-                    {hs.status === 'ready' && (
-                      <Button key="helpers-check" plain onPress={() => void checkModels($)}>
-                        {hs.busy ? 'Checking…' : 'Check models'}
+                      {dot(`model:${x}`, extra || priceDiffers(x))}
+                    </Box>
+                    {extra && (
+                      <Button
+                        key={`model-remove:${x}`}
+                        plain
+                        dimColor
+                        onPress={() =>
+                          void editSettings($, s => {
+                            const prices = { ...s.prices }
+                            delete prices[x]
+                            return { ...s, models: s.models.filter(y => y !== x), prices }
+                          })
+                        }
+                      >
+                        remove
                       </Button>
                     )}
                   </Box>
-                </Box>
-                {hs.message && hs.status === 'ready' && <Text color="warning" size="footnote" wrap="wrap">{hs.message}</Text>}
-                {hs.warnings.map((w, i) => (
-                  <Text key={`helper-warning:${i}`} color="warning" size="footnote" wrap="wrap">{w}</Text>
-                ))}
-                {hcfg &&
-                  helperProviders(hcfg, set).map(provider => {
-                    const prov = hcfg.providers[provider]!
-                    const tiers = helperTierNames(hcfg, provider)
-                    if (tiers.length === 0) return null
-
-                    return (
-                      <Box key={`helper-provider:${provider}`} flexDirection="column">
-                        <Text weight="semibold" size="footnote">{prov.label ?? provider}</Text>
-                        {tiers.map(tier => {
-                          const r = helperTierRung(hcfg, provider, tier)!
-                          const d = helperDiffers(provider, tier)
-
-                          return (
-                            <Box key={`helper-tier:${provider}:${tier}`} flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={2}>
-                              <Text color={isTier(tier) ? TIER_COLOR[tier] : undefined} size="footnote">{tier}</Text>
-                              {pick(
-                                `helper-model:${provider}:${tier}`,
-                                r.model,
-                                offeredModels(hcfg, hs.models, provider).map(x => ({ value: x, label: x })),
-                                v => void changeHelperTier($, provider, tier, { model: v }),
-                              )}
-                              {dot(`helper-model:${provider}:${tier}`, d.model)}
-                              {pick(
-                                `helper-effort:${provider}:${tier}`,
-                                r.effort,
-                                helperEfforts(hcfg, provider, r.effort).map(x => ({ value: x, label: `${x} thinking` })),
-                                v => void changeHelperTier($, provider, tier, { effort: v }),
-                              )}
-                              {dot(`helper-effort:${provider}:${tier}`, d.effort)}
-                            </Box>
-                          )
-                        })}
-                      </Box>
-                    )
-                  })}
-                {Object.entries(set.helpers.kinds).map(([kind, c]) => (
-                  <Box key={`helper-kind:${kind}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
-                    <Box flexDirection="row" columnGap="xs" flexShrink={1}>
-                      <Text mono size="footnote" wrap="truncate">{kind}</Text>
-                      <Text size="footnote">{`→ ${c.provider} ${helperRungLabel(c)}`}</Text>
-                      {dot(`helper-kind:${kind}`, true)}
-                    </Box>
-                    <Button
-                      key={`helper-kind-reset:${kind}`}
-                      plain
-                      dimColor
-                      onPress={() =>
-                        void (async () => {
-                          await editSettings($, x => {
-                            const kinds = { ...x.helpers.kinds }
-                            delete kinds[kind]
-
-                            return { ...x, helpers: { ...x.helpers, kinds } }
+                  {Input && (
+                    <Input
+                      key={`price:${x}`}
+                      placeholder={`Price for ${x}: input output, e.g. 2 10 (empty: ${PRICES[x] ? 'the default' : 'none'})`}
+                      submitLabel="Set"
+                      onSubmit={v => {
+                        const text = v.trim()
+                        const price = parsePrice(text)
+                        if (!text || price) {
+                          void editSettings($, s => {
+                            const prices = { ...s.prices }
+                            if (price) prices[x] = price
+                            else delete prices[x]
+                            return { ...s, prices }
                           })
-                          await resolveHelperPicks($)
-                        })()
-                      }
-                    >
-                      reset
-                    </Button>
-                  </Box>
-                ))}
-                {Input && (
-                  <Input
-                    key="helpers-script"
-                    placeholder={`Path to helpers.py (now: ${set.helpers.script || 'the newest installed herdr-delegate'}; empty to look it up)`}
-                    submitLabel="Set"
-                    onSubmit={v => {
-                      const path = asScriptPath(v)
-                      if (path !== undefined || !v.trim()) void editHelpers($, { script: path ?? '' })
-                    }}
-                  />
-                )}
-              </Box>
-            </Box>
-          )}
+                        }
+                      }}
+                    />
+                  )}
+                </Box>
+              )
+            }),
+            Input ? (
+              <Input
+                key="add-model"
+                placeholder="Add a model by name, e.g. nova"
+                submitLabel="Add"
+                onSubmit={v => {
+                  const name = modelOf(v.trim().toLowerCase())
+                  if (name && name === v.trim().toLowerCase()) {
+                    void editSettings($, s => (knownModels(s).includes(name) ? s : { ...s, models: [...s.models, name] }))
+                  }
+                }}
+              />
+            ) : null,
+            <Box key="model-notes-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm" rowGap="xs">
+              <Text size="footnote">{`Model notes (${notesCount}) · checked ${reportChecked(hs.report) ?? modelsChecked(hs.models) ?? 'never'}`}</Text>
+              {hs.status === 'ready' && (
+                <Button key="model-notes-check" plain onPress={() => void checkModels($)}>
+                  {hs.busy ? 'Checking…' : 'Check now'}
+                </Button>
+              )}
+              <Button key="model-notes-toggle" plain onPress={() => void update($, showAllNotes, v => !v)}>
+                {allNotesOpen ? 'List ▾' : 'List ▸'}
+              </Button>
+            </Box>,
+            ...(allNotesOpen
+              ? Object.values(allNotes)
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(n => <Text key={`model-note:${n.id}`} size="footnote" wrap="wrap">{`${n.name} · ${n.tags.join(', ') || 'no tags'} · ${n.summary} · ${n.by} ${n.checked}`}</Text>)
+              : []),
+          ],
+        )}
 
-          {group('Skills', 'Skills listed here run in a subagent on the tier you pick.')}
-          {!mini && mapped.length + unmapped.length === 0 && (
-            <Text dimColor size="footnote" wrap="wrap">None yet. Skills you use in a chat appear here, or add one by name.</Text>
-          )}
-          {[...mapped.map(([n]) => n), ...unmapped].map(name => (
+        {settingsGroup('skills', 'Skills', mapped.length ? `${mapped.length} mapped` : 'none mapped', { custom: groupDiffers.skills }, () => [
+          <Text key="skills-help" dimColor size="footnote" wrap="wrap">
+            A skill set to a level runs as a Claude agent on that level's model instead of in this chat.
+          </Text>,
+          mapped.length + unmapped.length === 0 ? (
+            <Text key="skills-none" dimColor size="footnote" wrap="wrap">None yet. Skills you use in a chat appear here, or add one by name.</Text>
+          ) : null,
+          ...[...mapped.map(([n]) => n), ...unmapped].map(name => (
             <Box key={`skill:${name}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
               <Box flexShrink={1} flexDirection="row" columnGap="xs">
                 <Text mono size="footnote" wrap="truncate">{name}</Text>
@@ -3235,8 +3442,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   }),
               )}
             </Box>
-          ))}
-          {Input && (
+          )),
+          Input ? (
             <Input
               key="add-skill"
               placeholder="Skill name, e.g. scientific-figures"
@@ -3246,136 +3453,98 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                 if (name) void editSettings($, s => ({ ...s, skills: { ...s.skills, [name]: s.skills[name] ?? 'standard' } }))
               }}
             />
-          )}
+          ) : null,
+        ])}
 
-          {group('Diagnostics', 'What the router did, without prompts, titles or file contents; send the report when something goes wrong.')}
-          {switchRow('log', 'Log', 'One file a day under ~/.config/model-router/log/, kept 14 days.', set.log, () => void editSettings($, s => ({ ...s, log: !s.log })), differs.log)}
-          {reportRow('settings-report')}
+        {settingsGroup('diagnostics', 'Diagnostics', `log ${set.log ? 'on' : 'off'} · Herdr view ${set.herdrView ? 'on' : 'off'}`, { custom: groupDiffers.diagnostics }, () => [
+          switchRow('log', 'Keep a log', 'One file a day under ~/.config/model-router/log/, kept 14 days; no prompts, titles or file contents.', set.log, () => void editSettings($, s => ({ ...s, log: !s.log })), differs.log),
+          reportRow('settings-report'),
+          switchRow(
+            'herdr-view',
+            'Show in Herdr',
+            'A scrollable view of the plan in Herdr (read-only), for plans too long for this pane. Writes ~/.config/model-router/state/ when ~/.config/herdr-app exists.',
+            set.herdrView,
+            () => void editSettings($, s => ({ ...s, herdrView: !s.herdrView })),
+            differs.herdrView,
+          ),
+        ])}
 
-          <Box flexDirection="column" rowGap="xs" marginTop={1}>
-            <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
-              <Button key="reset-tiers" plain dimColor onPress={() => void editSettings($, s => ({ ...s, tiers: DEFAULT_SETTINGS.tiers }))}>
-                Reset tiers
-              </Button>
-              <Button key="clear-history" plain dimColor onPress={() => void editHistory($, () => [])}>
-                Clear history
-              </Button>
-              <Button key="reset-stats" plain dimColor onPress={() => void editLifetime($, () => newLifetime())}>
-                Reset statistics
-              </Button>
-            </Box>
-          </Box>
-        </Box>
-      )}
-
-      {!(tty && status === 'pending') && costCard()}
-
-      {status === 'pending' && !mini &&
-        (tty ? (
-          <Text color="warning" size="footnote" wrap="wrap">
-            Edit steps below, then pick "Run it" in the chat; "Change the steps" to add, drop or reword.
-          </Text>
-        ) : (
-          <Box borderStyle="round" borderColor="warning" paddingX="sm" paddingY="xs">
-            <Text color="warning" size="footnote">
-              Change tiers, models or where steps run below, then pick "Run it" in the chat. To add, drop or reword steps, pick "Change the steps".
-            </Text>
-          </Box>
-        ))}
-      {hint && (
-        <Box borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY="xs">
-          <Text color="suggestion" size="footnote">{hint}</Text>
-        </Box>
-      )}
-
-      {section('Plan', list.length > 0 ? `${work.length} steps` : undefined)}
-      {heldCount > 0 && (
-        <Box key="draft-bar" flexDirection="column" borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY={mini ? 0 : 'xs'}>
-          <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
-            <Button key="draft-send" variant="primary" onPress={() => void sendDraft($)}>
-              {`Send changes (${heldCount})`}
-            </Button>
-            <Button key="draft-discard" plain onPress={() => void discardDraft($)}>
-              Discard
-            </Button>
-          </Box>
-          {!mini && (
-            <Text dimColor size="footnote" wrap="wrap">
-              ✎ marks your edits. They are held back: the routing and the main agent use the plan as it was until you send them.
-            </Text>
-          )}
-        </Box>
-      )}
-      {list.length === 0 && !mini && (
-        <Text dimColor size="footnote">The main agent posts a plan here for multi-step tasks. Turn on Always plan in Settings to plan every message.</Text>
-      )}
-      <Box flexDirection="column" rowGap={mini ? 0 : tty ? 'sm' : 'md'}>
-        {list.map(row)}
+        {settingsGroup(
+          'advanced',
+          'Advanced',
+          `experiment ${set.hereEffort.enabled ? 'on' : 'off'} · scope notes ${scopeOn.length ? `on for ${scopeOn.join(', ')}` : 'off'}`,
+          { custom: groupDiffers.advanced },
+          () => [
+            switchRow(
+              'here-effort',
+              'Experiment: effort of steps done in this chat',
+              "While a step done in this chat runs, send this chat's requests at its level's effort, lower or higher than the chat's own. A change of effort makes the API write the conversation to the cache again, so only while the chat is under the limit below.",
+              set.hereEffort.enabled,
+              () => void editHereEffort($, { enabled: !set.hereEffort.enabled }),
+              differs.hereEffort,
+            ),
+            set.hereEffort.enabled ? (
+              <Box key="here-effort-limit-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm">
+                <Text dimColor size="footnote">Switch only while the chat is under</Text>
+                {dot('here-effort-limit', differs.hereLimit)}
+                {pick(
+                  'here-effort-limit',
+                  String(set.hereEffort.maxContext),
+                  EFFORT_LIMITS.map(n => ({ value: String(n), label: `${kTok(n)} tokens` })),
+                  v => void editHereEffort($, { maxContext: Number(v) }),
+                )}
+              </Box>
+            ) : null,
+            switches.length > 0 ? (
+              <Text key="effort-switches" dimColor size="footnote" wrap="wrap">
+                {`${switches.length} switch${switches.length === 1 ? '' : 'es'} so far: ${kTok(switches.reduce((n, x) => n + x.cacheWrite, 0))} tokens written to the cache, ${kTok(switches.reduce((n, x) => n + x.cacheRead, 0))} read on the request after each switch. Mostly written means the switch cost a cache rewrite.`}
+              </Text>
+            ) : null,
+            <Box key="scope-notes" flexDirection="column" rowGap="xs">
+              <Text weight="medium">Scope notes</Text>
+              <Text dimColor size="footnote" wrap="wrap">
+                One line added to a level's briefs, asking the Claude agent to stay on its task and not start sessions or load extra tools.
+              </Text>
+              <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+                {TIER_ORDER.map(t => (
+                  <Box key={`scope:${t}`} flexDirection="row" columnGap="xs" alignItems="center">
+                    <Button
+                      key={`set-scope:${t}`}
+                      plain
+                      dimColor={!set.tiers[t].scopeNote}
+                      onPress={() => void editSettings($, s => ({ ...s, tiers: { ...s.tiers, [t]: { ...s.tiers[t], scopeNote: !s.tiers[t].scopeNote } } }))}
+                    >
+                      {`${set.tiers[t].scopeNote ? '✓' : '○'} ${t}`}
+                    </Button>
+                    {dot(`scope:${t}`, tierDiffers(t).scope)}
+                  </Box>
+                ))}
+              </Box>
+            </Box>,
+            <Box key="resets" flexDirection="column" rowGap="xs">
+              {resetRows}
+              {resetText ? <Text key="reset-note" color="success" size="footnote">{resetText}</Text> : null}
+            </Box>,
+          ],
+        )}
       </Box>
-      {list.length > 0 && (
-        <Box flexDirection="row">
-          <Button key="clear" plain dimColor onPress={() => void clearPlan($)}>Clear plan</Button>
-        </Box>
+    </Box>
+  )
+
+  return (
+    <Box flexDirection="column" rowGap={tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
+      {healthRow}
+      {modelsCard}
+      {tty && (
+        <Text dimColor size="caption" wrap="wrap">
+          {site.isFocused
+            ? '↑↓ scroll · Tab buttons · Esc back to the prompt'
+            : `${(site.scroll?.offset ?? 0) > 0 ? '↑ scrolled · ' : ''}ctrl+x tab, then ↑↓ to scroll${status === 'pending' ? ' (after answering the plan question)' : ''}`}
+        </Text>
       )}
-      {tty && status === 'pending' && costCard()}
-
-      {advice.length > 0 || helperAdvice.length > 0 ? (
-        section('What the history says', mini ? undefined : `${past.length} runs`)
-      ) : (
-        <Text key="history-line" dimColor size="footnote" wrap="wrap">{historyLine(past)}</Text>
-      )}
-      {advice.map(a => {
-        const key = a.kind ? `kind:${a.kind}` : `tier:${a.tier}`
-        const what = a.kind ? `${a.kind}'s default` : `the ${a.tier} tier`
-
-        return (
-          <Box key={`advice:${key}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={a.isRaise ? 'warning' : 'success'} paddingX="sm" paddingY="xs">
-            <Text size="footnote" wrap="wrap">
-              {a.why}: {a.isRaise ? 'raise' : 'try lowering'} {what} to {rungLabel(a.to)}.
-            </Text>
-            <Box flexDirection="row">
-              <Button key={a.kind ? `apply-kind:${a.kind}` : `apply:${a.tier}`} variant="primary" onPress={() => void applySuggestion($, a)}>
-                {`Apply: ${rungLabel(a.to)}`}
-              </Button>
-            </Box>
-          </Box>
-        )
-      })}
-      {helperAdvice.map(a => {
-        const key = a.kind ? `kind:${a.kind}` : `tier:${a.provider}:${a.tier}`
-        const what = a.kind ? `${a.kind}'s helper` : `${a.provider}'s ${a.tier} helper`
-
-        return (
-          <Box key={`helper-advice:${key}`} flexDirection="column" rowGap="xs" borderStyle="round" borderColor={a.isRaise ? 'warning' : 'success'} paddingX="sm" paddingY="xs">
-            <Text size="footnote" wrap="wrap">
-              {a.why}: {a.isRaise ? 'raise' : 'try lowering'} {what} from {helperRungLabel(a.from)} to {a.provider} {helperRungLabel(a.to)}.
-            </Text>
-            <Box flexDirection="row">
-              <Button key={a.kind ? `apply-helper-kind:${a.kind}` : `apply-helper:${a.provider}:${a.tier}`} variant="primary" onPress={() => void applyHelperAdvice($, a)}>
-                {`Apply: ${a.provider} ${helperRungLabel(a.to)}`}
-              </Button>
-            </Box>
-          </Box>
-        )
-      })}
-      {!mini && stats.map(r => (
-        <Box key={`rung:${r.label}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" columnGap="sm">
-          <Text mono size="footnote">{r.label}</Text>
-          <Text dimColor size="footnote" tabular wrap="wrap">
-            {r.n} runs · {r.reruns} reruns{r.isHelper ? '' : ` · ≈${fmtUsd(r.avgCost)} each`}{r.setupHeavy ? ` · ${r.setupHeavy} start-up heavy` : ''}
-            {verdictLine(r.verdicts) ? ` · ${verdictLine(r.verdicts)}` : ''}
-          </Text>
-        </Box>
-      ))}
-      {!mini && kinds.map(k => (
-        <Box key={`kind-stats:${k.kind}`} flexDirection="row" flexWrap="wrap" justifyContent="space-between" columnGap="sm">
-          <Text size="footnote">{k.kind}</Text>
-          <Text dimColor size="footnote" tabular wrap="wrap">
-            {`${k.n} runs · ${k.reruns} reruns${verdictLine(k.verdicts) ? ` · ${verdictLine(k.verdicts)}` : ''}`}
-          </Text>
-        </Box>
-      ))}
-
+      {isSettingsOpen ? settingsPanel : planSection}
+      {isSettingsOpen ? null : costSection}
+      {isSettingsOpen ? null : footer}
     </Box>
   )
 }
@@ -3499,6 +3668,8 @@ export const register: Register = on => {
     if (isNewPlan) {
       const mainCost = (await read($, main)).cost
       await update($, planBase, () => ({ mainCost, at: new Date().toISOString() }))
+      // Ids repeat across plans: steps opened one by one in the last plan close again.
+      await update($, paneView, v => ({ ...v, toggled: {} }))
     }
     await setSteps($, () =>
       flat.steps.map(s => {

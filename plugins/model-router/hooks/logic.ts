@@ -1,7 +1,7 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
 import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelNews, ModelNote, ModelsCache, ModelsReport, PlanNode, Proposal, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
 import { findNote, normId } from './notes'
-import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
+import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRESETS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
@@ -399,11 +399,13 @@ const helperChoices = (v: unknown): Record<string, HelperChoice> => {
 }
 
 /** Settings as stored, which may be missing parts that older versions did not have, filled from the defaults. */
-export const mergeSettings = (stored: Partial<Settings> | undefined): Settings => ({
+export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }) | undefined): Settings => ({
   tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
   skills: { ...(stored?.skills ?? {}) },
   openPane: stored?.openPane ?? DEFAULT_SETTINGS.openPane,
-  compact: stored?.compact ?? DEFAULT_SETTINGS.compact,
+  // 0.25 and earlier stored `compact` (Minimal view): its full view (false) opens every step, Minimal keeps them closed.
+  expandAll: typeof stored?.expandAll === 'boolean' ? stored.expandAll : stored?.compact === false,
+  openGroups: Array.isArray(stored?.openGroups) ? [...new Set(stored.openGroups.filter((x): x is string => typeof x === 'string'))] : [],
   helpers: {
     ...DEFAULT_SETTINGS.helpers,
     ...(stored?.helpers ?? {}),
@@ -422,6 +424,29 @@ export const mergeSettings = (stored: Partial<Settings> | undefined): Settings =
   log: stored?.log !== false,
   herdrView: stored?.herdrView !== false,
 })
+
+// --- The pane's plain words, presets and views ----------------------------------------
+
+/** Where a step runs, in the person's words (the plan tool and the rules keep agent / here / helper). */
+export const whereLabel = (w: Where, tight = false) => (w === 'here' ? 'this chat' : w === 'agent' ? 'Claude agent' : tight ? 'other sub' : 'other subscription')
+
+/** The Spend preset the tiers match (model and effort of all three), or 'custom'. */
+export const presetOf = (set: Settings) =>
+  PRESETS.find(p => TIER_ORDER.every(t => set.tiers[t].model === p.tiers[t].model && set.tiers[t].effort === p.tiers[t].effort))?.id ?? 'custom'
+
+/** The settings with a preset's models and efforts on the three tiers (scope notes kept); unchanged for an unknown id. */
+export const applyPreset = (set: Settings, id: string): Settings => {
+  const p = PRESETS.find(x => x.id === id)
+  if (!p) return set
+
+  return { ...set, tiers: Object.fromEntries(TIER_ORDER.map(t => [t, { ...set.tiers[t], ...p.tiers[t] }])) as Settings['tiers'] }
+}
+
+/** "light Haiku low · standard Sonnet medium · deep Opus high": the Models per level group's summary. */
+export const tiersSummary = (set: Settings) => TIER_ORDER.map(t => `${t} ${cap(set.tiers[t].model)} ${set.tiers[t].effort}`).join(' · ')
+
+/** Whether a step's details are open: its own toggle in this chat, else Expand all / Collapse all, else the stored default. */
+export const stepOpen = (view: { all?: boolean; toggled: Record<string, boolean> }, set: Settings, id: string) => view.toggled[id] ?? view.all ?? set.expandAll
 
 // --- What the agent knows of each step ----------------------------------------------
 

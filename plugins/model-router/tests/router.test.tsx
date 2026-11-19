@@ -2,7 +2,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
+import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, applyPreset, presetOf, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
 import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
@@ -27,6 +27,32 @@ const PANE = {
     view: {},
   },
 } as const
+
+type Mounted = { find: (q: never) => Promise<unknown>; press: (t: { key: string }) => Promise<unknown> }
+const GROUPS = ['models', 'helpers', 'learning', 'prices', 'skills', 'diagnostics', 'advanced']
+/** Opens Settings and every group in it (0.26 groups them, closed by default), so a test reaches any row. */
+async function openSettings(pane: Mounted) {
+  if (!(await pane.find({ type: 'Button', key: 'settings-done' } as never))) await pane.press({ key: 'settings' })
+  for (const g of GROUPS) {
+    if ((await pane.find({ type: 'Button', key: `group:${g}` } as never)) && !(await pane.find({ key: `group-body:${g}` } as never))) await pane.press({ key: `group:${g}` })
+  }
+}
+/** Opens the details of every step (0.26 shows steps as two-line rows). */
+async function expandAll(pane: Mounted) {
+  const b = (await pane.find({ type: 'Button', key: 'expand-all' } as never)) as { text?: string } | undefined
+  if (b && b.text !== 'Collapse all') await pane.press({ key: 'expand-all' })
+}
+
+const VIEW_LABEL: Record<string, string> = { plan: 'This plan', chat: 'This chat', all: 'All time' }
+/** Cycles the cost line's span button to a view and opens Details (0.26: one cycle button; tiles and footnotes in Details). */
+async function costView(pane: Mounted, view: 'plan' | 'chat' | 'all') {
+  for (let i = 0; i < 3; i++) {
+    const b = (await pane.find({ type: 'Button', key: 'cost-view' } as never)) as { text?: string } | undefined
+    if (b?.text?.startsWith(VIEW_LABEL[view]!)) break
+    await pane.press({ key: 'cost-view' })
+  }
+  if (!(await pane.find({ key: 'cost-detail-body' } as never))) await pane.press({ key: 'cost-details' })
+}
 
 const lastRow = (rows: { appended: () => readonly unknown[] }) =>
   JSON.stringify(rows.appended().at(-1) ?? '')
@@ -94,10 +120,14 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
 
   // Settings: open them, turn on auto-approve and Always plan from the pane.
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   await pane.press({ key: 'auto' })
   await pane.press({ key: 'always' })
   await pane.press({ key: 'open-pane' })
+  // Settings take the place of plan, cost and footer until Done.
+  expect(await pane.find({ key: 'section:plan' } as never)).toBeFalsy()
+  await pane.press({ key: 'settings-done' })
+  expect(await pane.find({ key: 'section:plan' } as never)).toBeTruthy()
   await pane.unmount()
   expect(store.get('autoApprove')).toBe(true)
   expect(store.get('alwaysPlan')).toBe(true)
@@ -131,10 +161,11 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   expect(live.steps).toBe(0)
   expect(statuses.at(-1)).toContain('saved')
   const mid = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await costView(mid, 'plan')
   const planSaved = (await mid.find({ type: 'Text', text: /of the total$/ }))?.text
-  await mid.press({ key: 'cost-view:chat' })
+  await costView(mid, 'chat')
   expect((await mid.find({ type: 'Text', text: /of the total$/ }))?.text).toBe(planSaved)
-  await mid.press({ key: 'cost-view:plan' })
+  await costView(mid, 'plan')
   await mid.unmount()
 
   await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'a1' } as never)
@@ -153,13 +184,14 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
 
   // The card shows cost and savings, and offers the next rung.
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await expandAll(ui)
   expect((await ui.find({ type: 'Text', text: /saved ≈/ }))?.text).toContain('saved')
-  expect((await ui.find({ type: 'Text', text: /^Done in this chat, on opus/ }))?.text).toContain('only picks a model')
-  await ui.press({ key: 'cost-view:all' })
+  expect((await ui.find({ type: 'Text', text: /^Runs in this chat on opus/ }))?.text).toContain('used if you send it to a Claude agent')
+  await costView(ui, 'all')
   expect((await ui.find({ type: 'Text', text: /delegated steps in 1 plans/ }))?.text).toContain('light 1')
-  await ui.press({ key: 'cost-view:chat' })
+  await costView(ui, 'chat')
   expect((await ui.find({ type: 'Text', text: /^Since this chat was opened/ }))?.text).toContain('1 delegated steps')
-  await ui.press({ key: 'cost-view:plan' })
+  await costView(ui, 'plan')
   await ui.press({ key: 'rerun:u1' })
   await ui.unmount()
   expect(prompts.at(-1)?.text).toContain('haiku/medium')
@@ -175,7 +207,9 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
 
   // The scope note joins briefs only for a tier that has it on.
   const set = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await openSettings(set)
   await set.press({ key: 'set-scope:light' })
+  await set.press({ key: 'settings-done' })
   await set.unmount()
   await $.tool.call({ tool: 'Agent', description: '[u1] list files', prompt: 'go' })
   expect(calls.at(-1)?.prompt).toContain('Scope:')
@@ -192,6 +226,7 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
 
   // A narrow pane with settings open still draws every control, Done included.
   const narrow = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 28 }, surface: 'terminal' } as never)
+  await openSettings(narrow)
   expect((await narrow.find({ type: 'Button', key: 'settings-done' } as never))).toBeTruthy()
   // The terminal draws no Select (its list opens inline and shifts the row): pickers
   // are buttons that cycle to the next option on Enter.
@@ -201,10 +236,14 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   await narrow.press({ key: 'set-model:light' })
   await narrow.unmount()
 
-  // The whole pane, settings open, draws on every surface.
+  // The whole pane, settings open (every group), then closed with its cost details, draws on every surface.
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const any = await $.ui.mount({ ...PANE, surface })
-    expect((await any.find({ type: 'Text', text: /^Model router$/ }))?.text).toBe('Model router')
+    await openSettings(any)
+    expect((await any.find({ type: 'Text', text: /^Settings$/ }))?.text).toBe('Settings')
+    expect(await any.find({ key: 'group-body:advanced' } as never)).toBeTruthy()
+    await any.press({ key: 'settings-done' })
+    await costView(any, 'plan')
     expect((await any.find({ type: 'Text', text: /runs ·/ }))?.text).toContain('reruns')
     await any.unmount()
   }
@@ -413,8 +452,9 @@ test('with helpers set to all steps the rules say so, and the pane switches help
   expect(lastRow(rows)).not.toContain('over ~15 tool calls')
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await pane.press({ key: 'settings' })
-  await pane.press({ key: 'helpers' })
+  await openSettings(pane)
+  // Basics → Other subscriptions: one picker for helpers off / long steps / all steps.
+  await pane.select({ key: 'helpers', value: 'off' })
   await pane.unmount()
   expect((store.get('settings') as { helpers: { enabled: boolean; use: string } }).helpers.enabled).toBe(false)
   expect((store.get('settings') as { helpers: { use: string } }).helpers.use).toBe('all')
@@ -427,7 +467,7 @@ test('Copilot Fusion is off by default and, when picked in the pane, goes before
 
   // In the terminal the picker cycles: off → Max for deep → High + Max.
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   await pane.press({ key: 'helpers-fusion' })
   expect((store.get('settings') as { helpers: { fusion: string } }).helpers.fusion).toBe('deep')
   await $.turn.start({ text: 'second', turnId: 't1' })
@@ -513,7 +553,7 @@ test('helper steps add no agent cost or steps; one run through the Agent tool be
   expect(String(text.result)).toContain('[h2] Survey: deep, helper (kiro-deep → copilot-deep → agy-deep), done')
 })
 
-test('minimal view: steps and their pickers only, no explanatory text; kept across chats', async ($, on) => {
+test('steps are two-line rows: ▸ opens one step in place, Expand all opens every step and is remembered for new chats', async ($, on) => {
   const { store } = await boot($, on, [])
   await $.tool.call({
     tool: PLAN,
@@ -525,31 +565,66 @@ test('minimal view: steps and their pickers only, no explanatory text; kept acro
   const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
   const TERMINAL = { ...PANE, surface: 'terminal' } as never
 
-  // Full view first: the explanation under a here step, and the switch row's help.
-  const full = await $.ui.mount(TERMINAL)
-  expect(await full.find(text(/Runs in this chat on/))).toBeTruthy()
-  await full.press({ key: 'settings' })
-  expect(await full.find(text(/Plan before any message/))).toBeTruthy()
-  expect(await full.find(text(/^ BEHAVIOUR $/))).toBeTruthy()
-  await full.unmount()
-
-  // The header button turns Minimal on and remembers it.
+  // A new install: rows only, the pickers on line 2, no details; plain words for where a step runs.
   const pane = await $.ui.mount(TERMINAL)
-  await pane.press({ key: 'minimal' })
-  expect((store.get('settings') as { compact: boolean }).compact).toBe(true)
+  expect(await pane.find(text(/^Plan · 0 of 2 done/))).toBeTruthy()
   expect(await pane.find(text(/Runs in this chat on/))).toBeFalsy()
-  expect(await pane.find(text(/Plan before any message/))).toBeFalsy()
-  expect(await pane.find({ type: 'Button', key: 'where:s1' } as never)).toBeTruthy()
+  expect((await pane.find({ type: 'Button', key: 'where:s1' } as never) as { text: string }).text).toContain('this chat')
+  expect((await pane.find({ type: 'Button', key: 'where:s2' } as never) as { text: string }).text).toContain('Claude agent')
   expect(await pane.find({ type: 'Button', key: 'effort:s2' } as never)).toBeTruthy()
-  expect(await pane.find({ type: 'Button', key: 'settings-done' } as never)).toBeTruthy()
-  // Still editable: a picker cycles. A here step's tier is a label, not a picker.
+  // Still editable: a picker cycles. A here step's level is a label, not a picker.
   await pane.press({ key: 'tier:s2' })
   expect(await pane.find({ type: 'Button', key: 'tier:s1' } as never)).toBeFalsy()
+
+  // ▸ opens that step's details only, in place; ▾ closes them.
+  await pane.press({ key: 'open:s1' })
+  expect(await pane.find(text(/Runs in this chat on/))).toBeTruthy()
+  expect(await pane.find({ key: 'details:s2' } as never)).toBeFalsy()
+  await pane.press({ key: 'open:s1' })
+  expect(await pane.find(text(/Runs in this chat on/))).toBeFalsy()
+
+  // Expand all opens every step, says Collapse all, and is remembered as the default for new chats.
+  await pane.press({ key: 'expand-all' })
+  expect(await pane.find({ key: 'details:s1' } as never)).toBeTruthy()
+  expect(await pane.find({ key: 'details:s2' } as never)).toBeTruthy()
+  expect((await pane.find({ type: 'Button', key: 'expand-all' } as never) as { text: string }).text).toBe('Collapse all')
+  expect((store.get('settings') as { expandAll: boolean }).expandAll).toBe(true)
+  // One step closed by hand stays closed while the rest are open.
+  await pane.press({ key: 'open:s2' })
+  expect(await pane.find({ key: 'details:s2' } as never)).toBeFalsy()
+  expect((await pane.find({ type: 'Button', key: 'expand-all' } as never) as { text: string }).text).toBe('Expand all')
+  await pane.press({ key: 'expand-all' })
+  await pane.press({ key: 'expand-all' })
+  expect(await pane.find({ key: 'details:s1' } as never)).toBeFalsy()
+  expect((store.get('settings') as { expandAll: boolean }).expandAll).toBe(false)
+
+  // The glossary is one click away and explains the words of the rows.
+  await pane.press({ key: 'glossary' })
+  expect(await pane.find(text(/^other subscription: an agent of another account/))).toBeTruthy()
+  expect(await pane.find(text(/^verdict: ok · weak/))).toBeTruthy()
   await pane.unmount()
   await $.tool.call({ tool: PLAN, done: [] } as never)
 })
 
-test('a chat that starts with the minimal view stored draws it', async ($, on) => {
+test('the stored Minimal view (0.25) becomes the plan view: full view opens every step, Minimal and new installs start closed', async ($, on) => {
+  expect(mergeSettings({ compact: false } as never).expandAll).toBe(true)
+  expect(mergeSettings({ compact: true } as never).expandAll).toBe(false)
+  expect(mergeSettings(undefined).expandAll).toBe(false)
+  expect(mergeSettings({ compact: false, expandAll: false } as never).expandAll).toBe(false)
+  expect('compact' in mergeSettings({ compact: true } as never)).toBe(false)
+  expect(mergeSettings({ openGroups: ['models', 3, 'models'] } as never).openGroups).toEqual(['models'])
+
+  // Settings stored by 0.25 with the full view: every step opens, and the next write drops `compact`.
+  const { store } = await boot($, on, [['settings', { compact: false }]])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Read', tier: 'light', where: 'here' }] } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await pane.find({ type: 'Text', text: /Runs in this chat on/ } as never)).toBeTruthy()
+  await pane.press({ key: 'expand-all' })
+  expect('compact' in (store.get('settings') as object)).toBe(false)
+  await pane.unmount()
+})
+
+test('a chat that starts with the minimal view stored draws its steps closed', async ($, on) => {
   await boot($, on, [['settings', { compact: true }]])
   await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Read', tier: 'light', where: 'here' }] } as never)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
@@ -579,6 +654,9 @@ test('a here step is a rating: the rule says so, and one rated above this chat i
   expect(String(res.result)).toContain('[s3] Survey: deep, opus/high, planned')
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  // The row says it in three words; the details in a sentence.
+  expect(await pane.find({ type: 'Text', text: /^⚠ rated for opus$/ } as never)).toBeTruthy()
+  await expandAll(pane)
   expect(await pane.find({ type: 'Text', text: /^Rated deep \(opus\), but this chat runs on sonnet/ } as never)).toBeTruthy()
   expect(await pane.find({ type: 'Text', text: /^Rated light/ } as never)).toBeFalsy()
   await pane.unmount()
@@ -671,6 +749,7 @@ test('here-step effort on: a chat over the limit keeps its level, and the card s
   expect(sent.at(-1)).toBe('high')
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await expandAll(pane)
   expect(await pane.find({ type: 'Text', text: /^Kept at high: this chat is at 9\dk tokens, over the 40k limit/ } as never)).toBeTruthy()
   await pane.unmount()
 })
@@ -678,7 +757,7 @@ test('here-step effort on: a chat over the limit keeps its level, and the card s
 test('here-step effort: the Settings switch turns it on, adds start to the plan tool, and shows what switches cost', async ($, on) => {
   const { store, registered } = await boot($, on, [['effortLog', [{ at: '2026-11-05T10:00:00Z', from: 'high', to: 'low', context: 20_000, cacheWrite: 19_000, cacheRead: 1_000 }]]])
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find({ type: 'Text', text: /^1 switch so far: 19k tokens written to the cache, 1k read/ } as never)).toBeTruthy()
   await pane.press({ key: 'here-effort' })
   expect((store.get('settings') as { hereEffort: { enabled: boolean } }).hereEffort.enabled).toBe(true)
@@ -749,7 +828,7 @@ test('an empty store takes its settings back from the mirror; a store that has t
 
   // Every change is written to the mirror too.
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   await pane.press({ key: 'set-model:deep' })
   await pane.unmount()
   const written = JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { tiers: { deep: { model: string } } }; alwaysPlan: boolean }
@@ -769,17 +848,22 @@ test('values that differ from the default carry a dot and a legend', async ($, o
   const dots = { type: 'Text', text: /^•$/ } as never
   const legend = { type: 'Text', text: /^• differs from the default$/ } as never
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(legend)).toBeFalsy()
   expect(await pane.find(dots)).toBeFalsy()
   await pane.press({ key: 'set-model:light' })
   expect(await pane.find(legend)).toBeTruthy()
-  expect(await pane.findAll(dots)).toHaveLength(1)
+  // Three: beside the picker, on the Models per level header, and on Spend (now Custom).
+  expect(await pane.findAll(dots)).toHaveLength(3)
+  expect((await pane.find({ type: 'Button', key: 'spend' } as never) as { text: string }).text).toContain('Custom')
   await pane.press({ key: 'always' })
-  expect(await pane.findAll(dots)).toHaveLength(2)
+  expect(await pane.findAll(dots)).toHaveLength(4)
   // Back to the default: the dot goes.
   await pane.press({ key: 'always' })
-  expect(await pane.findAll(dots)).toHaveLength(1)
+  expect(await pane.findAll(dots)).toHaveLength(3)
+  // A closed group still shows that something inside differs.
+  await pane.press({ key: 'group:models' })
+  expect(await pane.findAll(dots)).toHaveLength(2)
   await pane.unmount()
 })
 
@@ -789,7 +873,10 @@ test('moving or switching off a helper changes the order in the rules, one note 
   expect(lastRow(rows)).toContain('light: kiro-light,copilot-light,agy-light')
 
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
+  // The order is one line a level; Edit gives that level its ↑ ↓ off controls.
+  expect(await pane.find({ type: 'Button', key: 'helper-down:light:kiro-light' } as never)).toBeFalsy()
+  await pane.press({ key: 'order-edit:light' })
   await pane.press({ key: 'helper-down:light:kiro-light' })
   expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light,agy-light')
   await pane.press({ key: 'helper-off:light:agy-light' })
@@ -819,7 +906,8 @@ test('a helper order that returns to what the chat was told sends no note', asyn
   await $.turn.start({ text: 'first', turnId: 't0' })
   const count = rows.appended().length
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
+  await pane.press({ key: 'order-edit:deep' })
   await pane.press({ key: 'helper-down:deep:kiro-deep' })
   await pane.press({ key: 'helper-reset' })
   await pane.unmount()
@@ -990,6 +1078,7 @@ test('a counted step adds up its agents\' cost, counts once, and a group is done
 
   // The group card shows the sum of its parts; the cost line of the plan does not count it twice.
   const pane = await $.ui.mount(TERMINAL)
+  await expandAll(pane)
   const cards = await pane.findAll(text(/^≈\$[\d.]+ · [\d.]+k tok/))
   // The counted step, its group and the group above it show the same sum.
   expect(cards).toHaveLength(3)
@@ -1021,7 +1110,7 @@ test('a group is done with its last part', async ($, on) => {
 
 })
 
-test('parts nest in the pane, the indent stops at three levels, each part has its own pickers, and the minimal view stays compact', async ($, on) => {
+test('parts nest in the pane, the indent stops at three levels, each part has its own pickers, and rows stay compact', async ($, on) => {
   const { rows } = await boot($, on, [])
   const deep = [
     {
@@ -1038,6 +1127,8 @@ test('parts nest in the pane, the indent stops at three levels, each part has it
   expect(String(res.result)).toContain('        [s1.a.b.c.d] L4: light, haiku/low, planned')
 
   const pane = await $.ui.mount(TERMINAL)
+
+  await expandAll(pane)
   const pad = async (id: string) => ((await pane.find({ type: 'Box', key: `row:${id}` } as never))?.props.paddingLeft as number | undefined) ?? 0
   expect(await pad('s1')).toBe(0)
   expect(await pad('s1.a')).toBe(2)
@@ -1051,10 +1142,10 @@ test('parts nest in the pane, the indent stops at three levels, each part has it
   expect(await pane.find({ type: 'Button', key: 'tier:s1.a.b.c.d' } as never)).toBeTruthy()
   expect(await pane.find({ type: 'Button', key: 'model:s1.a.b.c.d' } as never)).toBeTruthy()
   // Only the part that does the work is counted as a step.
-  expect(await pane.find(text(/^0 of 1 steps done$/))).toBeTruthy()
+  expect(await pane.find(text(/^Plan · 0 of 1 done$/))).toBeTruthy()
 
-  // Minimal: no border around a group, no explanatory text, pickers still there.
-  await pane.press({ key: 'minimal' })
+  // Rows have no border around a group; closed, the pickers are still there.
+  await pane.press({ key: 'expand-all' })
   expect((await pane.find({ type: 'Box', key: 'card:s1' } as never))?.props.borderStyle).toBeUndefined()
   expect(await pane.find({ type: 'Button', key: 'tier:s1.a.b.c.d' } as never)).toBeTruthy()
   expect(await pane.find(text(/^0\/1 done$/))).toBeTruthy()
@@ -1154,6 +1245,8 @@ test('starting a helper step with the helper and the model it reports shows both
   expect(String(started.result)).toContain('[h2] Sweep: light, helper (kiro-light → copilot-light → agy-light), running')
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+
+  await expandAll(pane)
   expect(await pane.find(text(/^copilot-standard · Claude Sonnet 5\.5$/))).toBeTruthy()
   expect(await pane.find(text(/^Runs on another subscription's agent/))).toBeTruthy()
   await pane.unmount()
@@ -1198,18 +1291,24 @@ test('a helper step marked done with its usage: shown on its card, added up per 
   expect((store.get('lifetime') as typeof seeded).helper.usage[0]!.amount).toBe(40.04)
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+
+  await expandAll(pane)
   expect(await pane.find(text(/^30\.04 AIC · <1 min$/))).toBeTruthy()
   expect(await pane.find(text(/^2\.1 credits · <1 min$/))).toBeTruthy()
   const plan = /^Moved off Claude: 3 helper steps, <1 min; Copilot 30\.04 AIC; Kiro 2\.1 credits$/
   expect(await pane.find(text(plan))).toBeTruthy()
-  await pane.press({ key: 'cost-view:chat' })
+  await costView(pane, 'chat')
   expect(await pane.find(text(plan))).toBeTruthy()
-  await pane.press({ key: 'cost-view:all' })
+  await costView(pane, 'all')
   expect(await pane.find(text(/^Moved off Claude: 4 helper steps, 6 min; Copilot 40\.04 AIC; Kiro 2\.1 credits$/))).toBeTruthy()
 
-  // Never converted to money, and reset with the other statistics.
-  await pane.press({ key: 'settings' })
+  // Never converted to money, and reset with the other statistics: a second click that names what goes.
+  await openSettings(pane)
   await pane.press({ key: 'reset-stats' })
+  expect((store.get('lifetime') as typeof seeded).helper.steps).toBe(4)
+  expect(await pane.find(text(/^Really reset the all-time statistics/))).toBeTruthy()
+  await pane.press({ key: 'reset-confirm' })
+  expect(await pane.find(text(/^Statistics reset\.$/))).toBeTruthy()
   await pane.unmount()
   expect((store.get('lifetime') as typeof seeded).helper).toEqual({ steps: 0, ms: 0, usage: [] })
 })
@@ -1301,7 +1400,9 @@ test('a delegated step asks for a verdict once, records it on its run with the f
   expect(String(judged.result)).not.toContain('Verdict needed')
   expect((store.get('history') as HistoryEntry[]).at(-1)).toMatchObject({ verdict: 'weak', why: 'missed two files' })
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await expandAll(pane)
   expect(await pane.find(text(/^verdict weak: missed two files$/))).toBeTruthy()
+  await costView(pane, 'plan')
   expect((await pane.find(text(/^1 runs · 0 reruns · 1 weak$/)))).toBeTruthy()
   await pane.unmount()
 
@@ -1398,14 +1499,18 @@ test('applying a kind\'s advice sets its default: persisted, mirrored, marked, u
   const weak = [run(1, { verdict: 'weak' }), run(2, { verdict: 'weak' }), run(3, { verdict: 'ok' })]
   const { store, files, calls } = await boot($, on, [['history', weak]], [{ id: 'x1', description: '[r1] review' }])
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await expandAll(pane)
   expect(await pane.find(text(/^code-review on light: 2 of 3 weak: raise code-review's default to haiku\/medium\.$/))).toBeTruthy()
+  // The per-kind table is in the cost Details.
+  expect(await pane.find(text(/^code-review$/))).toBeFalsy()
+  await costView(pane, 'plan')
   expect(await pane.find(text(/^code-review$/))).toBeTruthy()
   await pane.press({ key: 'apply-kind:code-review' })
   expect((store.get('settings') as { kinds: Record<string, unknown> }).kinds['code-review']).toEqual({ model: 'haiku', effort: 'medium' })
   expect((JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { kinds: Record<string, unknown> } }).settings.kinds['code-review']).toEqual({ model: 'haiku', effort: 'medium' })
   // The advice is gone (the kind now runs on its own rung, with no runs there yet), and the default is marked.
   expect(await pane.find({ type: 'Button', key: 'apply-kind:code-review' } as never)).toBeFalsy()
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(text(/^→ haiku\/medium$/))).toBeTruthy()
   expect(await pane.find(text(/^• differs from the default$/))).toBeTruthy()
 
@@ -1451,9 +1556,11 @@ test('auto mode is off by default; on, a kind runs on the cheapest rung it did w
 
   // On, from Settings: persisted; the step runs on the learned rung, and its card says so.
   const pane = await $.ui.mount(TERMINAL)
-  await pane.press({ key: 'settings' })
+  await expandAll(pane)
+  await openSettings(pane)
   await pane.press({ key: 'auto-route' })
   expect((store.get('settings') as { autoRoute: boolean }).autoRoute).toBe(true)
+  await pane.press({ key: 'settings-done' })
   expect(await pane.find(text(/^auto: haiku · high \(learned, 5 runs\)$/))).toBeTruthy()
   const after = await $.tool.call({ tool: PLAN, done: [] } as never)
   expect(String(after.result)).toContain('[s1] Summarize: standard, haiku/high (auto: learned, 5 runs), kind summarize, running')
@@ -1486,6 +1593,8 @@ test('a model seen in usage joins the known models and the pickers; with no pric
   expect(life.mainEquivalent).toBe(0)
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+
+  await expandAll(pane)
   const picker = await pane.find({ type: 'Select', key: 'model:n1' } as never)
   expect((picker?.props.options as { value: string }[]).map(o => o.value)).toEqual(['tier', 'haiku', 'sonnet', 'opus', 'fable', 'claude-nova-6'])
   expect(await pane.find(text(/^\? · 5\.0k tok \+ 37\.0k cached · no price for claude-nova-6: left out of savings/))).toBeTruthy()
@@ -1494,7 +1603,7 @@ test('a model seen in usage joins the known models and the pickers; with no pric
   expect(await pane.find(text(/of the total$/))).toBeFalsy()
 
   // Settings lists it with no price; a price set there is kept, and a model can be added by name.
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(text(/^no price$/))).toBeTruthy()
   await pane.input({ key: 'price:claude-nova-6', text: '3 15' })
   expect((store.get('settings') as { prices: Record<string, unknown> }).prices['claude-nova-6']).toEqual({ input: 3, cacheWrite: 3.75, cacheRead: 0.30000000000000004, output: 15 })
@@ -1577,6 +1686,7 @@ test('a main chat on a model with no price counts no saving, and a verdict given
   expect(life.mainEquivalent).toBe(life.agentCost)
   expect(life.mainCost).toBe(0)
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await costView(pane, 'plan')
   expect(await pane.find(text(/^\?$/))).toBeTruthy()
   await pane.unmount()
 
@@ -1783,7 +1893,7 @@ test('with no templates to read and no report, a helper step shows its model and
   expect(String(started.result)).toContain('[h1] Survey: standard, helper (copilot-standard · Claude Sonnet 5.5), running')
 })
 
-test('in the minimal view a part\'s card shows its model and thinking level: pickers for a subagent part, the helper line for a helper part', async ($, on) => {
+test('a closed part row shows its model and effort: pickers for a Claude agent part, the helper line for a helper part', async ($, on) => {
   const files = new Map([[`${TEMPLATES}/kiro-standard.md`, template('kiro-cli chat --v3 --model claude-sonnet-5.5 --effort high')]])
   await boot($, on, HELPERS, [], files)
   await $.tool.call({
@@ -1803,7 +1913,6 @@ test('in the minimal view a part\'s card shows its model and thinking level: pic
   } as never)
   await $.tool.call({ tool: PLAN, start: [{ id: 's1.b', helper: 'kiro-standard', model: 'Claude Sonnet 5.5' }] } as never)
   const pane = await $.ui.mount(TERMINAL)
-  await pane.press({ key: 'minimal' })
   expect((await pane.find({ type: 'Button', key: 'model:s1.a' } as never))?.text).toContain('haiku')
   expect((await pane.find({ type: 'Button', key: 'effort:s1.a' } as never))?.text).toContain('low')
   expect(await pane.find(text(/^kiro-standard · Claude Sonnet 5\.5 · high$/))).toBeTruthy()
@@ -1853,22 +1962,22 @@ test('Settings > Learning: "Auto picks a rung with at least N runs and P% ok" is
   expect(String(before.result)).toContain('[s1] Summarize: standard, sonnet/medium, kind summarize, planned')
 
   const pane = await $.ui.mount(TERMINAL)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(text(/^Auto picks a rung with at least$/))).toBeTruthy()
   expect((await pane.find({ type: 'Button', key: 'auto-min-runs' } as never))?.text).toContain('5 runs')
   expect((await pane.find({ type: 'Button', key: 'auto-ok-percent' } as never))?.text).toContain('90% ok')
-  // Marked so far: auto-approve (boot turns it on) and the auto switch (on in the stored settings).
-  expect(await pane.findAll(text(/^•$/))).toHaveLength(2)
+  // Marked so far: auto-approve (boot turns it on), the auto switch (on in the stored settings) and the Learning header.
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(3)
   expect(await pane.find(text(/ok in at least 90% of 5 or more runs/))).toBeTruthy()
 
   // The picker offers 3, 5, 8, 10, 20 runs and cycles forward: 5 -> 8 -> 10 -> 20 -> 3.
   for (let i = 0; i < 4; i++) await pane.press({ key: 'auto-min-runs' })
   expect((store.get('settings') as { autoMinRuns: number }).autoMinRuns).toBe(3)
-  expect(await pane.findAll(text(/^•$/))).toHaveLength(3)
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(4)
   // 90% -> 95% -> 100% -> 70% -> 80%.
   for (let i = 0; i < 4; i++) await pane.press({ key: 'auto-ok-percent' })
   expect((store.get('settings') as { autoOkPercent: number }).autoOkPercent).toBe(80)
-  expect(await pane.findAll(text(/^•$/))).toHaveLength(4)
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(5)
   const written = JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { autoMinRuns: number; autoOkPercent: number } }
   expect(written.settings).toMatchObject({ autoMinRuns: 3, autoOkPercent: 80 })
   expect(await pane.find(text(/ok in at least 80% of 3 or more runs/))).toBeTruthy()
@@ -1880,7 +1989,7 @@ test('Settings > Learning: "Auto picks a rung with at least N runs and P% ok" is
   await pane.press({ key: 'auto-min-runs' })
   await pane.press({ key: 'auto-ok-percent' })
   expect((store.get('settings') as { autoMinRuns: number; autoOkPercent: number })).toMatchObject({ autoMinRuns: 5, autoOkPercent: 90 })
-  expect(await pane.findAll(text(/^•$/))).toHaveLength(2)
+  expect(await pane.findAll(text(/^•$/))).toHaveLength(3)
   await pane.unmount()
 })
 
@@ -2020,7 +2129,10 @@ test('Settings > Helpers: model and thinking pickers for each provider and tier,
   expect(world.ran[0]).toEqual(['python3', SCRIPT, 'config'])
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
+  // Only the helper levels that differ from herdr-delegate's defaults are listed; Change… opens the full grid.
+  expect(await pane.find(text(/^All at herdr-delegate's defaults\.$/))).toBeTruthy()
+  await pane.press({ key: 'helper-grid' })
   const picker = async (key: string) => (await pane.find({ type: 'Select', key } as never)) as { props: { value: string; options: { value: string; label: string }[] } }
   expect((await picker('helper-model:kiro:light')).props.options.map(o => o.value)).toEqual(['auto', 'claude-opus-5.5', 'claude-sonnet-5.5', 'claude-haiku-5.5', 'glm-5'])
   expect((await picker('helper-model:kiro:light')).props.value).toBe('claude-haiku-5.5')
@@ -2032,7 +2144,7 @@ test('Settings > Helpers: model and thinking pickers for each provider and tier,
   // agy's ids carry the level; the picker lists the models without it. A provider with no cached list shows the configured ones.
   expect((await picker('helper-model:agy:standard')).props.options.map(o => o.value)).toEqual(['claude-sonnet-5-5', 'gemini-3.8-flash', 'claude-opus-5-5'])
   expect((await picker('helper-model:copilot:light')).props.options.map(o => o.value)).toEqual(['gpt-6-luna', 'claude-sonnet-5.5', 'claude-opus-5.5'])
-  expect(await pane.find(text(/^models checked 2026-11-07$/))).toBeTruthy()
+  expect(await pane.find(text(/^checked 2026-11-07$/))).toBeTruthy()
 
   // A change runs set with both values, then reads the config again; the value differs from the shipped default, so it is marked.
   const marks = (await pane.findAll(text(/^•$/))).length
@@ -2040,13 +2152,18 @@ test('Settings > Helpers: model and thinking pickers for each provider and tier,
   expect(world.ran.at(-2)).toEqual(['python3', SCRIPT, 'set', 'kiro', 'light', 'model=claude-haiku-5.5', 'effort=medium'])
   expect(world.ran.at(-1)).toEqual(['python3', SCRIPT, 'config'])
   expect((await picker('helper-effort:kiro:light')).props.value).toBe('medium')
-  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 1)
+  // Marked beside the picker and on the closed-able group's header.
+  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 2)
   await pane.select({ key: 'helper-model:kiro:standard', value: 'claude-opus-5.5' } as never)
   expect(world.ran.at(-2)).toEqual(['python3', SCRIPT, 'set', 'kiro', 'standard', 'model=claude-opus-5.5', 'effort=high'])
-  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 2)
+  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 3)
   // Back to the default: the mark goes.
   await pane.select({ key: 'helper-effort:kiro:light', value: 'low' } as never)
-  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 1)
+  expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 2)
+  // With the grid closed, the one level that differs is listed on its own line.
+  await pane.press({ key: 'helper-grid' })
+  expect(await pane.find(text(/^Kiro standard: claude-opus-5\.5 high •$/))).toBeTruthy()
+  await pane.press({ key: 'helper-grid' })
 
   // helpers.py refuses (it validates the model and level): its message shows, and the config stays as it was.
   world.fail.set = "error: effort 'xhigh' is not one of ['low'] for kiro"
@@ -2063,14 +2180,14 @@ test('Check models runs helpers.py models; the models no longer offered and the 
   const world = helperWorld(on, files)
   await boot($, on, [HELPERS_ON], [], files, world.setup)
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(text(/^NOT OFFERED/))).toBeFalsy()
   await pane.press({ key: 'helpers-check' })
   expect(world.argsOf('models')).toEqual([['python3', SCRIPT, 'models']])
   expect(await pane.find(text(/^NOT OFFERED kiro-light: claude-haiku-5\.5 \(provider kiro\)/))).toBeTruthy()
   expect(await pane.find(text(/^NEWER kiro-standard: claude-sonnet-5\.5 -> claude-sonnet-5\.6$/))).toBeTruthy()
   // The cache was written by helpers.py; the router read it again.
-  expect(await pane.find(text(/^models checked 2026-11-08$/))).toBeTruthy()
+  expect(await pane.find(text(/^checked 2026-11-08$/))).toBeTruthy()
   expect(await pane.find({ type: 'Button', key: 'helpers-check' } as never)).toBeTruthy()
   await pane.unmount()
 })
@@ -2086,8 +2203,8 @@ test('without helpers.py there are no helpers: the pane explains how to get them
   expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
-  expect(await pane.find(text(/^Helpers are agents on other subscriptions or accounts\. They are optional: model-router works without them, running every step as a Claude subagent\.$/))).toBeTruthy()
+  await openSettings(pane)
+  expect(await pane.find(text(/^Helpers are agents on other subscriptions or accounts\. They are optional: model-router works without them, running every step as a Claude agent\.$/))).toBeTruthy()
   // The install line names the marketplace this plugin came from.
   expect(await pane.find(text(/^1\. Install herdr-delegate from the same marketplace: \/plugin install herdr-delegate@mk$/))).toBeTruthy()
   expect(await pane.find(text(/Install Herdr's hc/))).toBeTruthy()
@@ -2119,7 +2236,9 @@ test('without helpers.py there are no helpers: the pane explains how to get them
   await pane.input({ key: 'helpers-script', text: own })
   expect((store.get('settings') as { helpers: { script: string } }).helpers.script).toBe(own)
   expect(world.argsOf('config').at(-1)).toEqual(['python3', own, 'config'])
+  await pane.press({ key: 'helper-grid' })
   expect(await pane.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeTruthy()
+  await pane.press({ key: 'order-edit:light' })
   expect(await pane.find({ type: 'Button', key: 'helper-off:light:kiro-light' } as never)).toBeTruthy()
   expect(JSON.parse(files.get(MIRROR) ?? '{}').settings.helpers.script).toBe(own)
   // Helpers can run now: the plan tool offers helper steps again.
@@ -2149,7 +2268,7 @@ test('without Herdr\'s hc there are no helpers either: its own message, no helpe
   for (const t of ['light', 'standard', 'deep'] as const) expect(helperList(mergeSettings({ helpers: { enabled: true } }), t)).toEqual([])
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(text(/^Helpers run through Herdr's hc, which was not found on your PATH\./))).toBeTruthy()
   // herdr-delegate is installed here: its install line is not offered, the hc one is.
   expect(await pane.find(text(/Install herdr-delegate/))).toBeFalsy()
@@ -2195,7 +2314,7 @@ test('advice for a kind on a helper is stored as that kind\'s helper choice: mir
   // Nothing in helpers.py changed: a kind's choice is the router's.
   expect(world.argsOf('set')).toEqual([])
   expect(await pane.find({ type: 'Button', key: 'apply-helper-kind:research' } as never)).toBeFalsy()
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(text(/^→ kiro claude-haiku-5\.5\/medium$/))).toBeTruthy()
   await pane.press({ key: 'helper-kind-reset:research' })
   expect((store.get('settings') as { helpers: { kinds: unknown } }).helpers.kinds).toEqual({})
@@ -2225,10 +2344,12 @@ test('auto mode picks a helper model per step: the router makes the template, na
   expect(world.argsOf('custom')).toHaveLength(1)
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+
+  await expandAll(pane)
   expect(await pane.find(text(/^launch kiro-claude-haiku-5-5-medium · claude-haiku-5\.5 medium · auto: learned, 5 runs$/))).toBeTruthy()
 
   // Auto mode off: the step is back on the tier order, and the lead hears of it with the next plan result.
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   await pane.press({ key: 'auto-route' })
   expect((store.get('settings') as { autoRoute: boolean }).autoRoute).toBe(false)
   const off = String((await $.tool.call({ tool: PLAN, done: [] } as never)).result)
@@ -2274,7 +2395,8 @@ test('a kind\'s stored helper choice names a tier template when one fits, a one-
   expect(text1).toContain(`[l3] Fourth: light, helper (${light}), kind d, planned`)
   expect(world.argsOf('custom').map(a => a[4])).toEqual(['model=claude-haiku-5.5', 'model=glm-5'])
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  expect(await pane.find(text(/^no template for glm-5 low \('kiro-glm-5-low' cannot be made here\): the tier order applies$/))).toBeTruthy()
+  await expandAll(pane)
+  expect(await pane.find(text(/^no template for glm-5 low \('kiro-glm-5-low' cannot be made here\): the order applies$/))).toBeTruthy()
 
   // The lead launches them; each finished run records the provider, model and level it ran on.
   await $.tool.call({ tool: PLAN, start: [{ id: 'l1', helper: 'kiro-light', model: 'Claude Haiku 5.5' }, { id: 'l2', helper: 'kiro-claude-haiku-5-5-high' }, { id: 'l3', helper: 'kiro-light' }] } as never)
@@ -2398,16 +2520,17 @@ test('a change in this session leaves what another session stored in place: stor
   // Another session saves its settings after this one has loaded.
   store.set('settings', OTHER_SESSION)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'minimal' })
+  await openSettings(pane)
+  await pane.press({ key: 'open-pane' })
   await pane.unmount()
 
-  const kept = store.get('settings') as { compact: boolean; tiers: { deep: { model: string } }; helpers: { enabled: boolean; tiers: { light: string } } }
-  expect(kept.compact).toBe(true)
+  const kept = store.get('settings') as { openPane: boolean; tiers: { deep: { model: string } }; helpers: { enabled: boolean; tiers: { light: string } } }
+  expect(kept.openPane).toBe(true)
   expect(kept.tiers.deep.model).toBe('haiku')
   expect(kept.helpers.enabled).toBe(true)
   expect(kept.helpers.tiers.light).toBe('copilot-light')
   const mirrored = (JSON.parse(files.get(MIRROR) ?? '{}') as { settings: typeof kept }).settings
-  expect(mirrored.compact).toBe(true)
+  expect(mirrored.openPane).toBe(true)
   expect(mirrored.tiers.deep.model).toBe('haiku')
   expect(mirrored.helpers.enabled).toBe(true)
 })
@@ -2416,7 +2539,8 @@ test('reordering helpers works on the stored order, not this session\'s copy', a
   const { store } = await boot($, on, HELPERS)
   store.set('settings', { helpers: { enabled: true, tiers: { light: 'copilot-light', standard: 'kiro-standard,copilot-standard,agy-standard' } } })
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
+  await pane.press({ key: 'order-edit:standard' })
   await pane.press({ key: 'helper-up:standard:copilot-standard' })
   await pane.unmount()
   const kept = store.get('settings') as { helpers: { tiers: { light: string; standard: string } } }
@@ -2429,7 +2553,7 @@ test('auto-approve and always-plan set elsewhere are kept when this session chan
   const { store } = await boot($, on, [['autoApprove', false]], [], files)
   store.set('alwaysPlan', true)
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   await pane.press({ key: 'auto' })
   await pane.unmount()
   expect(store.get('autoApprove')).toBe(true)
@@ -2457,7 +2581,7 @@ test('opening Settings reads what the store holds now', async ($, on) => {
   const mapped = { type: 'Button', key: 'skill-tier:other-skill' } as never
   store.set('settings', { skills: { 'other-skill': 'standard' } })
   expect(await pane.find(mapped)).toBeFalsy()
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(mapped)).toBeTruthy()
   await pane.unmount()
 })
@@ -2518,7 +2642,7 @@ test('the cost line says which providers\' runs did not report usage', async ($,
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   const line = /^Moved off Claude: 3 helper steps(, <1 min)?; Kiro 0\.03 credits \(1 of 3 runs reported\)$/
   expect(await pane.find(text(line))).toBeTruthy()
-  await pane.press({ key: 'cost-view:all' })
+  await costView(pane, 'all')
   expect(await pane.find(text(line))).toBeTruthy()
   await pane.unmount()
 })
@@ -2660,7 +2784,10 @@ test('with the config naming installed CLIs the rules list those, with this acco
   const planned = await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'Survey', tier: 'standard', where: 'helper' }] } as never)
   expect(String(planned.result)).toContain('helper (claudemain-standard (this account) → codex-standard)')
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
+  // One line a level; Edit lists the helpers one per row.
+  expect(await pane.find(text(/^claudemain \(this account\) → codex$/))).toBeTruthy()
+  await pane.press({ key: 'order-edit:standard' })
   expect(await pane.find(text(/^1\. claudemain \(this account\)$/))).toBeTruthy()
   expect(await pane.find(text(/No helper CLI installed/))).toBeFalsy()
   await pane.unmount()
@@ -2676,7 +2803,7 @@ test('with no helper CLI installed the rules do not mention helpers and Settings
   await $.turn.start({ text: 'first', turnId: 't1' })
   expect(lastRow(second.rows)).not.toContain('runs a step on an agent from another subscription')
   const pane2 = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane2.press({ key: 'settings' })
+  await openSettings(pane2)
   expect(await pane2.find(text(/^No helper CLI is installed: install at least one/))).toBeTruthy()
   expect(await pane2.find({ type: 'Button', key: 'helper-off:light:kiro-light' } as never)).toBeFalsy()
   expect(await pane2.find({ type: 'Select', key: 'helper-model:kiro:light' } as never)).toBeFalsy()
@@ -2838,10 +2965,12 @@ test('outside a Herdr terminal with no headless helper, helpers cannot run: no h
     await pane.press({ key: 'health-why' })
     await pane.unmount()
   }
-  // The minimal view keeps the health line.
+  // Settings keep the health line on top, and Basics say the same in one word.
   const mini = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await mini.press({ key: 'minimal' })
+  await openSettings(mini)
   expect(await mini.find(text(/^✗ Helpers can't run/))).toBeTruthy()
+  // Under Basics → Other subscriptions, and on the group's closed header (the full list with fixes is inside).
+  expect(await mini.findAll(text(/^✗ This chat is not inside a Herdr terminal/))).toHaveLength(3)
   await mini.unmount()
 
   const status = await $.tool.call({ tool: PLAN, status: true } as never)
@@ -2867,7 +2996,7 @@ test('direct mode: without a Herdr terminal a headless helper runs through helpe
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   expect(await pane.find(text(/^✓ Router on · helpers: direct mode \(no Herdr terminal\)$/))).toBeTruthy()
   // "Herdr only" forbids direct mode: helpers cannot run, the plan tool drops "helper", and the chat is told.
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   await pane.select({ key: 'helpers-run', value: 'herdr' } as never)
   expect((store.get('settings') as { helpers: { run: string } }).helpers.run).toBe('herdr')
   expect(wheres(registered.at(-1))).toEqual(['agent', 'here'])
@@ -2892,8 +3021,8 @@ test('rules delivered with helpers off: switching them on sends the helper rule 
   await $.turn.start({ text: 'first', turnId: 't0' })
   expect(lastRow(rows).toLowerCase()).not.toContain('helper')
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
-  await pane.press({ key: 'helpers' })
+  await openSettings(pane)
+  await pane.select({ key: 'helpers', value: 'long' })
   await $.turn.start({ text: 'second', turnId: 't1' })
   const note = lastRow(rows)
   expect(note).toContain('Helpers changed; this replaces rule 6: where = ')
@@ -2902,7 +3031,7 @@ test('rules delivered with helpers off: switching them on sends the helper rule 
   await $.turn.start({ text: 'third', turnId: 't2' })
   expect(rows.appended().length).toBe(count)
   // "Use helpers for" changed mid-chat: the chat hears the new rule.
-  await pane.select({ key: 'helpers-use', value: 'all' } as never)
+  await pane.select({ key: 'helpers', value: 'all' } as never)
   await pane.unmount()
   await $.turn.start({ text: 'fourth', turnId: 't3' })
   expect(lastRow(rows)).toContain('every self-contained step that would otherwise be')
@@ -2925,7 +3054,7 @@ test('the log: one JSON line per event, ids and models but never titles; off in 
   expect(typeof evs[0]!.t).toBe('string')
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   await pane.press({ key: 'log' })
   await pane.unmount()
   const before = files.get(logPath())
@@ -2949,7 +3078,7 @@ test('Write report: the file lands under ~/.config/model-router with the checks 
   expect(md).toContain('- helpers.enabled: true')
   expect(md).toContain('"ev":"start"')
   // The same button sits in Settings → Diagnostics.
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find({ type: 'Button', key: 'settings-report' } as never)).toBeTruthy()
   await pane.unmount()
   const ran = await $.command.run({ command: 'router', args: 'report' } as never)
@@ -2967,6 +3096,7 @@ test('a run cut short: no rerun when delegated again, out of the advice, and the
 
   // The card's quiet link marks the run cut short, in the plan and in its history entry; again puts "weak" back.
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await expandAll(pane)
   await pane.press({ key: 'cut:s1' })
   expect(history().at(-1)?.verdict).toBe('cut-short')
   expect(await pane.find(text(/^cut short: says nothing about the model/))).toBeTruthy()
@@ -2997,10 +3127,12 @@ test('a helper step that falls back: start with a reason, or an Agent call witho
   expect(life.lastFallback).toBe('no reason given')
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  expect(await pane.find(text(/^ran as a subagent: out of quota$/))).toBeTruthy()
-  expect(await pane.find(text(/^ran as a subagent: no reason given$/))).toBeTruthy()
+
+  await expandAll(pane)
+  expect(await pane.find(text(/^ran as a Claude agent: out of quota$/))).toBeTruthy()
+  expect(await pane.find(text(/^ran as a Claude agent: no reason given$/))).toBeTruthy()
   expect(await pane.find(text(/^Off Claude: no helper steps yet · 2 ran as subagents: no reason given$/))).toBeTruthy()
-  await pane.press({ key: 'cost-view:all' })
+  await costView(pane, 'all')
   expect(await pane.find(text(/^Off Claude: no helper steps yet · 2 ran as subagents: no reason given$/))).toBeTruthy()
   expect(await pane.find(text(/delegated steps \(0 on helpers\) in 1 plans/))).toBeTruthy()
   await pane.unmount()
@@ -3011,14 +3143,19 @@ test('empty states: helpers on and none run yet; no history yet, or runs without
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   expect(await pane.find(text(/^Off Claude: no helper steps yet$/))).toBeTruthy()
   expect(await pane.find(text(/^History: no runs yet; advice starts after 3 runs of a kind\.$/))).toBeTruthy()
-  await pane.press({ key: 'minimal' })
-  expect(await pane.find(text(/^Off Claude: no helper steps yet$/))).toBeTruthy()
-  expect(await pane.find(text(/^History: no runs yet/))).toBeTruthy()
-  expect(await pane.find(text(/^What the history says$/))).toBeFalsy()
+  // The same on the terminal, and no plan means one line, not an empty heading.
+  const tty = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await tty.find(text(/^Off Claude: no helper steps yet$/))).toBeTruthy()
+  expect(await tty.find(text(/^History: no runs yet/))).toBeTruthy()
+  expect(await tty.find(text(/^What the history says$/))).toBeFalsy()
+  expect(await tty.find(text(/^No plan yet\. Multi-step tasks show their steps here\.$/))).toBeTruthy()
+  expect(await tty.find(text(/^Turn on "Plan every message" in Settings/))).toBeTruthy()
+  expect(await tty.find({ key: 'plan-head' } as never)).toBeFalsy()
+  await tty.unmount()
   await pane.unmount()
 })
 
-test('with runs but no advice the minimal view shows the history\'s one line, not an empty heading', async ($, on) => {
+test('with runs but no advice the cost section shows the history\'s one line, not an empty heading', async ($, on) => {
   const run = { key: 'k1', tier: 'light', where: 'agent', model: 'haiku', effort: 'low', cost: 0.01, setupHeavy: false, rerun: false, verdict: 'ok', at: '2026-11-18T00:00:00.000Z' }
   await boot($, on, [['history', [run, { ...run, key: 'k2' }]], ['settings', { compact: true }]])
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
@@ -3356,7 +3493,7 @@ test('Check now in Settings runs models --json; the Models group counts the note
     world.json.value = { report: modelsReport({ not_offered: [{ template: 'kiro-light', model: 'claude-haiku-5.5' }] }), cache: OFFERED }
   })
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  await pane.press({ key: 'settings' })
+  await openSettings(pane)
   expect(await pane.find(text(new RegExp(`^Model notes \\(${SEED_NOTES.length}\\) · checked ${ago(0)}$`)))).toBeTruthy()
   expect(await pane.find(text(/^Gemini 4 Neon · judgment/))).toBeFalsy()
   await pane.press({ key: 'model-notes-toggle' })
@@ -3408,8 +3545,8 @@ test('Herdr view state: the snapshot as display strings, a stable chat key, file
   expect(snap).toMatchObject({ version: 1, chat: 'abc', cwd: '/work/x', status: 'pending', statusText: 'awaiting your approval', news: [] })
   expect(snap.steps.map(x => [x.id, x.depth, x.where, x.on])).toEqual([
     ['s1', 0, '', 'rated standard · 1/2 done'],
-    ['s1.a', 1, 'subagent', 'haiku/low'],
-    ['s1.b', 1, 'subagent', 'opus/high'],
+    ['s1.a', 1, 'Claude agent', 'haiku/low'],
+    ['s1.b', 1, 'Claude agent', 'opus/high'],
     ['s2', 0, 'this chat', ''],
   ])
   expect(snap.steps[1]).toMatchObject({ status: 'done', tier: 'light', cost: '≈$0.02', verdict: 'verdict ok: fine' })
@@ -3457,4 +3594,229 @@ test('Herdr view state: written under <config>/model-router/state when ~/.config
   expect(read().status).toBe('approved')
   expect(read().steps.map(x => x.id)).toEqual(['a1'])
   expect(read().chat).toBe(name()[0]!.slice(dir.length + 1, -5))
+})
+
+// --- One layout on every surface, and Settings in groups (0.26) -------------------------------------------------
+
+type Node = { type?: string; key?: string; props?: { key?: string }; children?: unknown[] }
+/** The controls a person can act on under an element: buttons, pickers and text boxes. */
+const controlsIn = (n: unknown): string[] => {
+  if (!n || typeof n !== 'object') return []
+  const e = n as Node
+  const own = e.type === 'Button' || e.type === 'Select' || e.type === 'Input' ? [e.key ?? e.props?.key ?? e.type] : []
+  return [...own, ...(e.children ?? []).flatMap(controlsIn)]
+}
+const sectionsOf = async (pane: { findAll: (q: never) => Promise<{ key?: string }[]> }) =>
+  (await pane.findAll({ type: 'Box' } as never)).map(b => b.key ?? '').filter(k => k.startsWith('section:'))
+
+test('the pane draws the same sections in the same order on every surface, also while a plan awaits approval', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  const rep = modelsReport({ new: [{ provider: 'agy', model: 'gemini-5-xenon', first_seen: ago(0) }] })
+  await boot($, on, [HELPERS_ON, ['autoApprove', false]], [], files, () => {
+    world.setup()
+    world.json.value = { report: rep, cache: OFFERED }
+  })
+  let answer: (v: string) => void = () => undefined
+  asker = e => new Promise(r => { answer = v => r({ result: { answers: { [e.questions[0]!.question]: v } } }) })
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const planning = $.tool.call({ tool: PLAN, steps: partsPlan } as never)
+  await new Promise(r => setTimeout(r, 10))
+
+  const surfaces = [
+    { surface: 'desktop' },
+    { surface: 'vscode' },
+    { surface: 'mobile' },
+    { surface: 'terminal' },
+    { surface: 'terminal', props: { ...PANE.props, bodyColumns: 40 } },
+    { surface: 'desktop', props: { ...PANE.props, placement: 'float' } },
+  ]
+  for (const s of surfaces) {
+    const pane = await $.ui.mount({ ...PANE, ...s } as never)
+    expect(await sectionsOf(pane)).toEqual(['section:health', 'section:news', 'section:plan', 'section:cost', 'section:footer'])
+    expect((await pane.find({ type: 'Text', text: /^Plan · 0 of \d+ done/ } as never))?.text).toContain('awaiting your approval')
+    expect(await pane.find({ type: 'Button', key: 'expand-all' } as never)).toBeTruthy()
+    expect(await pane.find({ type: 'Button', key: 'cost-view' } as never)).toBeTruthy()
+    expect(await pane.find({ type: 'Button', key: 'settings' } as never)).toBeTruthy()
+    expect(await pane.find({ type: 'Button', key: 'footer-report' } as never)).toBeTruthy()
+    // Settings take the place of plan, cost and footer, on every surface alike.
+    await pane.press({ key: 'settings' })
+    expect(await sectionsOf(pane)).toEqual(['section:health', 'section:news', 'section:settings'])
+    await pane.press({ key: 'settings-done' })
+    await pane.unmount()
+  }
+  answer('Run it')
+  await planning
+})
+
+test('control counts: the first screen of Settings has at most 12, and a collapsed five-step plan stays small', async ($, on) => {
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Read the brief', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Survey', tier: 'standard', where: 'agent', kind: 'web-research' },
+      { id: 's3', title: 'Write', tier: 'standard', where: 'agent' },
+      { id: 's4', title: 'Review', tier: 'deep', where: 'agent' },
+      { id: 's5', title: 'Report', tier: 'light', where: 'here' },
+    ],
+  } as never)
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const pane = await $.ui.mount({ ...PANE, surface } as never)
+    const plan = controlsIn(await pane.find({ key: 'section:plan' } as never))
+    const all = [...plan, ...controlsIn(await pane.find({ key: 'section:cost' } as never)), ...controlsIn(await pane.find({ key: 'section:footer' } as never))]
+    // Per step: ▸ and the pickers (where, and a Claude agent step's level, model and effort); then ?, Expand all, Clear plan;
+    // the cost's span and Details; Settings and Write report. 2 here steps × 2 + 3 agent steps × 5 + 3 + 2 + 2 = 26.
+    expect(all).toHaveLength(26)
+    await pane.press({ key: 'settings' })
+    const first = controlsIn(await pane.find({ key: 'section:settings' } as never)).filter(k => k !== 'settings-done')
+    // Five Basics and seven closed group headers.
+    expect(first).toEqual(['auto', 'always', 'helpers', 'spend', 'open-pane', 'group:models', 'group:helpers', 'group:learning', 'group:prices', 'group:skills', 'group:diagnostics', 'group:advanced'])
+    expect(first.length).toBeLessThanOrEqual(12)
+    await pane.press({ key: 'settings-done' })
+    await pane.unmount()
+  }
+})
+
+test('Spend presets set the three levels in one choice; tiers that match none show Custom, and Custom opens Models per level', async ($, on) => {
+  expect(presetOf(DEFAULT_SETTINGS)).toBe('balanced')
+  expect(applyPreset(DEFAULT_SETTINGS, 'thrifty').tiers).toEqual({
+    light: { model: 'haiku', effort: 'low', scopeNote: false },
+    standard: { model: 'sonnet', effort: 'low', scopeNote: false },
+    deep: { model: 'opus', effort: 'medium', scopeNote: false },
+  })
+  expect(presetOf(applyPreset(DEFAULT_SETTINGS, 'best'))).toBe('best')
+  // A preset keeps the scope notes and leaves the rest alone; an unknown one changes nothing.
+  const noted = { ...DEFAULT_SETTINGS, tiers: { ...DEFAULT_SETTINGS.tiers, deep: { ...DEFAULT_SETTINGS.tiers.deep, scopeNote: true } } }
+  expect(applyPreset(noted, 'best').tiers.deep).toEqual({ model: 'opus', effort: 'high', scopeNote: true })
+  expect(applyPreset(noted, 'nonsense')).toBe(noted)
+
+  const files = new Map<string, string>()
+  const { store, calls } = await boot($, on, [], [{ id: 'x1', description: '[s1] write' }], files)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  const spend = async () => (await pane.find({ type: 'Select', key: 'spend' } as never))?.props.value
+  expect(await spend()).toBe('balanced')
+  await pane.select({ key: 'spend', value: 'best' })
+  const tiers = () => (store.get('settings') as { tiers: Record<string, { model: string; effort: string }> }).tiers
+  expect(tiers().light).toMatchObject({ model: 'haiku', effort: 'high' })
+  expect(tiers().standard).toMatchObject({ model: 'sonnet', effort: 'high' })
+  expect((JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { tiers: { standard: { effort: string } } } }).settings.tiers.standard.effort).toBe('high')
+  expect(await spend()).toBe('best')
+  // The group's closed line names what each level runs on.
+  expect(await pane.find({ type: 'Text', text: /^light Haiku high · standard Sonnet high · deep Opus high$/ } as never)).toBeTruthy()
+  // Routing follows at once.
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Write', tier: 'standard', where: 'agent' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[s1] write', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'sonnet', effort: 'high' })
+
+  // A level changed by hand matches no preset: Custom, marked.
+  await pane.press({ key: 'group:models' })
+  await pane.select({ key: 'set-effort:deep', value: 'max' })
+  expect(await spend()).toBe('custom')
+  await pane.press({ key: 'group:models' })
+  expect(await pane.find({ key: 'group-body:models' } as never)).toBeFalsy()
+  // Picking Custom changes nothing and opens Models per level.
+  await pane.select({ key: 'spend', value: 'custom' })
+  expect(tiers().deep).toMatchObject({ model: 'opus', effort: 'max' })
+  expect(await pane.find({ key: 'group-body:models' } as never)).toBeTruthy()
+  expect((store.get('settings') as { openGroups: string[] }).openGroups).toEqual(['models'])
+  await pane.select({ key: 'spend', value: 'balanced' })
+  expect(tiers()).toEqual(DEFAULT_SETTINGS.tiers)
+  await pane.unmount()
+
+  // The terminal cycles the presets with one button.
+  const tty = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect((await tty.find({ type: 'Button', key: 'spend' } as never))?.text).toBe('Balanced ⇄')
+  await tty.press({ key: 'spend' })
+  expect((await tty.find({ type: 'Button', key: 'spend' } as never))?.text).toBe('Best quality ⇄')
+  await tty.unmount()
+})
+
+test('each Settings group says what it holds in one line while closed, remembers being open, and is marked when something differs', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  const run = { key: 'k1', tier: 'light', where: 'agent', model: 'haiku', effort: 'low', cost: 0.01, setupHeavy: false, rerun: false, verdict: 'ok', at: '2026-11-18T00:00:00.000Z' }
+  const { store } = await boot(
+    $,
+    on,
+    [HELPERS_ON, ['history', [run]], ['settings', { helpers: { enabled: true }, kinds: { 'code-review': { model: 'haiku', effort: 'medium' } }, skills: { 'scientific-figures': 'standard' }, models: ['nova'], log: false, hereEffort: { enabled: true }, tiers: { deep: { model: 'opus', effort: 'high', scopeNote: true } } }]],
+    [],
+    files,
+    world.setup,
+  )
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  const summary = async (re: RegExp) => (await pane.find({ type: 'Text', text: re } as never))?.text
+  expect(await summary(/^light Haiku/)).toBe('light Haiku low · standard Sonnet medium · deep Opus high')
+  // Basics say "ready · Herdr"; the group's line names the helpers in their order.
+  expect(await summary(/^ready · Herdr$/)).toBeTruthy()
+  expect(await summary(/^\w+, .* · Herdr$/)).toBe('Kiro, Copilot, Antigravity · Herdr')
+  expect(await summary(/^auto off/)).toBe('auto off · 1 kind tuned')
+  expect(await summary(/^\d+ models/)).toMatch(/^5 models · 1 without price · \d+ notes$/)
+  expect(await summary(/mapped$/)).toBe('1 mapped')
+  expect(await summary(/^log /)).toBe('log off · Herdr view on')
+  expect(await summary(/^experiment /)).toBe('experiment on · scope notes on for deep')
+  // Marked: Other subscriptions (Basics), and the Learning, Models and prices, Skills, Diagnostics and Advanced headers.
+  expect(await pane.findAll({ type: 'Text', text: /^•$/ } as never)).toHaveLength(7)
+  // Show in Herdr sits in Diagnostics; switching it off is marked and named in the closed line.
+  await pane.press({ key: 'group:diagnostics' })
+  await pane.press({ key: 'herdr-view' })
+  expect((store.get('settings') as { herdrView: boolean }).herdrView).toBe(false)
+  await pane.press({ key: 'group:diagnostics' })
+  expect(await summary(/^log /)).toBe('log off · Herdr view off')
+  // Opening a group is remembered in the settings, for the next chat too.
+  await pane.press({ key: 'group:skills' })
+  expect(await pane.find({ type: 'Select', key: 'skill-tier:scientific-figures' } as never)).toBeTruthy()
+  expect((store.get('settings') as { openGroups: string[] }).openGroups).toEqual(['skills'])
+  await pane.unmount()
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await again.find({ type: 'Button', key: 'skill-tier:scientific-figures' } as never)).toBeTruthy()
+  expect((await again.find({ type: 'Button', key: 'group:skills' } as never))?.text).toBe('▾ Skills')
+  expect((await again.find({ type: 'Button', key: 'group:advanced' } as never))?.text).toBe('▸ Advanced')
+  await again.unmount()
+})
+
+test('the resets ask once, naming what goes: Keep leaves it, the second click clears it and says so', async ($, on) => {
+  const run = { key: 'k1', tier: 'light', where: 'agent', model: 'haiku', effort: 'low', cost: 0.01, setupHeavy: false, rerun: false, verdict: 'ok', at: '2026-11-18T00:00:00.000Z' }
+  const { store } = await boot($, on, [['history', [run, { ...run, key: 'k2' }, { ...run, key: 'k3' }]], ['settings', { tiers: { light: { model: 'sonnet', effort: 'high', scopeNote: true } } }]])
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  await pane.press({ key: 'settings' })
+  await pane.press({ key: 'group:advanced' })
+  const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
+  expect((await pane.find({ type: 'Button', key: 'clear-history' } as never))?.text).toBe('Clear history (3 runs)')
+  await pane.press({ key: 'clear-history' })
+  expect((store.get('history') as unknown[]).length).toBe(3)
+  expect(await pane.find(text(/^Really clear 3 runs\?/))).toBeTruthy()
+  expect((await pane.find({ type: 'Button', key: 'reset-confirm' } as never))?.text).toBe('Clear')
+  await pane.press({ key: 'reset-keep' })
+  expect(await pane.find(text(/^Really clear/))).toBeFalsy()
+  expect((store.get('history') as unknown[]).length).toBe(3)
+  await pane.press({ key: 'clear-history' })
+  await pane.press({ key: 'reset-confirm' })
+  expect(store.get('history')).toEqual([])
+  expect(await pane.find(text(/^History cleared\.$/))).toBeTruthy()
+  expect((await pane.find({ type: 'Button', key: 'clear-history' } as never))?.text).toBe('Clear history (0 runs)')
+
+  // Reset models per level asks too, and puts back the shipped levels (Balanced, scope notes off).
+  await pane.press({ key: 'reset-tiers' })
+  expect(await pane.find(text(/^Really put the three levels back to Balanced/))).toBeTruthy()
+  expect((store.get('settings') as { tiers: { light: { model: string } } }).tiers.light.model).toBe('sonnet')
+  await pane.press({ key: 'reset-confirm' })
+  expect((store.get('settings') as { tiers: unknown }).tiers).toEqual(DEFAULT_SETTINGS.tiers)
+  expect(await pane.find(text(/^Models per level reset\.$/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('a narrow terminal wraps the rows instead of laying them side by side, with the short word for helpers', async ($, on) => {
+  await boot($, on, [HELPERS_ON])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'h1', title: 'A long survey of everything that has been written on the topic', tier: 'deep', where: 'helper' }] } as never)
+  const pane = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 40 }, surface: 'terminal' } as never)
+  expect((await pane.find({ type: 'Button', key: 'where:h1' } as never))?.text).toBe('other sub ⇄')
+  // The title wraps instead of being cut, and the pickers' row wraps.
+  expect((await pane.find({ type: 'Text', text: /^A long survey/ } as never))?.props.wrap).toBe('wrap')
+  await pane.unmount()
+  const wide = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect((await wide.find({ type: 'Button', key: 'where:h1' } as never))?.text).toBe('other subscription ⇄')
+  await wide.unmount()
 })

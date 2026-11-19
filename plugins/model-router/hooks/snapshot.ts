@@ -1,6 +1,6 @@
 // The state file the Herdr view reads: the plan and the money as short display strings, built by a pure function.
 import type { HelperTotals, Settings, Step, Totals } from '../types'
-import { cardModelLine, fmtCost, fmtUsd, helperLine, helperName, helperTotalsOf, isDelegated, isHelperRun, leavesOf, rollupOf, runsOn, depthOf, pickSource } from './logic'
+import { cardModelLine, fmtCost, fmtUsd, helperLine, helperName, helperTotalsOf, isDelegated, isHelperRun, leavesOf, rollupOf, runsOn, depthOf, pickSource, whereLabel } from './logic'
 import type { Learned, NewModelsCard } from './logic'
 
 /** Days a state file is kept after its last write. */
@@ -13,7 +13,7 @@ export type StateStep = {
   status: Step['status']
   tier: Step['tier']
   group: boolean
-  /** "subagent", "this chat" or "helper"; empty on a group. */
+  /** "this chat", "Claude agent" or "other subscription" (the pane's words); empty on a group. */
   where: string
   /** What it runs on: "sonnet/medium", "copilot-standard · Claude Sonnet 5.5", "launch <template> · …"; for a group, its progress. */
   on: string
@@ -63,7 +63,7 @@ export const chatKeyOf = (sessionId: unknown, random: () => string) => {
 
 const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—')
 
-const whereOf = (s: Step) => (s.group ? '' : s.where === 'here' ? 'this chat' : isHelperRun(s) ? 'helper' : 'subagent')
+const whereOf = (s: Step) => (s.group ? '' : whereLabel(s.where === 'here' ? 'here' : isHelperRun(s) ? 'helper' : 'agent'))
 
 const onOf = (list: readonly Step[], s: Step, set: Settings, learned?: Learned) => {
   if (s.group) {
@@ -76,7 +76,7 @@ const onOf = (list: readonly Step[], s: Step, set: Settings, learned?: Learned) 
   if (s.where === 'helper') {
     const p = s.helperPick
 
-    return p ? (p.template ? `launch ${p.template} · ${p.model} ${p.effort} · ${pickSource(p)}` : `no template for ${p.model} ${p.effort}`) : 'helper (tier order)'
+    return p ? (p.template ? `launch ${p.template} · ${p.model} ${p.effort} · ${pickSource(p)}` : `no template for ${p.model} ${p.effort}`) : 'other subscription (in order)'
   }
   const r = runsOn(s, set, learned)
 
@@ -110,7 +110,7 @@ const stepOf = (list: readonly Step[], s: Step, set: Settings, learned?: Learned
     on: onOf(list, s, set, learned),
     cost: s.unpriced ? fmtCost(s.cost, true) : cost > 0 ? fmtCost(cost) : '',
     verdict: verdictOf(s),
-    fallback: s.fallback ? `ran as a subagent: ${s.fallback}` : '',
+    fallback: s.fallback ? `ran as a Claude agent: ${s.fallback}` : '',
     notes,
   }
 }

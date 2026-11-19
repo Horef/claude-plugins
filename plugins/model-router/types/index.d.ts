@@ -175,8 +175,10 @@ export type Settings = {
   skills: Record<string, Tier>
   /** Open the router pane when a chat starts. */
   openPane: boolean
-  /** Minimal view: the pane draws only steps and their settings, with no explanatory text. */
-  compact: boolean
+  /** Steps open with their details in new chats (Expand all / Collapse all remembers it). Replaces 0.25's `compact`, inverted. */
+  expandAll: boolean
+  /** The Settings groups that are open (their ids), remembered. */
+  openGroups: string[]
   helpers: HelperSettings
   /** Opt-in experiment: run a started here step at its tier's effort, lower or higher than the chat's own. */
   hereEffort: HereEffortSettings
@@ -403,6 +405,21 @@ declare module 'claude-code' {
       /** The notes under the New models card are open; the list of notes in Settings is open. */
       showCardNotes: boolean
       showAllNotes: boolean
+      /** This chat's plan view: all steps open or closed (absent: the stored default), and steps opened or closed one by one. */
+      paneView: { all?: boolean; toggled: Record<string, boolean> }
+      /** The `?` glossary under the plan header is open. */
+      showGlossary: boolean
+      /** The cost section's Details (stat tiles, footnote, history tables) are open. */
+      showCostDetails: boolean
+      /** The tier whose helper order is being edited in Settings ('' for none). */
+      editOrder: string
+      /** Settings → Other subscriptions → Helper models: the full picker grid is open. */
+      showHelperGrid: boolean
+      /** A reset waiting for its second click: 'history', 'stats' or 'tiers' ('' for none); and what the last one did. */
+      confirmReset: string
+      resetNote: string
+      /** This chat's key for the Herdr view's state file (<config>/model-router/state/<chatKey>.json). */
+      chatKey: string
     }
   }
 }
