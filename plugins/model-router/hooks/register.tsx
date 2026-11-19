@@ -188,6 +188,10 @@ const paneView = atom({ plugin: 'model-router', key: 'paneView' } as const, { to
 const showGlossary = atom({ plugin: 'model-router', key: 'showGlossary' } as const, false)
 const showCostDetails = atom({ plugin: 'model-router', key: 'showCostDetails' } as const, false)
 const editOrder = atom({ plugin: 'model-router', key: 'editOrder' } as const, '')
+const picking = atom({ plugin: 'model-router', key: 'picking' } as const, '')
+/** The open terminal list's buttons (the picker, then its options) as last drawn, and the element holding the ring:
+ * while the ring is on one of them, ↑ ↓ move it along the list instead of scrolling the pane. */
+const pickNav = { keys: [] as string[], focused: '' }
 const showHelperGrid = atom({ plugin: 'model-router', key: 'showHelperGrid' } as const, false)
 const confirmReset = atom({ plugin: 'model-router', key: 'confirmReset' } as const, '')
 const resetNote = atom({ plugin: 'model-router', key: 'resetNote' } as const, '')
@@ -2185,15 +2189,55 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     return status === 'approved' && own.status !== 'done' && !!known[s.id] && knownChanges(known[s.id]!, knownOf(own, set, learned)).length > 0
   }
 
-  // A picker where the surface has one, else a button that cycles.
-  const pick = (key: string, value: string, options: readonly Option[], onPick: (v: string) => void) =>
-    Select ? (
-      <Select key={key} value={value} options={options} onSelect={v => onPick(v)} />
-    ) : (
-      <Button key={key} onPress={() => onPick(cycle(options.map(o => o.value), value))}>
-        {`${options.find(o => o.value === value)?.label ?? value}${tty ? ' ⇄' : ''}`}
-      </Button>
-    )
+  // A picker where the surface has one. In the terminal, a list of up to three cycles on Enter (⇄); a longer one
+  // opens its options under the row (▾), one button each with the current one marked, and a press picks and closes.
+  const openPick = await read($, picking)
+  if (tty) pickNav.keys = []
+  const optKey = (key: string, v: string) => `${key}:opt:${v}`
+  const togglePick = async (key: string, value: string) => {
+    const opening = openPick !== key
+    await update($, picking, () => (opening ? key : ''))
+    const to = opening ? optKey(key, value) : key
+    // The ring a plugin moves is noted here too: the engine may not tell this plugin's own ui.focus hook.
+    if (!(await $.ui.focus({ requestId: PANE, key: to }).catch(() => ({ deny: 'failed' }))).deny) pickNav.focused = to
+  }
+  const pick = (key: string, value: string, options: readonly Option[], onPick: (v: string) => void) => {
+    const label = options.find(o => o.value === value)?.label ?? value
+    if (Select) return <Select key={key} value={value} options={options} onSelect={v => onPick(v)} />
+    if (!tty || options.length <= 3) {
+      return (
+        <Button key={key} onPress={() => onPick(cycle(options.map(o => o.value), value))}>
+          {`${label}${tty ? ' ⇄' : ''}`}
+        </Button>
+      )
+    }
+    const open = openPick === key
+    if (open) pickNav.keys = [key, ...options.map(o => optKey(key, o.value))]
+
+    return [
+      <Button key={key} onPress={() => void togglePick(key, value)}>{`${label} ${open ? '▴' : '▾'}`}</Button>,
+      open ? (
+        <Box key={`${key}:list`} flexDirection="column" width="100%" paddingLeft={2}>
+          {options.map(o => (
+            <Button
+              key={optKey(key, o.value)}
+              plain
+              dimColor={o.value !== value}
+              onPress={() =>
+                void (async () => {
+                  await update($, picking, () => '')
+                  if (o.value !== value) onPick(o.value)
+                  await $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
+                })()
+              }
+            >
+              {`${o.value === value ? '●' : '○'} ${o.label}`}
+            </Button>
+          ))}
+        </Box>
+      ) : null,
+    ]
+  }
 
   // A settings row: the name and what it changes on the left, its control on the right.
   const settingRow = (key: string, label: string, help: string | undefined, control: unknown, isCustom = false, below?: unknown) => (
@@ -2618,7 +2662,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ['verdict', 'ok · weak (needed more) · overkill (a cheaper model would do) · cut short (stopped by a fault, not counted)'],
     ['effort', 'how long the model thinks before it answers: low, medium, high, xhigh, max'],
     ['saved', 'what delegated steps cost less than the same work on this chat’s model'],
-    ...(tty ? ([['⇄', 'a button that picks the next option on Enter']] as [string, string][]) : []),
+    ...(tty
+      ? ([
+          ['⇄', 'a button that picks the next option on Enter'],
+          ['▾', 'a button that lists its options under it; Enter on one picks it'],
+        ] as [string, string][])
+      : []),
   ]
   const planSection = (
     <Box key="section:plan" flexDirection="column" rowGap="xs">
@@ -2770,7 +2819,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     <Box key="section:cost" flexDirection="column" rowGap="xs">
       <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
         <Button key="cost-view" plain onPress={() => void update($, costView, v => cycle(VIEWS.map(x => x.value), v) as CostView)}>
-          {`${VIEWS.find(x => x.value === view)?.label ?? 'This plan'} ▾`}
+          {`${VIEWS.find(x => x.value === view)?.label ?? 'This plan'} ${tty ? '⇄' : '▾'}`}
         </Button>
         <Text key="cost-line" size="footnote" tabular wrap="wrap">
           <Text dimColor>{`main${m.model && view !== 'all' ? ` (${m.model})` : ''} `}</Text>
@@ -4121,4 +4170,18 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, renderPane)
+  // An open terminal list: ↑ ↓ walk its options (and back up to its button) while the ring is on one of them.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, ($, e, next) => {
+    pickNav.focused = e.element ?? ''
+
+    return next(e)
+  })
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const at = pickNav.keys.indexOf(pickNav.focused)
+    if (e.origin.kind !== 'person' || e.pointer || Math.abs(e.by) !== 1 || at < 0) return next(e)
+    const to = pickNav.keys[Math.min(Math.max(at + e.by, 0), pickNav.keys.length - 1)]!
+    if (to !== pickNav.focused && !(await $.ui.focus({ requestId: PANE, key: to }).catch(() => ({ deny: 'failed' }))).deny) pickNav.focused = to
+
+    return {}
+  })
 }
