@@ -5,6 +5,8 @@ import type { TestBody } from 'claude-code/testing'
 import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
 import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
+import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
+import { SEED_NOTES, checkNote, findNote, mergeNotes, parseNotesFile } from '../hooks/notes'
 import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
 import type { HistoryEntry, Step } from '../types'
 
@@ -1928,8 +1930,11 @@ const OFFERED = {
  * helpers.py as the router sees it: the installed skill's folders, its files, and the python runs, answered from a config the
  * `set` and `custom` commands change. `ran` holds every argv; `fail` makes a subcommand exit 1 with that stderr.
  */
-const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o: { present?: boolean; oldScript?: string; noHc?: boolean; noCli?: boolean; direct?: string[] } = {}) => {
+const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o: { present?: boolean; oldScript?: string; noHc?: boolean; noCli?: boolean; direct?: string[]; version?: string } = {}) => {
   const present = o.present ?? true
+  const version = o.version ?? '0.6.0'
+  // What `models --json` prints (herdr-delegate 0.15+), by the world's test; --cached asks the same.
+  const json: { value?: Record<string, unknown> } = {}
   const cfg = helperDefaults()
   if (o.noCli) for (const p of Object.values(cfg.providers)) (p as { cli_found?: boolean }).cli_found = false
   // herdr-delegate 0.15+ marks the providers it can run headless.
@@ -1937,14 +1942,14 @@ const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o:
   const ran: string[][] = []
   const hcRuns: string[][] = []
   const fail: Record<string, string> = {}
-  files.set(`${SKILL}/helpers.default.json`, JSON.stringify(helperDefaults()))
+  files.set(`${CACHE}/${version}/skills/herdr-delegate/helpers.default.json`, JSON.stringify(helperDefaults()))
   files.set(MODELS_FILE, JSON.stringify(OFFERED))
   const result = (exitCode: number, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
   const setup = () => {
     on('fs.list', (_, e) => {
       const path = (e as { path: string }).path
       if (present && path === `${HOME}/.claude/plugins/cache`) return { value: [dirEntry('mk')] }
-      if (present && path === CACHE) return { value: [dirEntry('0.5.1'), dirEntry('0.6.0')] }
+      if (present && path === CACHE) return { value: [dirEntry('0.5.1'), dirEntry(version)] }
 
       return { deny: 'ENOENT' }
     })
@@ -1974,6 +1979,11 @@ const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o:
 
         return result(0, `${name}\n`)
       }
+      if (cmd === 'models' && args.includes('--json') && json.value) {
+        if (!args.includes('--cached')) files.set(MODELS_FILE, JSON.stringify(json.value.cache ?? OFFERED))
+
+        return result(0, JSON.stringify(args.includes('--cached') ? json.value.report : (json.value.live ?? json.value.report)))
+      }
       if (cmd === 'models') {
         files.set(MODELS_FILE, JSON.stringify({ ...OFFERED, kiro: { ...OFFERED.kiro, date: '2026-11-08', checked: '2026-11-08' } }))
 
@@ -1984,7 +1994,7 @@ const helperWorld = (on: Parameters<TestBody>[1], files: Map<string, string>, o:
     })
   }
 
-  return { setup, ran, hcRuns, fail, cfg, argsOf: (cmd: string) => ran.filter(a => a[2] === cmd) }
+  return { setup, ran, hcRuns, fail, cfg, json, script: `${CACHE}/${version}/skills/herdr-delegate/scripts/helpers.py`, argsOf: (cmd: string) => ran.filter(a => a[2] === cmd) }
 }
 
 const hrun = (n: number, over: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -3014,4 +3024,367 @@ test('with runs but no advice the minimal view shows the history\'s one line, no
   expect(await pane.find(text(/^History: 2 runs; advice needs 3 on one rung\.$/))).toBeTruthy()
   expect(await pane.find(text(/^What the history says$/))).toBeFalsy()
   await pane.unmount()
+})
+
+// --- New models (0.25): the check by itself, notes, the plan tool's models input, the card -------------------
+
+const ago = (n: number) => dayOf(new Date(Date.now() - n * 86_400_000))
+const NOTES_FILE = `${HOME}/.config/model-router/model-notes.json`
+
+test('notes: the seed has the facts, a note is found by id, alias or normalised id, the file wins, tags are checked', () => {
+  const notes = mergeNotes(undefined)
+  const neon = findNote(notes, 'gemini-4-neon')!
+  expect(neon.by).toBe('seed')
+  expect(neon.released).toBe('2026-11-18')
+  expect(neon.providers).toEqual(['agy', 'copilot'])
+  expect(neon.tags).toEqual(['judgment', 'agentic', 'research', 'long-context', 'second-opinion'])
+  expect(neon.fits.map(f => `${f.tier} ${f.effort}`)).toEqual(['deep high', 'second high', 'standard medium'])
+  expect(neon.sources.map(x => x.url)).toContain('https://9to5google.com/2026/11/18/gemini-4-neon-announcement/')
+  expect(findNote(notes, 'gemini-4-argon')!.fits[0]).toMatchObject({ tier: 'second', effort: 'high' })
+  expect(findNote(notes, 'gemini-3.8-flash')!.fits[0]!.tier).toBe('light')
+  expect(findNote(notes, 'GEMINI-3-8-FLASH')?.id).toBe('gemini-3.8-flash')
+  // The Claude models by alias, by full id and by Kiro's or Copilot's spelling.
+  for (const id of ['sonnet', 'claude-sonnet-5-5', 'claude-sonnet-5.5', 'Claude-Sonnet-5.5']) expect(findNote(notes, id)?.id).toBe('claude-sonnet-5-5')
+  expect(findNote(notes, 'haiku')?.fits[0]!.tier).toBe('light')
+  expect(findNote(notes, 'fable')?.id).toBe('claude-fable-5-2')
+  expect(findNote(notes, 'constructor')).toBeUndefined()
+  expect(findNote(notes, 'gemini-9')).toBeUndefined()
+  expect(SEED_NOTES.every(n => n.by === 'seed' && n.checked === '2026-11-19')).toBe(true)
+
+  // The file wins for the same id.
+  const file = parseNotesFile(JSON.stringify({ models: { 'gemini-4-neon': { name: 'Mine', summary: 'mine', by: 'person', checked: '2026-11-20' }, junk: 5 } }))
+  expect(Object.keys(file)).toEqual(['gemini-4-neon'])
+  expect(findNote(mergeNotes(file), 'gemini-4-neon')).toMatchObject({ name: 'Mine', by: 'person' })
+  expect(parseNotesFile('not json')).toEqual({})
+
+  // An agent's note: by agent, dated today; unknown tags are dropped and named; a note with no summary or a bad id is refused.
+  const c = checkNote({ id: 'Gemini-5-Xenon', name: 'Gemini 5 Xenon', summary: 'A model', tags: ['code', 'fast', 'magic'], released: 'last week', sources: [{ title: 'x', url: 'ftp://x' }, { url: 'https://x.test/a', date: '2026-11-20' }], fits: [{ tier: 'deep', why: 'strong' }, { why: 'no tier' }] }, '2026-11-21')
+  expect(c.note).toMatchObject({ id: 'gemini-5-xenon', by: 'agent', checked: '2026-11-21', tags: ['code', 'fast'] })
+  expect(c.note!.released).toBeUndefined()
+  expect(c.note!.sources).toEqual([{ title: 'https://x.test/a', url: 'https://x.test/a', date: '2026-11-20' }])
+  expect(c.dropped.join('|')).toContain('tag "magic"')
+  expect(c.dropped.join('|')).toContain('released "last week"')
+  expect(checkNote({ id: 'x y', summary: 's' }, '2026-11-21').error).toContain('not a model id')
+  expect(checkNote({ id: 'ok' }, '2026-11-21').error).toContain('summary')
+})
+
+test('the models report: parsed, older helpers.py recognised, stale providers found, news and asks worked out', () => {
+  const report = parseModelsReport(JSON.stringify({ providers: { agy: { date: '2026-11-19', checked: '2026-11-19', count: 3 } }, not_offered: [{ template: 'kiro-light', model: 'claude-haiku-5.5' }], newer: [], new: [{ provider: 'agy', model: 'gemini-5-xenon', first_seen: ago(1) }, { provider: 'bad' }], gone: [{ provider: 'kiro', model: 'glm-4', since: ago(2) }] }))!
+  expect(report.new).toHaveLength(1)
+  expect(parseModelsReport('kiro     5 models (2026-11-08)\nNEWER ...')).toBeUndefined()
+  expect(hasModelsJson('/h/.claude/plugins/cache/mk/herdr-delegate/0.6.0/skills/herdr-delegate/scripts/helpers.py')).toBe(false)
+  expect(hasModelsJson('/h/.claude/plugins/cache/mk/herdr-delegate/0.15.0/skills/herdr-delegate/scripts/helpers.py')).toBe(true)
+  expect(hasModelsJson('/opt/mine/helpers.py')).toBe(true)
+
+  const cfg = { providers: { kiro: { cli_found: true }, agy: { cli_found: true }, codex: { cli_found: false }, mine: { cli_found: true, self: true }, other: { cli_found: true, kind: 'claude' } } }
+  // Missing or older than 7 days counts; a missing CLI, this account and another Claude account do not.
+  expect(staleProviders(cfg, report, { kiro: { date: ago(8) } }, ago(0))).toEqual(['kiro'])
+  expect(staleProviders(cfg, report, { kiro: { date: ago(7) } }, ago(0))).toEqual([])
+  expect(staleProviders(cfg, undefined, undefined, ago(0))).toEqual(['kiro', 'agy'])
+
+  // Newly seen models are remembered; one with a note is not asked about, one without is, once.
+  const notes = mergeNotes(undefined)
+  let news = notedNew(asModelNews(undefined), [...report.new, { provider: 'agy', model: 'gemini-4-neon', first_seen: ago(1) }])
+  expect(Object.keys(news.seen).sort()).toEqual(['agy:gemini-4-neon', 'agy:gemini-5-xenon'])
+  expect(notedNew(news, report.new)).toBe(news)
+  const ask = toAsk(news, notes, report, ago(0))
+  expect(ask.fresh.map(m => m.model)).toEqual(['gemini-4-neon', 'gemini-5-xenon'].filter(m => m !== 'gemini-4-neon'))
+  expect(ask.gone.map(g => g.template)).toEqual(['kiro-light'])
+  const text = modelsAskNote(ask, PLAN, p => (p === 'agy' ? 'Antigravity' : p))
+  expect(text).toContain(`New models offered: Antigravity gemini-5-xenon (first seen ${ago(1)}); no longer offered: kiro claude-haiku-5.5, used by kiro-light.`)
+  expect(text).toContain('do not interrupt it')
+  expect(text).toContain('https://openrouter.ai/api/v1/models')
+  expect(text).toContain(`call ${PLAN} with models: {notes: [...], proposals: [...]}`)
+  news = { ...news, asked: ['agy:gemini-5-xenon', 'gone:kiro:claude-haiku-5.5'] }
+  expect(toAsk(news, notes, report, ago(0))).toEqual({ fresh: [], gone: [] })
+  // A model first seen over 14 days ago is no longer new.
+  expect(toAsk(notedNew(asModelNews(undefined), [{ provider: 'agy', model: 'gemini-6', first_seen: ago(15) }]), notes, undefined, ago(0)).fresh).toEqual([])
+})
+
+test('proposals are checked against the config, the offered models and the levels; the card shows only what needs a click', () => {
+  setHelperConfig({ providers: { agy: { label: 'Antigravity', model_id: '{model}-{effort}', efforts: ['low', 'medium', 'high'], tiers: { deep: { model: 'claude-opus-5-5', effort: 'high' }, second: { model: 'gemini-4-argon', effort: 'high' } } } } })
+  const cfg = helperDefaults() as never
+  const ctx = { cfg: { providers: { agy: { label: 'Antigravity', model_id: '{model}-{effort}', efforts: ['low', 'medium', 'high'], tiers: { deep: { model: 'claude-opus-5-5', effort: 'high' }, second: { model: 'gemini-4-argon', effort: 'high' } } } } } as never, cache: { agy: { models: ['gemini-4-neon-high', 'gemini-4-argon-high'] } }, set: mergeSettings(undefined), news: asModelNews({ dismissed: ['agy|deep|gemini-4-argon|low'] }), today: '2026-11-19' }
+  void cfg
+  const r = checkProposals(
+    [
+      { provider: 'agy', tier: 'deep', model: 'gemini-4-neon', effort: 'high', why: 'Opus-class, off Claude quota', source: 'https://x.test' },
+      { provider: 'agy', tier: 'second', model: 'Gemini-4-Neon', effort: 'high', why: 'normalised id' },
+      { provider: 'agy', tier: 'deep', model: 'claude-opus-5-5', effort: 'high', why: 'same as now' },
+      { provider: 'agy', tier: 'deep', model: 'gemini-9', effort: 'high', why: 'not offered' },
+      { provider: 'agy', tier: 'deep', model: 'gemini-4-neon', effort: 'xhigh', why: 'no such level' },
+      { provider: 'agy', tier: 'argon', model: 'gemini-4-neon', effort: 'high', why: 'no such tier' },
+      { provider: 'kiro', tier: 'deep', model: 'x', effort: 'high', why: 'not in config' },
+      { provider: 'agy', tier: 'deep', model: 'gemini-4-argon', effort: 'low', why: 'dismissed' },
+      { provider: 'claude', tier: 'light', model: 'sonnet', effort: 'low', why: 'better' },
+      { provider: 'claude', tier: 'light', model: 'haiku', effort: 'low', why: 'same' },
+      { provider: 'claude', tier: 'light', model: 'gpt', effort: 'low', why: 'unknown' },
+      { provider: 'claude', tier: 'light', model: 'haiku', effort: 'huge', why: 'bad level' },
+      { provider: 'claude', tier: 'second', model: 'haiku', effort: 'low', why: 'claude has no second' },
+      { provider: 'agy', tier: 'deep', model: 'gemini-4-neon', effort: 'high' },
+    ],
+    ctx,
+  )
+  expect(r.ok.map(p => p.key)).toEqual(['agy|deep|gemini-4-neon|high', 'agy|second|gemini-4-neon|high', 'claude|light|sonnet|low'])
+  expect(r.ok[0]).toMatchObject({ source: 'https://x.test', at: '2026-11-19' })
+  expect(r.skipped).toHaveLength(11)
+  expect(r.skipped.join('\n')).toContain('already')
+  expect(r.skipped.join('\n')).toContain('dismissed by the person')
+  expect(r.skipped.join('\n')).toContain('does not offer gemini-9')
+  setHelperConfig(undefined)
+
+  // The card: nothing when every new model has a note and no proposal is pending.
+  const base = { notes: mergeNotes(undefined), report: undefined, cache: undefined, cfg: undefined, set: mergeSettings(undefined), today: ago(0) }
+  expect(newModelsCard({ ...base, news: asModelNews({ seen: { 'agy:gemini-4-neon': ago(1) } }) })).toBeUndefined()
+  expect(newModelsCard({ ...base, news: asModelNews(undefined) })).toBeUndefined()
+  const c = newModelsCard({ ...base, news: asModelNews({ seen: { 'agy:gemini-5-xenon': ago(1), 'agy:gemini-4-neon': ago(1), 'copilot:gemini-4-neon': ago(1) } }) })!
+  expect(c.models.map(m => cardModelLine(m))).toEqual([expect.stringMatching(/^Gemini 4 Neon · Agy, Copilot · 2026-11-18 · Google's mid-top/), expect.stringMatching(/^gemini-5-xenon · Agy · notes not written yet$/)])
+  expect(cardModelLine(c.models[0]!, 30).endsWith('…')).toBe(true)
+  // A pending Claude proposal shows with the tier's current rung; one the tier already has is no proposal.
+  const prop = { key: 'claude|light|sonnet|low', provider: 'claude', tier: 'light', model: 'sonnet', effort: 'low', why: 'better', at: ago(0) }
+  const withProp = newModelsCard({ ...base, news: asModelNews({ proposals: [prop] }) })!
+  expect(withProp.proposals).toEqual([{ key: prop.key, tier: 'light', label: 'Claude', from: 'haiku/low', to: 'sonnet/low', why: 'better' }])
+  expect(newModelsCard({ ...base, set: mergeSettings({ tiers: { light: { model: 'sonnet', effort: 'low', scopeNote: false } } } as never), news: asModelNews({ proposals: [prop] }) })).toBeUndefined()
+})
+
+const modelsReport = (over: Record<string, unknown> = {}) => ({
+  providers: { agy: { date: ago(0), checked: ago(0), count: 4 }, kiro: { date: ago(0), checked: ago(0), count: 5 } },
+  not_offered: [],
+  newer: [],
+  new: [],
+  gone: [],
+  ...over,
+})
+
+test('at the start the cached report is read; a provider list older than a week starts one live check in the background; its new models are queued as ONE router note, once', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  // Antigravity's list is 10 days old: stale. It offers a model nobody has a note for.
+  const cache = { ...OFFERED, agy: { ...OFFERED.agy, date: ago(10), checked: ago(10), models: [...OFFERED.agy.models, 'gemini-5-xenon-high', 'gemini-4-neon-high'] } }
+  files.set(MODELS_FILE, JSON.stringify(cache))
+  const stale = modelsReport({ providers: { agy: { date: ago(10), checked: ago(10), count: 6 }, kiro: { date: ago(0), count: 5 } } })
+  const { rows, store } = await boot($, on, [HELPERS_ON], [], files, () => {
+    world.setup()
+    // Cached: what the cache says. Live: the check found new models.
+    world.json.value = { report: stale, cache, live: modelsReport({ new: [{ provider: 'agy', model: 'gemini-5-xenon', first_seen: ago(0) }] }) }
+  })
+  // The cached report came first (awaited at the start); the live one was started because agy is stale, once.
+  await new Promise(r => setTimeout(r, 50))
+  expect(world.ran.filter(a => a[2] === 'models').map(a => a.slice(3))).toEqual([['--json', '--cached'], ['--json']])
+  expect(world.ran.findIndex(a => a[2] === 'config')).toBeLessThan(world.ran.findIndex(a => a[2] === 'models'))
+  // The live check's report was taken: the new model is known, with one note asked for it.
+  expect(store.get('modelNews')).toMatchObject({ seen: { 'agy:gemini-5-xenon': ago(0) }, asked: ['agy:gemini-5-xenon'] })
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  expect(lastRow(rows).match(/New models offered:/g)).toHaveLength(1)
+  // The config was read again after the live check.
+  expect(world.ran.filter(a => a[2] === 'config').length).toBeGreaterThanOrEqual(2)
+})
+
+test('a new model with no note: one router note to the lead, remembered; a new model with a note is not asked about; the card says notes are not written yet', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  const rep = modelsReport({ new: [{ provider: 'agy', model: 'gemini-5-xenon', first_seen: ago(0) }, { provider: 'agy', model: 'gemini-4-neon', first_seen: ago(0) }], not_offered: [{ template: 'kiro-light', model: 'claude-haiku-5.5' }] })
+  const { rows, store } = await boot($, on, [HELPERS_ON], [], files, () => {
+    world.setup()
+    world.json.value = { report: rep, cache: OFFERED }
+  })
+  const logged = () => [...files.entries()].filter(([k]) => k.includes('/model-router/log/')).map(([, v]) => v).join('')
+  expect(store.get('modelNews')).toMatchObject({ seen: { 'agy:gemini-5-xenon': ago(0), 'agy:gemini-4-neon': ago(0) }, asked: ['agy:gemini-5-xenon', 'gone:kiro:claude-haiku-5.5'] })
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  const delivered = lastRow(rows)
+  expect(delivered).toContain(`New models offered: Antigravity gemini-5-xenon (first seen ${ago(0)}); no longer offered: Kiro claude-haiku-5.5, used by kiro-light.`)
+  expect(delivered).not.toContain('gemini-4-neon (first seen')
+  expect(logged()).toContain('"ev":"models-asked"')
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^New models \(2\)$/))).toBeTruthy()
+  expect(await pane.find(text(new RegExp(`^checked ${ago(0)}$`)))).toBeTruthy()
+  expect(await pane.find(text(/^gemini-5-xenon · Antigravity · notes not written yet$/))).toBeTruthy()
+  expect(await pane.find(text(/^Gemini 4 Neon · Antigravity · 2026-11-18 · Google's mid-top/))).toBeTruthy()
+  // Notes ▸ opens strengths, weaknesses, fits and sources of the models that have a note.
+  expect(await pane.find(text(/^Strengths:/))).toBeFalsy()
+  await pane.press({ key: 'model-card-notes' })
+  expect(await pane.find(text(/^Strengths: reasoning and science benchmarks/))).toBeTruthy()
+  expect(await pane.find(text(/^Weaknesses: hallucinates more than Argon/))).toBeTruthy()
+  expect(await pane.find(text(/^Fits: deep high \(Opus-class judgment/))).toBeTruthy()
+  expect(await pane.find(text(/^Sources: Gemini API changelog https:\/\/ai\.google\.dev/))).toBeTruthy()
+  await pane.unmount()
+  // The terminal and the minimal view draw it too, with the summary cut.
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const p = await $.ui.mount({ ...PANE, surface } as never)
+    expect(await p.find(text(/^New models \(2\)$/))).toBeTruthy()
+    await p.unmount()
+  }
+})
+
+test('no card while every new model has a note and nothing is pending', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  await boot($, on, [HELPERS_ON], [], files, () => {
+    world.setup()
+    world.json.value = { report: modelsReport({ new: [{ provider: 'agy', model: 'gemini-4-neon', first_seen: ago(0) }] }), cache: OFFERED }
+  })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^New models/))).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'model-card-notes' } as never)).toBeFalsy()
+  await pane.unmount()
+})
+
+test('the plan tool takes models on its own: notes go to the file, proposals to the card; invalid items are skipped with a reason; Apply and Dismiss', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  const cache = { ...OFFERED, agy: { ...OFFERED.agy, models: [...OFFERED.agy.models, 'gemini-4-neon-high', 'gemini-4-neon-low'] } }
+  files.set(MODELS_FILE, JSON.stringify(cache))
+  const { registered, store } = await boot($, on, [HELPERS_ON], [], files, () => {
+    world.setup()
+    world.json.value = { report: modelsReport(), cache }
+  })
+  const schema = registered.at(-1)?.inputSchema?.properties?.models as { properties: { notes: { items: { properties: { tags: { items: { enum: string[] } } } } } } }
+  expect(schema.properties.notes.items.properties.tags.items.enum).toContain('second-opinion')
+
+  const r = await $.tool.call({
+    tool: PLAN,
+    models: {
+      notes: [
+        { id: 'gemini-5-xenon', name: 'Gemini 5 Xenon', summary: 'A new model', tags: ['code', 'wizardry'], providers: ['agy'], fits: [{ tier: 'standard', effort: 'high', why: 'cheap' }] },
+        { id: 'bad id', summary: 'x' },
+      ],
+      proposals: [
+        { provider: 'agy', tier: 'deep', model: 'gemini-4-neon', effort: 'high', why: 'Opus-class off Claude quota' },
+        { provider: 'claude', tier: 'light', model: 'haiku', effort: 'medium', why: 'a little more care' },
+        { provider: 'agy', tier: 'deep', model: 'gemini-9', effort: 'high', why: 'x' },
+      ],
+    },
+  } as never)
+  const out = String(r.result)
+  expect(out).toContain('Stored notes: gemini-5-xenon.')
+  expect(out).toContain('Stored proposals')
+  expect(out).toContain('left out: tag "wizardry" on gemini-5-xenon')
+  expect(out).toContain('Skipped: note skipped: note id "bad id" is not a model id')
+  expect(out).toContain('Skipped: proposal agy deep gemini-9: agy does not offer gemini-9')
+  // The plan is untouched, and the notes are in the file, by "agent" and dated today.
+  const file = JSON.parse(files.get(NOTES_FILE)!) as { models: Record<string, { by: string; checked: string; tags: string[] }> }
+  expect(file.models['gemini-5-xenon']).toMatchObject({ by: 'agent', checked: dayOf(new Date()), tags: ['code'] })
+  expect((store.get('modelNews') as { proposals: unknown[] }).proposals).toHaveLength(2)
+
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^deep Antigravity: claude-opus-5-5\/high → gemini-4-neon\/high · Opus-class off Claude quota$/))).toBeTruthy()
+  expect(await pane.find(text(/^light Claude: haiku\/low → haiku\/medium · a little more care$/))).toBeTruthy()
+
+  // Apply (helper): helpers.py set, the config read again, the proposal goes, the card says applied.
+  await pane.press({ key: 'model-apply:agy|deep|gemini-4-neon|high' })
+  expect(world.ran.filter(a => a[2] === 'set').at(-1)).toEqual(['python3', world.script, 'set', 'agy', 'deep', 'model=gemini-4-neon', 'effort=high'])
+  expect(await pane.find(text(/^✓ deep Antigravity: claude-opus-5-5\/high → gemini-4-neon\/high · .* · applied$/))).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'model-apply:agy|deep|gemini-4-neon|high' } as never)).toBeFalsy()
+  expect((store.get('modelNews') as { proposals: unknown[] }).proposals).toHaveLength(1)
+
+  // Dismiss: remembered, and the same proposal is not stored again.
+  await pane.press({ key: 'model-dismiss:claude|light|haiku|medium' })
+  expect((store.get('modelNews') as { dismissed: string[]; proposals: unknown[] })).toMatchObject({ dismissed: ['claude|light|haiku|medium'], proposals: [] })
+  const again = await $.tool.call({ tool: PLAN, models: { proposals: [{ provider: 'claude', tier: 'light', model: 'haiku', effort: 'medium', why: 'again' }] } } as never)
+  expect(String(again.result)).toContain('dismissed by the person before')
+  await pane.unmount()
+  const log = [...files.entries()].filter(([k]) => k.includes('/log/')).map(([, v]) => v).join('')
+  expect(log).toContain('"ev":"model-applied"')
+  expect(log).toContain('"ev":"model-dismissed"')
+  expect(log).toContain('"ev":"models-from-agent"')
+})
+
+test('Apply on a Claude tier changes the tier in the settings; a refusal from helpers.py shows beside the button and the proposal stays', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  const cache = { ...OFFERED, agy: { ...OFFERED.agy, models: [...OFFERED.agy.models, 'gemini-4-neon-high'] } }
+  files.set(MODELS_FILE, JSON.stringify(cache))
+  const { store } = await boot($, on, [HELPERS_ON], [], files, () => {
+    world.setup()
+    world.json.value = { report: modelsReport(), cache }
+  })
+  await $.tool.call({
+    tool: PLAN,
+    models: { proposals: [{ provider: 'claude', tier: 'standard', model: 'opus', effort: 'medium', why: 'worth it' }, { provider: 'agy', tier: 'deep', model: 'gemini-4-neon', effort: 'high', why: 'cheaper' }] },
+  } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'model-apply:claude|standard|opus|medium' })
+  expect((store.get('settings') as { tiers: { standard: { model: string; effort: string } } }).tiers.standard).toMatchObject({ model: 'opus', effort: 'medium' })
+  expect(await pane.find(text(/^✓ standard Claude: sonnet\/medium → opus\/medium · worth it · applied$/))).toBeTruthy()
+
+  world.fail.set = "error: 'gemini-4-neon-high' is not in agy's model list"
+  await pane.press({ key: 'model-apply:agy|deep|gemini-4-neon|high' })
+  expect(await pane.find(text(/^'gemini-4-neon-high' is not in agy's model list$/))).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'model-apply:agy|deep|gemini-4-neon|high' } as never)).toBeTruthy()
+  expect((store.get('modelNews') as { proposals: unknown[] }).proposals).toHaveLength(1)
+  await pane.unmount()
+})
+
+test('a Claude model seen in usage for the first time is new for provider claude and is asked about once', async ($, on) => {
+  const { store, step, rows } = await boot($, on, [], [], undefined)
+  await step('t0', { model: 'claude-nova-1', input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 })
+  expect(store.get('modelNews')).toMatchObject({ seen: { 'claude:claude-nova-1': dayOf(new Date()) }, asked: ['claude:claude-nova-1'] })
+  await $.turn.start({ text: 'next', turnId: 't1' })
+  expect(lastRow(rows)).toContain(`New models offered: Claude claude-nova-1 (first seen ${dayOf(new Date())})`)
+  // The known models are not new.
+  await step('t2', { model: 'claude-sonnet-5-5', input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 })
+  expect(Object.keys((store.get('modelNews') as { seen: object }).seen)).toEqual(['claude:claude-nova-1'])
+})
+
+test('model news is merged on write: another chat\'s dismissals in the store are kept', async ($, on) => {
+  const { store } = await boot($, on, [['modelNews', { dismissed: ['other|chat|a|b'], proposals: [] }]])
+  await $.tool.call({ tool: PLAN, models: { proposals: [{ provider: 'claude', tier: 'light', model: 'sonnet', effort: 'low', why: 'x' }] } } as never)
+  // Another chat dismissed something after this one loaded.
+  store.set('modelNews', { ...(store.get('modelNews') as object), dismissed: ['other|chat|a|b', 'late|one|c|d'] })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'model-dismiss:claude|light|sonnet|low' })
+  await pane.unmount()
+  expect((store.get('modelNews') as { dismissed: string[] }).dismissed).toEqual(['other|chat|a|b', 'late|one|c|d', 'claude|light|sonnet|low'])
+})
+
+test('older helpers.py (before 0.15): no models command runs at the start', async ($, on) => {
+  const old = new Map<string, string>()
+  const oldWorld = helperWorld(on, old)
+  await boot($, on, [HELPERS_ON], [], old, oldWorld.setup)
+  expect(oldWorld.argsOf('models')).toEqual([])
+})
+
+test('Check now in Settings runs models --json; the Models group counts the notes and lists them', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  await boot($, on, [HELPERS_ON], [], files, () => {
+    world.setup()
+    world.json.value = { report: modelsReport({ not_offered: [{ template: 'kiro-light', model: 'claude-haiku-5.5' }] }), cache: OFFERED }
+  })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'settings' })
+  expect(await pane.find(text(new RegExp(`^Model notes \\(${SEED_NOTES.length}\\) · checked ${ago(0)}$`)))).toBeTruthy()
+  expect(await pane.find(text(/^Gemini 4 Neon · judgment/))).toBeFalsy()
+  await pane.press({ key: 'model-notes-toggle' })
+  expect(await pane.find(text(/^Gemini 4 Neon · judgment, agentic, research, long-context, second-opinion · .* · seed 2026-11-19$/))).toBeTruthy()
+  const before = world.argsOf('models').length
+  await pane.press({ key: 'model-notes-check' })
+  expect(world.argsOf('models').slice(before)).toEqual([['python3', world.script, 'models', '--json']])
+  expect(await pane.find(text(/^NOT OFFERED kiro-light: claude-haiku-5\.5/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('status and report carry the model check', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files, { version: '0.15.0' })
+  await boot($, on, [HELPERS_ON], [], files, () => {
+    world.setup()
+    world.json.value = { report: modelsReport({ new: [{ provider: 'agy', model: 'gemini-5-xenon', first_seen: ago(0) }], gone: [{ provider: 'kiro', model: 'glm-4', since: ago(3) }] }), cache: OFFERED }
+  })
+  const st = String((await $.tool.call({ tool: PLAN, status: true } as never)).result)
+  const body = JSON.parse(st.slice(st.indexOf('{'))) as Record<string, unknown>
+  expect(body.modelsChecked).toBe(`checked ${ago(0)}: agy ${ago(0)}, kiro ${ago(0)}`)
+  expect(body.modelsNew).toBe(`agy:gemini-5-xenon (${ago(0)})`)
+  expect(body.modelsGone).toBe(`kiro:glm-4 (since ${ago(3)})`)
+  expect(body.modelProposals).toBe(0)
+  expect(body.modelNotes).toBe(SEED_NOTES.length)
+
+  await $.command.run({ command: 'router', args: 'report' } as never)
+  const report = [...files.entries()].find(([k]) => /model-router\/report-/.test(k))![1]
+  expect(report).toContain('## Model check')
+  expect(report).toContain(`- Models checked ${ago(0)}: agy ${ago(0)}, kiro ${ago(0)}`)
+  expect(report).toContain(`- New in the last 14 days: agy:gemini-5-xenon (${ago(0)})`)
+  expect(report).toContain(`- No longer offered in the last 14 days: kiro:glm-4 (since ${ago(3)})`)
+  expect(report).toContain(`- Pending proposals: 0; model notes: ${SEED_NOTES.length}`)
 })

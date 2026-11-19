@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, Effort, EffortSwitch, HelperChoice, HelperPick, HelperState, HelperTotals, HelperUsage, HistoryEntry, Lifetime, PlanNode, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HelperChoice, HelperPick, HelperState, HelperTotals, HelperUsage, HistoryEntry, Lifetime, ModelNews, ModelNote, ModelsReport, PlanNode, Proposal, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
 import {
   EMPTY_HELPER,
   EMPTY_USAGE,
@@ -116,7 +116,23 @@ import {
   planFallbacks,
   reportFileName,
   reportMarkdown,
+  asModelNews,
+  cardModelLine,
+  checkProposals,
+  dayOf,
+  hasModelsJson,
+  modelCheckLines,
+  modelsAskNote,
+  newModelsCard,
+  notedNew,
+  parseModelsReport,
+  providerLabel,
+  reportChecked,
+  reportWarnings,
+  staleProviders,
+  toAsk,
 } from './logic'
+import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
 import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
 
@@ -151,8 +167,13 @@ const showHelperPath = atom({ plugin: 'model-router', key: 'showHelperPath' } as
 const helperCfg = atom({ plugin: 'model-router', key: 'helperCfg' } as const, { status: 'unknown', warnings: [] })
 const showHealth = atom({ plugin: 'model-router', key: 'showHealth' } as const, false)
 const reportNote = atom({ plugin: 'model-router', key: 'reportNote' } as const, '')
+const modelNews = atom({ plugin: 'model-router', key: 'modelNews' } as const, { seen: {}, asked: [], proposals: [], dismissed: [] })
+const modelNotes = atom({ plugin: 'model-router', key: 'modelNotes' } as const, mergeNotes(undefined))
+const modelFeedback = atom({ plugin: 'model-router', key: 'modelFeedback' } as const, {})
+const showCardNotes = atom({ plugin: 'model-router', key: 'showCardNotes' } as const, false)
+const showAllNotes = atom({ plugin: 'model-router', key: 'showAllNotes' } as const, false)
 
-const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted' }
+const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews' }
 const EFFORT_LOG_CAP = 200
 const HISTORY_CAP = 500
 
@@ -394,6 +415,8 @@ async function loadRemembered($: EngineInterface) {
     return cleaned
   })
   await update($, lifetime, () => life)
+  const news = asModelNews(await $.store.get(STORE.modelNews))
+  await update($, modelNews, () => news)
   const noted = await $.store.get(STORE.genome)
   await update($, genomeNoted, () => (Array.isArray(noted) ? noted.filter((x): x is string => typeof x === 'string') : []))
   // The store is the source: bring the mirror up to date with it.
@@ -449,6 +472,17 @@ async function editHistory($: EngineInterface, fn: (h: HistoryEntry[]) => Histor
   })
   await noteForGenome($)
   await resolveHelperPicks($)
+}
+
+/** Changes the remembered model news, applied to what the store holds so a chat that loaded earlier never writes its older copy over newer news. */
+async function editModelNews($: EngineInterface, fn: (n: ModelNews) => ModelNews) {
+  const ok = await ready($)
+  await locked('modelNews', async () => {
+    const stored = ok ? await $.store.get(STORE.modelNews) : undefined
+    const next = fn(stored !== undefined ? asModelNews(stored) : await read($, modelNews))
+    await update($, modelNews, () => next)
+    if (ok) await $.store.set(STORE.modelNews, next)
+  })
 }
 
 /** Auto mode's learned rung per kind, or nothing while auto mode is off. */
@@ -510,6 +544,9 @@ async function noteForGenome($: EngineInterface) {
 async function rememberModel($: EngineInterface, model: string | undefined) {
   if (!model || knownModels(await read($, settings)).includes(model)) return
   await editSettings($, s => (knownModels(s).includes(model) ? s : { ...s, models: [...s.models, model].slice(-30) }))
+  // A Claude model the router has not seen before is new: it gets a note like a helper's new model.
+  await editModelNews($, n => notedNew(n, [{ provider: 'claude', model, first_seen: dayOf(new Date()) }]))
+  await queueModelsNote($)
 }
 
 // --- What the main agent knows of the plan ----------------------------------------------
@@ -1007,6 +1044,7 @@ async function readHelperConfig($: EngineInterface) {
   if (!set.helpers.enabled) return
   madeTemplates.clear()
   const keep = (await read($, helperCfg)).warnings
+  const keepReport = (await read($, helperCfg)).report
   const script = await findHelpers($, set)
   // No helper can run without herdr-delegate's helpers.py and Herdr's hc: then there are no helpers (no hard-coded ones).
   if (!script) {
@@ -1032,7 +1070,7 @@ async function readHelperConfig($: EngineInterface) {
     const path = await modelsPath($)
     const models = path ? parseModelsCache((await readText($, path)) ?? '') : undefined
     const marketplace = hc ? undefined : await marketplaceName($)
-    await update($, helperCfg, () => ({ status: 'ready', script, config, ...(defaults ? { defaults } : {}), ...(models ? { models } : {}), warnings: keep, hc, terminal, ...(marketplace ? { marketplace } : {}) }))
+    await update($, helperCfg, () => ({ status: 'ready', script, config, ...(defaults ? { defaults } : {}), ...(models ? { models } : {}), warnings: keep, ...(keepReport ? { report: keepReport } : {}), hc, terminal, ...(marketplace ? { marketplace } : {}) }))
     await applyHelperMode($)
   } catch (err) {
     setHelperConfig(undefined)
@@ -1061,26 +1099,28 @@ async function applyHelperMode($: EngineInterface) {
  * Changes a provider's tier through `helpers.py set` (which checks the model and level and renders the template), then reads the config again.
  * Runs that happened before this change and have no recorded model stay with the model they ran on.
  */
-async function changeHelperTier($: EngineInterface, provider: string, tier: string, patch: Partial<HelperChoice>) {
-  await locked('helper-set', async () => {
+async function changeHelperTier($: EngineInterface, provider: string, tier: string, patch: Partial<HelperChoice>): Promise<boolean> {
+  return locked('helper-set', async () => {
     const st = await read($, helperCfg)
     const now = helperTierRung(st.config, provider, tier)
-    if (st.status !== 'ready' || !st.script || !now) return
+    if (st.status !== 'ready' || !st.script || !now) return false
     const next = { model: patch.model ?? now.model, effort: patch.effort ?? now.effort }
-    if (next.model === now.model && next.effort === now.effort) return
+    if (next.model === now.model && next.effort === now.effort) return true
     await stampHelperRuns($, `${provider}-${tier}`, { provider, ...now })
     try {
       const r = await runHelpers($, st.script, ['set', provider, tier, `model=${next.model}`, `effort=${next.effort}`])
       if (r.exitCode !== 0) {
         await update($, helperCfg, x => ({ ...x, message: firstLine(r.stderr || r.stdout) || `helpers.py set failed (exit ${r.exitCode})` }))
-        return
+        return false
       }
     } catch (err) {
       await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
-      return
+      return false
     }
     await update($, helperCfg, x => ({ ...x, message: undefined }))
     await loadHelperConfig($)
+
+    return true
   })
 }
 
@@ -1090,20 +1130,210 @@ async function stampHelperRuns($: EngineInterface, template: string, was: Helper
   if (lacking) await editHistory($, h => h.map(x => (x.where === 'helper' && x.helper === template && !x.hrung ? { ...x, hrung: was } : x)))
 }
 
-/** `helpers.py models`: asks each installed CLI what it offers, then shows what is no longer offered and what is newer. */
+/** `helpers.py models`: asks each installed CLI what it offers (JSON with herdr-delegate 0.15+, else the text), then shows what is no longer offered and what is newer. */
 async function checkModels($: EngineInterface) {
   const st = await read($, helperCfg)
   if (st.status !== 'ready' || !st.script || st.busy) return
   await update($, helperCfg, x => ({ ...x, busy: true, message: undefined }))
+  let report: ModelsReport | undefined
   try {
-    const r = await runHelpers($, st.script, ['models'], 180_000)
-    const warnings = modelWarnings(r.stdout)
+    const r = await runHelpers($, st.script, hasModelsJson(st.script) ? ['models', '--json'] : ['models'], 180_000)
+    // An older helpers.py ignores --json and prints text: then the text is read as before.
+    report = r.exitCode === 0 ? parseModelsReport(r.stdout) : undefined
+    const warnings = report ? reportWarnings(report) : modelWarnings(r.stdout)
     await update($, helperCfg, x => ({ ...x, warnings, message: r.exitCode === 0 ? undefined : firstLine(r.stderr || r.stdout) || `helpers.py models failed (exit ${r.exitCode})` }))
   } catch (err) {
     await update($, helperCfg, x => ({ ...x, message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
   }
   await loadHelperConfig($)
+  if (report) await absorbReport($, report)
   await update($, helperCfg, x => ({ ...x, busy: false }))
+}
+
+// --- New models: the check, the notes file, the note for the main agent, proposals ---------------------------
+
+const today = () => dayOf(new Date())
+
+/** The notes file: <config base>/model-router/model-notes.json, `{ "models": { "<id>": note } }`. */
+const notesPath = async ($: EngineInterface) => {
+  const base = await configBase($)
+
+  return base ? `${base}/model-router/model-notes.json` : undefined
+}
+
+/** Reads the notes file and puts the shipped seed under it (the file wins for the same id). */
+async function loadModelNotes($: EngineInterface) {
+  try {
+    const path = await notesPath($)
+    const file = path ? parseNotesFile(await readText($, path)) : undefined
+    await update($, modelNotes, () => mergeNotes(file))
+  } catch (err) {
+    await fault($, 'model-notes', err)
+  }
+}
+
+/** Adds notes to the file (read again first, so another chat's notes stay) and to this chat's notes. */
+async function saveModelNotes($: EngineInterface, list: readonly ModelNote[]) {
+  const path = await notesPath($)
+  if (!path) throw new Error('no home directory to write to')
+  await locked('model-notes', async () => {
+    const file = parseNotesFile(await readText($, path))
+    for (const n of list) file[n.id] = n
+    await $.fs.write(path, `${JSON.stringify({ models: file }, null, 2)}\n`)
+    await update($, modelNotes, () => mergeNotes(file))
+  })
+}
+
+/** A report was read: its new models are remembered, and the main agent is asked about those with no note. */
+async function absorbReport($: EngineInterface, report: ModelsReport) {
+  await update($, helperCfg, x => ({ ...x, report }))
+  await update($, modelFeedback, () => ({}))
+  await editModelNews($, n => notedNew(n, report.new))
+  await queueModelsNote($)
+}
+
+/**
+ * Queues ONE router note asking the main agent to look up new models that have no note, and configured models that are gone;
+ * once per model (remembered in `modelNews.asked`), several models in one note.
+ */
+async function queueModelsNote($: EngineInterface) {
+  try {
+    const have = await read($, modelNotes)
+    const report = (await read($, helperCfg)).report
+    let ask: ReturnType<typeof toAsk> | undefined
+    await editModelNews($, n => {
+      const a = toAsk(n, have, report, today())
+      if (a.fresh.length === 0 && a.gone.length === 0) return n
+      ask = a
+
+      return { ...n, asked: [...n.asked, ...a.fresh.map(m => `${m.provider}:${m.model}`), ...a.gone.map(g => `gone:${g.provider}:${g.model}`)].slice(-200) }
+    })
+    if (!ask) return
+    const text = modelsAskNote(ask, PLAN_TOOL, providerLabel)
+    await update($, notes, n => [...n, text])
+    await logEvent($, 'models-asked', { new: ask.fresh.map(m => `${m.provider}:${m.model}`), gone: ask.gone.map(g => `${g.provider}:${g.model}`) })
+  } catch (err) {
+    await fault($, 'models-note', err)
+  }
+}
+
+// Whether this chat has started the background check already (at most once per chat).
+let modelsBackground = false
+
+/**
+ * At the start, with helpers ready: the cached report (fast; awaited), and, when a provider's list is missing or older than a week,
+ * a live check in the background (not awaited: it asks the CLIs and may take minutes).
+ */
+async function modelsStartup($: EngineInterface) {
+  try {
+    const st = await read($, helperCfg)
+    // An older helpers.py has no --json (and would ask the CLIs at once for --cached, which it does not know): nothing is read.
+    if (st.status !== 'ready' || !st.script || !hasModelsJson(st.script)) return
+    const r = await runHelpers($, st.script, ['models', '--json', '--cached'], 30_000)
+    const report = r.exitCode === 0 ? parseModelsReport(r.stdout) : undefined
+    if (report) await absorbReport($, report)
+    const stale = staleProviders(st.config, report, st.models, today())
+    if (stale.length > 0 && !modelsBackground) {
+      modelsBackground = true
+      void backgroundModelsCheck($, st.script, stale)
+    }
+  } catch (err) {
+    await fault($, 'models-cached', err)
+  }
+}
+
+async function backgroundModelsCheck($: EngineInterface, script: string, stale: string[]) {
+  try {
+    await logEvent($, 'models-check', { providers: stale })
+    const r = await runHelpers($, script, ['models', '--json'], 180_000)
+    const report = r.exitCode === 0 ? parseModelsReport(r.stdout) : undefined
+    // The config and the model cache are read again, then the report.
+    await loadHelperConfig($)
+    if (report) await absorbReport($, report)
+  } catch (err) {
+    await fault($, 'models-check', err)
+  }
+}
+
+/** What the main agent sent in the plan tool's `models` input: notes into the file, proposals into the news. Returns what was stored and what was skipped. */
+async function acceptModels($: EngineInterface, raw: unknown): Promise<string> {
+  const input = (raw && typeof raw === 'object' ? raw : {}) as { notes?: unknown; proposals?: unknown }
+  const day = today()
+  const lines: string[] = []
+  const have = await read($, modelNotes)
+  const take: ModelNote[] = []
+  for (const r of Array.isArray(input.notes) ? input.notes : []) {
+    const c = checkNote(r, day)
+    for (const d of c.dropped) lines.push(`left out: ${d}`)
+    if (!c.note) {
+      lines.push(`note skipped: ${c.error}`)
+      continue
+    }
+    const note = c.note
+    // The same model under another spelling keeps its id, so there is one note.
+    const same = Object.keys(have).find(k => normId(k) === normId(note.id))
+    if (same) note.id = same
+    if (have[note.id]?.by === 'person') {
+      lines.push(`note skipped: ${note.id} was written by the person; it stays`)
+      continue
+    }
+    take.push(note)
+  }
+  let stored: string[] = []
+  if (take.length) {
+    try {
+      await saveModelNotes($, take)
+      stored = take.map(n => n.id)
+    } catch (err) {
+      lines.push(`notes not stored: ${String(err).slice(0, 120)}`)
+    }
+  }
+  const st = await read($, helperCfg)
+  const set = await read($, settings)
+  let added: Proposal[] = []
+  let skipped: string[] = []
+  await editModelNews($, n => {
+    const r = checkProposals(input.proposals, { cfg: st.status === 'ready' ? st.config : undefined, cache: st.models, set, news: n, today: day })
+    added = r.ok
+    skipped = r.skipped
+
+    return r.ok.length ? { ...n, proposals: [...n.proposals, ...r.ok].slice(-20) } : n
+  })
+  await logEvent($, 'models-from-agent', { notes: stored, proposals: added.map(p => p.key), skipped: lines.length + skipped.length })
+  const out = [
+    stored.length ? `Stored notes: ${stored.join(', ')}.` : 'No notes stored.',
+    added.length ? `Stored proposals (the person sees them under New models and applies or dismisses them): ${added.map(p => `${p.provider} ${p.tier} -> ${p.model}/${p.effort}`).join('; ')}.` : 'No proposals stored.',
+    ...[...lines, ...skipped].map(l => `Skipped: ${l}`),
+  ]
+
+  return `model-router models: ${out.join('\n')}`
+}
+
+/** Applies a proposal from the card: a helper's tier through `helpers.py set`, a Claude tier in the settings. `line` is the card's line, kept as the feedback. */
+async function applyProposal($: EngineInterface, key: string, line: string) {
+  const p = (await read($, modelNews)).proposals.find(x => x.key === key)
+  if (!p) return
+  let ok = false
+  let text = 'applied'
+  if (p.provider === 'claude') {
+    if (isTier(p.tier)) {
+      const tier = p.tier
+      await editSettings($, s => ({ ...s, tiers: { ...s.tiers, [tier]: { ...s.tiers[tier], model: p.model, effort: p.effort as Effort } } }))
+      ok = true
+    }
+  } else {
+    ok = await changeHelperTier($, p.provider, p.tier, { model: p.model, effort: p.effort })
+    if (!ok) text = (await read($, helperCfg)).message ?? 'could not be applied'
+  }
+  if (ok) await editModelNews($, n => ({ ...n, proposals: n.proposals.filter(x => x.key !== key) }))
+  await update($, modelFeedback, f => ({ ...f, [key]: { line, text, ok } }))
+  await logEvent($, ok ? 'model-applied' : 'model-apply-refused', { provider: p.provider, tier: p.tier, model: p.model, effort: p.effort, ...(ok ? {} : { message: text }) })
+}
+
+async function dismissProposal($: EngineInterface, key: string) {
+  await editModelNews($, n => ({ ...n, proposals: n.proposals.filter(x => x.key !== key), dismissed: n.dismissed.includes(key) ? n.dismissed : [...n.dismissed, key].slice(-200) }))
+  await update($, modelFeedback, f => Object.fromEntries(Object.entries(f).filter(([k]) => k !== key)))
+  await logEvent($, 'model-dismissed', { key })
 }
 
 /** The template to launch for a pick: a tier template that already has this model and level, else a one-off made by `helpers.py custom`. */
@@ -1284,6 +1514,52 @@ async function registerPlanTool($: EngineInterface) {
         done,
         ...start,
         status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
+        models: {
+          type: 'object',
+          description:
+            'Notes on models and proposed tier changes, after looking up new models (works on its own, without steps). The router stores the notes (by "agent", dated today) and shows the proposals to the person, who applies or dismisses each; nothing changes without their click',
+          properties: {
+            notes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: 'The model id as the provider offers it, lowercase, e.g. gemini-4-neon' },
+                  name: { type: 'string', description: 'Display name, e.g. Gemini 4 Neon' },
+                  providers: { type: 'array', items: { type: 'string' }, description: 'Helper providers (agy, copilot, kiro, ...) or claude that offer it' },
+                  released: { type: 'string', description: 'YYYY-MM-DD' },
+                  summary: { type: 'string', description: 'One line' },
+                  strengths: { type: 'array', items: { type: 'string' } },
+                  weaknesses: { type: 'array', items: { type: 'string' } },
+                  tags: { type: 'array', items: { type: 'string', enum: [...TAGS] }, description: 'code, review, research, judgment, long-context, fast, cheap, careful (low hallucination), second-opinion (a family other than Claude), agentic' },
+                  fits: {
+                    type: 'array',
+                    items: { type: 'object', properties: { tier: { type: 'string', description: 'light, standard, deep, or a provider tier such as second' }, effort: { type: 'string' }, why: { type: 'string' } }, required: ['tier', 'why'] },
+                    description: 'Which tier and thinking level the model fits, and why',
+                  },
+                  sources: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, url: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['url'] } },
+                },
+                required: ['id', 'summary'],
+              },
+            },
+            proposals: {
+              type: 'array',
+              description: 'Only where the model is clearly better or cheaper for that tier',
+              items: {
+                type: 'object',
+                properties: {
+                  provider: { type: 'string', description: 'A helper provider in the config, or claude for the subagent tiers' },
+                  tier: { type: 'string', description: 'A tier the provider has (claude: light, standard, deep)' },
+                  model: { type: 'string', description: 'A model the provider offers' },
+                  effort: { type: 'string', description: "One of the provider's thinking levels" },
+                  why: { type: 'string', description: 'One line' },
+                  source: { type: 'string', description: 'A url' },
+                },
+                required: ['provider', 'tier', 'model', 'effort', 'why'],
+              },
+            },
+          },
+        },
       },
     },
     isDeferred: false,
@@ -1526,6 +1802,7 @@ type StartRef = string | { id?: string; helper?: string; model?: string; effort?
 type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown }
 type PlanInput = {
   status?: boolean
+  models?: unknown
   steps?: PlanNode[]
   done?: DoneRef[]
   start?: StartRef[]
@@ -1547,6 +1824,20 @@ const REVISE = 'Change the steps'
 
 
 // --- The report ---------------------------------------------------------------
+
+/** The model check as the report and the status check give it. */
+async function modelCheck($: EngineInterface) {
+  const st = await read($, helperCfg)
+
+  return modelCheckLines({ report: st.report, cache: st.models, news: await read($, modelNews), notes: Object.keys(await read($, modelNotes)).length, today: today() })
+}
+
+/** One line each for the status check. */
+async function modelStatus($: EngineInterface) {
+  const c = await modelCheck($)
+
+  return { modelsChecked: c.checked, modelsNew: c.new, modelsGone: c.gone, modelProposals: Number(c.proposals), modelNotes: Number(c.notes) }
+}
 
 /** Writes the diagnostics report to <config base>/model-router/report-YYYYMMDD-HHMM.md; the pane shows where, beside the button. */
 async function writeReport($: EngineInterface): Promise<string | undefined> {
@@ -1576,6 +1867,7 @@ async function writeReport($: EngineInterface): Promise<string | undefined> {
       history: (await read($, history)).length,
       lifetime: { steps: life.steps, plans: life.plans, helperSteps: life.helper.steps, fallbacks: life.fallbacks, since: life.since },
       events: await lastLogLines($, 100),
+      models: await modelCheck($),
     })
     await $.fs.write(path, text)
     const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
@@ -1665,6 +1957,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const healthOpen = await read($, showHealth)
   const reportText = await read($, reportNote)
   const models = knownModels(set)
+  // New models: the card (only with proposals pending or models without notes), and the list of notes in Settings.
+  const news = await read($, modelNews)
+  const allNotes = await read($, modelNotes)
+  const feedback = await read($, modelFeedback)
+  const nm = newModelsCard({ news, notes: allNotes, report: hs.report, cache: hs.models, cfg: hcfg, set, today: dayOf(new Date()) })
+  const cardNotes = await read($, showCardNotes)
+  const allNotesOpen = await read($, showAllNotes)
 
   // Settings that differ from the defaults get a quiet dot, so it shows which of your own values are active.
   const D = DEFAULT_SETTINGS
@@ -1817,6 +2116,67 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
     </Box>
   )
+
+  // Layer 1: new models and proposals, each with Apply and Dismiss. Layer 2 (Notes ▸): strengths, weaknesses, fits and sources.
+  const applied = Object.entries(feedback).filter(([k, f]) => f.ok && !nm?.proposals.some(p => p.key === k))
+  const modelsCard =
+    nm || applied.length > 0 ? (
+      <Box key="new-models" flexDirection="column" rowGap="xs" borderStyle="round" borderColor="suggestion" paddingX="sm" paddingY={mini ? 0 : 'xs'}>
+        {nm && (
+          <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+            <Text weight="semibold">{`New models (${nm.models.length || nm.proposals.length})`}</Text>
+            {nm.checked ? <Text dimColor size="footnote">{`checked ${nm.checked}`}</Text> : null}
+          </Box>
+        )}
+        {nm?.models.map(m => (
+          <Text key={`new-model:${m.key}`} size="footnote" dimColor={!m.note} wrap={mini || tty ? 'truncate' : 'wrap'}>
+            {cardModelLine(m, mini || tty ? 50 : undefined)}
+          </Text>
+        ))}
+        {nm?.proposals.map(p => {
+          const line = `${p.tier} ${p.label}: ${p.from} → ${p.to} · ${p.why}`
+          const fb = feedback[p.key]
+
+          return (
+            <Box key={`proposal:${p.key}`} flexDirection="column">
+              <Box flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm" rowGap="xs">
+                <Text size="footnote" wrap={mini || tty ? 'truncate' : 'wrap'}>{line}</Text>
+                <Button key={`model-apply:${p.key}`} onPress={() => void applyProposal($, p.key, line)}>
+                  Apply
+                </Button>
+                <Button key={`model-dismiss:${p.key}`} plain dimColor onPress={() => void dismissProposal($, p.key)}>
+                  Dismiss
+                </Button>
+              </Box>
+              {fb && !fb.ok ? <Text color="warning" size="footnote" wrap="wrap">{fb.text}</Text> : null}
+            </Box>
+          )
+        })}
+        {applied.map(([k, f]) => (
+          <Text key={`proposal-done:${k}`} color="success" size="footnote" wrap={mini || tty ? 'truncate' : 'wrap'}>{`✓ ${f.line} · ${f.text}`}</Text>
+        ))}
+        {nm && nm.models.some(m => m.note) && (
+          <Button key="model-card-notes" plain onPress={() => void update($, showCardNotes, v => !v)}>
+            {cardNotes ? 'Notes ▾' : 'Notes ▸'}
+          </Button>
+        )}
+        {nm && cardNotes
+          ? nm.models.flatMap(m =>
+              m.note
+                ? [
+                    <Box key={`card-note:${m.key}`} flexDirection="column" paddingLeft={2}>
+                      <Text weight="medium" size="footnote">{m.name}</Text>
+                      {m.note.strengths.length ? <Text size="footnote" wrap="wrap">{`Strengths: ${m.note.strengths.join('; ')}`}</Text> : null}
+                      {m.note.weaknesses.length ? <Text size="footnote" wrap="wrap">{`Weaknesses: ${m.note.weaknesses.join('; ')}`}</Text> : null}
+                      {m.note.fits.length ? <Text size="footnote" wrap="wrap">{`Fits: ${m.note.fits.map(f => `${f.tier}${f.effort ? ` ${f.effort}` : ''} (${f.why})`).join('; ')}`}</Text> : null}
+                      {m.note.sources.length ? <Text dimColor size="footnote" wrap="wrap">{`Sources: ${m.note.sources.map(x => `${x.title} ${x.url}${x.date ? ` (${x.date})` : ''}`).join('; ')}`}</Text> : null}
+                    </Box>,
+                  ]
+                : [],
+            )
+          : null}
+      </Box>
+    ) : null
 
   const savedOf = (t: Totals) => Math.max(0, t.mainEquivalent - t.agentCost)
   const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—')
@@ -2221,6 +2581,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   return (
     <Box flexDirection="column" rowGap={mini ? 0 : tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
       {healthRow}
+      {modelsCard}
       {tty && (
         <Text dimColor size="caption" wrap="wrap">
           {site.isFocused
@@ -2451,6 +2812,24 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               }}
             />
           )}
+
+          <Box key="model-notes-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm" rowGap="xs" marginTop={mini ? 0 : 1}>
+            <Text size="footnote">{`Model notes (${Object.keys(allNotes).length}) · checked ${reportChecked(hs.report) ?? modelsChecked(hs.models) ?? 'never'}`}</Text>
+            {hs.status === 'ready' && (
+              <Button key="model-notes-check" plain onPress={() => void checkModels($)}>
+                {hs.busy ? 'Checking…' : 'Check now'}
+              </Button>
+            )}
+            <Button key="model-notes-toggle" plain onPress={() => void update($, showAllNotes, v => !v)}>
+              {allNotesOpen ? 'List ▾' : 'List ▸'}
+            </Button>
+          </Box>
+          {allNotesOpen &&
+            Object.values(allNotes)
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map(n => (
+                <Text key={`model-note:${n.id}`} size="footnote" wrap="wrap">{`${n.name} · ${n.tags.join(', ') || 'no tags'} · ${n.summary} · ${n.by} ${n.checked}`}</Text>
+              ))}
 
           {group('Helpers', 'Optional: run long self-contained steps on agents from other subscriptions or Claude accounts, started by herdr-delegate through Herdr. Without them every step runs as a Claude subagent.')}
           {switchRow('helpers', 'Helpers (other subscriptions)', 'Let plans send steps to a helper.', set.helpers.enabled, () =>
@@ -2929,7 +3308,11 @@ export const register: Register = on => {
     await $.command.register({ name: 'router', description: 'Show the model-router pane; /router report writes a diagnostics report' })
     setHelperConfig(undefined)
     planToolHelpers = undefined
+    modelsBackground = false
+    await update($, modelFeedback, () => ({}))
+    await loadModelNotes($)
     await loadHelperConfig($)
+    await modelsStartup($)
     await registerPlanTool($)
     await refreshStatus($)
     if ((await read($, settings)).openPane) void $.ui.open({ id: PANE, title: 'Model router' })
@@ -2952,9 +3335,10 @@ export const register: Register = on => {
     const input = e as unknown as PlanInput
     const set = await read($, settings)
     let ask: string | undefined
+    let modelsText: string | undefined
     // What the agent is handed here is the plan as it stands, so it knows every step now.
     const withNotes = async (body: string) => {
-      const text = ask ? `${body}\n\n${ask}` : body
+      const text = [body, ask, modelsText].filter(Boolean).join('\n\n')
       const helperChange = await helperNote($)
       const pending = [...(await read($, notes)), ...(helperChange ? [helperChange] : [])]
       await update($, notes, () => [])
@@ -2984,9 +3368,15 @@ export const register: Register = on => {
         checks: (await checksNow($)).map(c => `${c.state} ${c.id}: ${c.text}`),
         log: set.log && dir ? `${dir}/${logFileName(new Date())}` : 'off',
         history: (await read($, history)).length,
+        ...(await modelStatus($)),
         ...diag,
       }
       return { result: `model-router status: ${JSON.stringify(report)}` }
+    }
+    // Notes and proposals about models work on their own, or beside steps.
+    if (input.models !== undefined) {
+      modelsText = await acceptModels($, input.models)
+      if (!input.steps && !input.done && !input.start) return { result: modelsText }
     }
     const done = refs(input.done)
     if (done.length) await markDone($, done)

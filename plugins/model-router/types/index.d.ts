@@ -99,6 +99,64 @@ export type HelperState = {
   /** Herdr's hc can start; this chat runs in a Herdr terminal ($HC_TERMINAL_ID set). Absent: not checked yet. */
   hc?: boolean
   terminal?: boolean
+  /** `helpers.py models --json` as last read (cached at the start, or from a check); absent with an older helpers.py. */
+  report?: ModelsReport
+}
+
+/** What `helpers.py models --json` prints (herdr-delegate 0.15+): per provider the cache's dates, and what changed. */
+export type ModelsReport = {
+  providers: Record<string, { date?: string | null; checked?: string | null; count?: number; error?: string }>
+  not_offered: { template: string; model: string }[]
+  newer: { template: string; model: string; candidates: string[] }[]
+  /** First seen in the last 14 days. */
+  new: { provider: string; model: string; first_seen: string }[]
+  /** No longer offered, in the last 14 days. */
+  gone: { provider: string; model: string; since: string }[]
+}
+
+/** The tags a model note may carry. */
+export type ModelTag = 'code' | 'review' | 'research' | 'judgment' | 'long-context' | 'fast' | 'cheap' | 'careful' | 'second-opinion' | 'agentic'
+
+/** What the router knows of one model: shipped (seed), written by the main agent, or by the person. */
+export type ModelNote = {
+  id: string
+  name: string
+  providers: string[]
+  released?: string
+  summary: string
+  strengths: string[]
+  weaknesses: string[]
+  tags: ModelTag[]
+  /** Which tier and level the model fits, and why. */
+  fits: { tier: string; effort?: string; why: string }[]
+  sources: { title: string; url: string; date?: string }[]
+  checked: string
+  by: 'seed' | 'agent' | 'person'
+}
+
+/** A change the router proposes for a tier; applied only by a click. */
+export type Proposal = {
+  /** `provider|tier|model|effort` */
+  key: string
+  /** A helper provider, or `claude` for the subagent tiers. */
+  provider: string
+  tier: string
+  model: string
+  effort: string
+  why: string
+  source?: string
+  at: string
+}
+
+/** Remembered across chats (store key `modelNews`). */
+export type ModelNews = {
+  /** `<provider>:<model>` -> the day it was first seen. */
+  seen: Record<string, string>
+  /** `<provider>:<model>` the main agent was already asked about (a gone model: `gone:<provider>:<model>`). */
+  asked: string[]
+  proposals: Proposal[]
+  /** Proposal keys the person dismissed. */
+  dismissed: string[]
 }
 
 /** The model and level the router chose for a helper step, with the template to launch. */
@@ -334,6 +392,15 @@ declare module 'claude-code' {
       showHealth: boolean
       /** Where the last report was written (shown beside its button), or why it failed. */
       reportNote: string
+      /** What the router knows of new and gone models and its proposals (the store's `modelNews`, as this chat last read it). */
+      modelNews: ModelNews
+      /** The model notes: the shipped seed with `model-notes.json` over it. */
+      modelNotes: Record<string, ModelNote>
+      /** The card's last Apply per proposal key: shown in place of the proposal (applied, or why not). */
+      modelFeedback: Record<string, { line: string; text: string; ok: boolean }>
+      /** The notes under the New models card are open; the list of notes in Settings is open. */
+      showCardNotes: boolean
+      showAllNotes: boolean
     }
   }
 }
