@@ -614,11 +614,17 @@ test('steps are two-line rows: ▸ opens one step in place, Expand all opens eve
   expect(await pane.find({ key: 'details:s1' } as never)).toBeFalsy()
   expect((store.get('settings') as { expandAll: boolean }).expandAll).toBe(false)
 
-  // The glossary is one click away and explains the words of the rows.
+  // The glossary is one click away and explains the words of the rows; the terminal gives each term its own line
+  // with what it means indented under it (0.29), wider surfaces one line each.
   await pressPick(pane, 'glossary')
-  expect(await pane.find(text(/^other subscription: an agent of another account/))).toBeTruthy()
-  expect(await pane.find(text(/^verdict: ok · weak/))).toBeTruthy()
+  expect(await pane.find(text(/^other subscription$/))).toBeTruthy()
+  expect(await pane.find(text(/^an agent of another account/))).toBeTruthy()
+  expect(await pane.find(text(/^ok · weak/))).toBeTruthy()
   await pane.unmount()
+  // (Still open: the glossary's state belongs to the chat, not the surface.)
+  const wide = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await wide.find(text(/^verdict: ok · weak/))).toBeTruthy()
+  await wide.unmount()
   await $.tool.call({ tool: PLAN, done: [] } as never)
 })
 
@@ -1164,7 +1170,7 @@ test('parts nest in the pane, the indent stops at three levels, each part has it
   await pressPick(pane, 'expand-all')
   expect((await pane.find({ type: 'Box', key: 'card:s1' } as never))?.props.borderStyle).toBeUndefined()
   expect(await pane.find({ type: 'Button', key: 'tier:s1.a.b.c.d' } as never)).toBeTruthy()
-  expect(await pane.find(text(/^0\/1 done$/))).toBeTruthy()
+  expect(await pane.find(text(/0\/1 done$/))).toBeTruthy()
   await pane.unmount()
   expect(lastRow(rows)).toContain('Model routing')
 })

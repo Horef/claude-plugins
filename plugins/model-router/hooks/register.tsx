@@ -2460,7 +2460,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       <Text key={`count:${s.id}`} dimColor size="footnote">{`×${s.count}${s.status !== 'done' && (s.runs ?? 0) > 0 ? ` · ${s.runs} finished` : ''}`}</Text>
     ) : null
   // A helper step: the helper and the model it reported, then its usage and time.
-  const helperInfo = (s: Step) => (isHelperRun(s) && s.helper ? <Text key={`helper:${s.id}`} size="footnote" weight="medium">{helperName(s)}</Text> : null)
+  const helperInfo = (s: Step) =>
+    isHelperRun(s) && s.helper ? (
+      <Text key={`helper:${s.id}`} size="footnote" weight={s.status === 'done' ? undefined : 'medium'} dimColor={s.status === 'done'}>{helperName(s)}</Text>
+    ) : null
   const helperFactsText = (s: Step) => {
     const facts = isHelperRun(s) ? helperFacts(s) : ''
 
@@ -2525,18 +2528,32 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       {isOpen(s) ? '▾' : '▸'}
     </Button>
   )
-  // Line 1 of a row: the opener, status, id, title (wrapping) and tags.
-  const rowHead = (s: Step, tags: unknown[]) => (
-    <Box flexDirection="row" columnGap="sm" alignItems="center">
+  // Line 1 of a row: the opener, status, id and the title, which alone wraps (the id never breaks: "s14." over "a").
+  // Tags (kind, count, a group's progress) go on line 2, so a narrow pane gives the title its whole width.
+  const rowHead = (s: Step) => (
+    <Box flexDirection="row" columnGap="sm" alignItems="flex-start">
       {opener(s)}
       <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-      <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+      <Box flexShrink={0}>
+        <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+      </Box>
       <Box flexShrink={1}>
         <Text weight={s.group ? 'semibold' : 'medium'} wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
       </Box>
-      {tags as never}
     </Box>
   )
+  // A finished step's line 2 says where it ran, in quiet text: its pickers would change nothing now.
+  const ranOn = (s: Step) => {
+    const now = runsOn(s, set, learned)
+    const text =
+      s.where === 'here'
+        ? `${whereLabel('here')} · rated ${s.tier}`
+        : s.where === 'agent'
+          ? `${whereLabel('agent')} · ${s.tier} · ${s.resolvedModel ?? now.model} ${now.effort}`
+          : `${whereLabel('helper', tight)} · ${s.tier}`
+
+    return <Text key={`ran:${s.id}`} dimColor size="footnote" wrap="wrap">{text}</Text>
+  }
 
   // A group: its title, how many parts are done and what they cost together. Its level only rates it.
   const groupRow = (s: Step) => {
@@ -2546,11 +2563,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return (
       <Box key={`card:${s.id}`} flexDirection="column">
-        {rowHead(s, [
-          <Text key={`rated:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>,
-          <Text key={`parts:${s.id}`} dimColor size="footnote">{`${r.done}/${r.total} done`}</Text>,
-          r.cost > 0 ? <Text key={`gcost:${s.id}`} dimColor size="footnote" tabular>{`≈${fmtUsd(r.cost)}`}</Text> : null,
-        ])}
+        {rowHead(s)}
+        <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={4}>
+          <Text key={`rated:${s.id}`} color={TIER_COLOR[s.tier]} size="footnote">{`rated ${s.tier}`}</Text>
+          <Text key={`parts:${s.id}`} dimColor size="footnote">{`· ${r.done}/${r.total} done`}</Text>
+          {r.cost > 0 ? <Text key={`gcost:${s.id}`} dimColor size="footnote" tabular>{`· ≈${fmtUsd(r.cost)}`}</Text> : null}
+        </Box>
         {isOpen(s) && (r.cost > 0 || moved) ? (
           <Box key={`details:${s.id}`} flexDirection="column" paddingLeft={4}>
             {r.cost > 0 && (
@@ -2577,9 +2595,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
     return (
       <Box key={`card:${s.id}`} flexDirection="column">
-        {rowHead(s, [countTag(s), kindTag(s)])}
+        {rowHead(s)}
         <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center" paddingLeft={4}>
-          {stepPickers(s)}
+          {s.status === 'done' ? ranOn(s) : stepPickers(s)}
+          {countTag(s)}
+          {kindTag(s)}
           {s.cost > 0 && !s.unpriced && <Text dimColor size="footnote" tabular>{`≈${fmtUsd(s.cost)}`}</Text>}
           {s.unpriced && <Text key={`unpriced:${s.id}`} color="warning" size="footnote">{fmtCost(s.cost, true)}</Text>}
           {helperInfo(s)}
@@ -2711,12 +2731,22 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
       {glossaryOpen && list.length > 0 && (
         <Box key="glossary-list" flexDirection="column" paddingLeft={2}>
-          {GLOSSARY.map(([term, what]) => (
-            <Text key={`term:${term}`} size="footnote" wrap="wrap">
-              <Text weight="medium">{term}</Text>
-              <Text dimColor>{`: ${what}`}</Text>
-            </Text>
-          ))}
+          {/* The terminal gives each term its own line and indents what it means, so the list scans as a list. */}
+          {GLOSSARY.map(([term, what]) =>
+            tty ? (
+              <Box key={`term:${term}`} flexDirection="column">
+                <Text weight="medium" size="footnote">{term}</Text>
+                <Box paddingLeft={2}>
+                  <Text dimColor size="footnote" wrap="wrap">{what}</Text>
+                </Box>
+              </Box>
+            ) : (
+              <Text key={`term:${term}`} size="footnote" wrap="wrap">
+                <Text weight="medium">{term}</Text>
+                <Text dimColor>{`: ${what}`}</Text>
+              </Text>
+            ),
+          )}
         </Box>
       )}
       {heldCount > 0 && (
@@ -2730,7 +2760,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text dimColor size="footnote" wrap="wrap">✎ edits wait until you send them</Text>
         </Box>
       )}
-      <Box flexDirection="column" rowGap="xs">
+      {/* In the terminal a blank row between steps: without it the rows read as one block of text. */}
+      <Box flexDirection="column" rowGap={tty ? 1 : 'xs'}>
         {list.map(row)}
       </Box>
       {list.length > 0 && (
