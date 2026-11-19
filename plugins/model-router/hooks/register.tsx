@@ -46,7 +46,6 @@ import {
   helperTierDiffers,
   helperTierNames,
   helperTierRung,
-  helperSignature,
   helperTotalsOf,
   helpersOff,
   helperEffective,
@@ -101,8 +100,24 @@ import {
   templateRung,
   verdictLine,
   withoutZeroUsage,
+  asReason,
+  directAvailable,
+  fallbackLine,
+  healthChecks,
+  healthLine,
+  helperMode,
+  helperModeOf,
+  helperRuleSig,
+  historyLine,
+  liveProviders,
+  logFileName,
+  logLine,
+  oldLogFiles,
+  planFallbacks,
+  reportFileName,
+  reportMarkdown,
 } from './logic'
-import type { HelperAdvice, Learned, Suggestion } from './logic'
+import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
 import { DEFAULT_SETTINGS, EFFORT_LIMITS, EFFORTS, MODELS, PRICES, SCOPE_NOTE, TIER_ORDER, TIER_USE } from './tiers'
 
 // --- State: the session's (atoms) and what is remembered across sessions ($.store) --
@@ -134,6 +149,8 @@ const genomeNoted = atom({ plugin: 'model-router', key: 'genomeNoted' } as const
 const draft = atom({ plugin: 'model-router', key: 'draft' } as const, {})
 const showHelperPath = atom({ plugin: 'model-router', key: 'showHelperPath' } as const, false)
 const helperCfg = atom({ plugin: 'model-router', key: 'helperCfg' } as const, { status: 'unknown', warnings: [] })
+const showHealth = atom({ plugin: 'model-router', key: 'showHealth' } as const, false)
+const reportNote = atom({ plugin: 'model-router', key: 'reportNote' } as const, '')
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted' }
 const EFFORT_LOG_CAP = 200
@@ -141,6 +158,85 @@ const HISTORY_CAP = 500
 
 // What the router saw in this load, for the plan tool's status check.
 const diag = { turns: 0, appends: 0, composes: 0, lastError: '' }
+
+// The surface the chat started on, for the log and the report.
+let surfaceNow: string | undefined
+
+// --- The log: one JSON object per line, a file a day, under <config base>/model-router/log ---------
+//
+// Never prompts, briefs, file contents, titles or why-texts: only ids, tiers, models, verdicts, usage, reasons and errors.
+
+const LOG_DAYS = 14
+
+async function logDir($: EngineInterface) {
+  const base = await configBase($)
+
+  return base ? `${base}/model-router/log` : undefined
+}
+
+/** Appends one event to today's log file. Never throws: a failure is kept in the status check only. */
+async function logEvent($: EngineInterface, ev: string, fields: Record<string, unknown> = {}) {
+  try {
+    if (!(await read($, settings)).log) return
+    const dir = await logDir($)
+    if (!dir) return
+    const line = logLine(ev, fields)
+    const path = `${dir}/${logFileName(new Date())}`
+    // The fs API has no append: the day file is read and written whole, one writer at a time.
+    await locked(`log:${path}`, async () => {
+      const was = (await readText($, path)) ?? ''
+      await $.fs.write(path, `${was}${line}\n`)
+    })
+  } catch (err) {
+    diag.lastError = `log: ${String(err).slice(0, 200)}`
+  }
+}
+
+/** A caught error: kept for the status check and written to the log. */
+async function fault($: EngineInterface, where: string, err: unknown) {
+  const message = String(err).slice(0, 200)
+  diag.lastError = `${where}: ${message}`
+  await logEvent($, 'error', { where, message })
+}
+
+/** Deletes log files older than 14 days (the fs API has no delete: rm, best effort). */
+async function pruneLogs($: EngineInterface) {
+  try {
+    const dir = await logDir($)
+    if (!dir) return
+    let names: string[]
+    try {
+      names = (await $.fs.list(dir)).filter(x => x.kind === 'file').map(x => x.name)
+    } catch {
+      return
+    }
+    const old = oldLogFiles(names, new Date(), LOG_DAYS)
+    if (old.length) await $.process.run(['rm', '-f', '--', ...old.map(n => `${dir}/${n}`)], { timeoutMs: 10_000 })
+  } catch (err) {
+    await fault($, 'prune-logs', err)
+  }
+}
+
+/** The last `n` lines of the log, across the newest files. */
+async function lastLogLines($: EngineInterface, n = 100) {
+  const dir = await logDir($)
+  if (!dir) return []
+  let names: string[] = []
+  try {
+    names = (await $.fs.list(dir)).filter(x => x.kind === 'file' && /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(x.name)).map(x => x.name).sort()
+  } catch {
+    names = [logFileName(new Date())]
+  }
+  const out: string[] = []
+  for (const name of names.reverse()) {
+    const text = await readText($, `${dir}/${name}`)
+    if (!text) continue
+    out.unshift(...text.split('\n').filter(Boolean))
+    if (out.length >= n) break
+  }
+
+  return out.slice(-n)
+}
 
 // Nothing is written to the store before what it holds has been read: a write that raced
 // ahead of the load would put the defaults over the remembered values.
@@ -151,7 +247,7 @@ function ready($: EngineInterface) {
   loading ??= loadRemembered($).then(
     () => true,
     err => {
-      diag.lastError = `load: ${String(err).slice(0, 200)}`
+      void fault($, 'load', err)
       loading = undefined
 
       return false
@@ -205,7 +301,7 @@ async function writeMirror($: EngineInterface) {
       await $.fs.write(path, `${JSON.stringify(body, null, 2)}\n`)
     })
   } catch (err) {
-    diag.lastError = `mirror: ${String(err).slice(0, 200)}`
+    await fault($, 'mirror', err)
   }
 }
 
@@ -262,7 +358,7 @@ async function refreshShared($: EngineInterface) {
   try {
     await syncShared($)
   } catch (err) {
-    diag.lastError = `refresh: ${String(err).slice(0, 200)}`
+    await fault($, 'refresh', err)
   }
 }
 
@@ -441,10 +537,9 @@ async function stepChanges($: EngineInterface) {
   })
 }
 
-/** Notes reached the agent: if one named the helper orders, it now knows them as they stand. */
-async function noteDelivered($: EngineInterface, delivered: readonly string[]) {
-  if (!delivered.some(n => n.startsWith(HELPER_NOTE))) return
-  const sig = helperSignature(await read($, settings))
+/** The rules or a helper note reached the agent: it now knows helpers as they stand. */
+async function helpersTold($: EngineInterface) {
+  const sig = helperRuleSig(await read($, settings))
   await update($, toldHelpers, () => sig)
 }
 
@@ -457,9 +552,10 @@ async function summary($: EngineInterface) {
   const always = await read($, alwaysPlan)
 
   // No plan: say the router is on and whether the active model has its rules.
+  const broken = (await helpersBroken($)) ? ' · helpers ✗' : ''
   if (list.length === 0) {
     const rules = sent.model ? `rules sent to ${sent.model}` : 'rules go out with your next message'
-    return `⇄ Router on · ${rules}${always ? ' · always plan' : ''} · /router for the pane`
+    return `⇄ Router on · ${rules}${always ? ' · always plan' : ''}${broken} · /router for the pane`
   }
 
   const status = await read($, planStatus)
@@ -474,7 +570,7 @@ async function summary($: EngineInterface) {
   const now = running ? ` · ${running.id} on ${rungLabel(runsOn(running, set, await learnedOf($)))}` : ''
   const money = cost > 0 ? ` · plan agents ≈${fmtUsd(cost)}${saved > 0 ? `, saved ≈${fmtUsd(saved)}` : ''}` : ''
 
-  return `⇄ Router ${dots} ${head}${now}${money} · /router`
+  return `⇄ Router ${dots} ${head}${now}${money}${broken} · /router`
 }
 
 async function refreshStatus($: EngineInterface) {
@@ -534,13 +630,14 @@ async function discardDraft($: EngineInterface) {
   await update($, draft, () => ({}))
 }
 
-/** The fields a step's next run starts from: the verdict and history entry of the last run no longer apply. */
+/** The fields a step's next run starts from: the verdict and history entry of the last run no longer apply. A run cut short is not a rerun. */
 const freshRun = (s: Step): Step => ({
   ...s,
   status: 'planned',
   runs: 0,
-  reruns: s.reruns + 1,
+  reruns: s.verdict === 'cut-short' ? s.reruns : s.reruns + 1,
   verdict: undefined,
+  verdictBefore: undefined,
   why: undefined,
   asked: undefined,
   historyKey: undefined,
@@ -554,7 +651,8 @@ async function rerun($: EngineInterface, id: string) {
   const step = (await read($, steps)).find(s => s.id === id)
   const up = step && !step.group && nextRung(runsOn(step, set, await learnedOf($)), set)
   if (!step || !up) return
-  if (step.historyKey) {
+  // A run cut short says nothing about the model: running it again is not a rerun.
+  if (step.historyKey && step.verdict !== 'cut-short') {
     await editHistory($, h => h.map(x => (x.key === step.historyKey ? { ...x, rerun: true } : x)))
   }
   await editStep($, id, s => ({ ...freshRun(s), model: up.model, effort: up.effort }))
@@ -657,6 +755,13 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
     ])
   }
 
+  for (const [id, v] of verdicts) if (after.some(s => s.id === id && isDelegated(s))) await logEvent($, 'verdict', { id, verdict: v.verdict })
+  for (const s of after) {
+    const was = before.find(x => x.id === s.id)
+    if (s.group || !isHelperRun(s) || s.status !== 'done' || was?.status === 'done') continue
+    await logEvent($, 'helper-done', { id: s.id, verdict: s.verdict, usage: s.helperUsage, minutes: runSpan(s) > 0 ? Math.round(runSpan(s) / 6000) / 10 : undefined })
+  }
+
   const gain = helperGain(before, after)
   if (gain.steps === 0 && gain.usage.length === 0) return
   await update($, chatTotals, t => ({ ...t, helper: addHelperTotals(t.helper, gain) }))
@@ -674,11 +779,31 @@ async function verdictsMissing($: EngineInterface, named: readonly string[]) {
   const ids = new Set(missing.map(s => s.id))
   await update($, steps, l => l.map(s => (ids.has(s.id) ? { ...s, asked: true } : s)))
 
-  return `Verdict needed for ${missing.map(s => `[${s.id}]`).join(', ')}: call ${PLAN_TOOL} with done: [{id, verdict: "ok" | "weak" | "overkill", why}] (rule 5). Until then each counts as "no verdict".`
+  return `Verdict needed for ${missing.map(s => `[${s.id}]`).join(', ')}: call ${PLAN_TOOL} with done: [{id, verdict: "ok" | "weak" | "overkill" | "cut-short", why}] (rule 5). Until then each counts as "no verdict".`
 }
 
-/** Marks steps running (a group: its unfinished parts) and records the helper a step was launched on. */
-async function markStarted($: EngineInterface, named: { id: string; ref: StartRef }[]) {
+/** Records that a helper step runs as a subagent instead, and why: once per run, counted in the chat and all-time totals. */
+async function recordFallback($: EngineInterface, id: string, reason: string) {
+  const step = (await read($, steps)).find(s => s.id === id)
+  if (!step || step.group || (step.where !== 'helper' && !step.helper)) return false
+  const counted = !!step.fallback
+  await editStep($, id, s => ({ ...s, where: 'agent', fallback: s.fallback ?? reason, helper: undefined, helperModel: undefined, helperEffort: undefined, startedAt: undefined }))
+  // The lead made the change itself: no note about it.
+  await tellSteps($, [id])
+  if (counted) return true
+  await update($, chatTotals, t => ({ ...t, fallbacks: (t.fallbacks ?? 0) + 1, lastFallback: reason }))
+  await editLifetime($, l => ({ ...l, fallbacks: (l.fallbacks ?? 0) + 1, lastFallback: reason }))
+  await logEvent($, 'fallback', { id, reason })
+
+  return true
+}
+
+/** Marks steps running (a group: its unfinished parts) and records the helper a step was launched on; `{id, fallback}` runs a helper step as a subagent. */
+async function markStarted($: EngineInterface, all: { id: string; ref: StartRef }[]) {
+  const fallbacks = all.flatMap(n => (typeof n.ref === 'object' && asReason(n.ref.fallback) ? [{ id: n.id, reason: asReason(n.ref.fallback)! }] : []))
+  for (const f of fallbacks) await recordFallback($, f.id, f.reason)
+  const named = all.filter(n => !fallbacks.some(f => f.id === n.id))
+  if (named.length === 0) return
   const targets = expandIds(await read($, steps), named.map(n => n.id))
   const launched = new Map(
     named.flatMap(n => (typeof n.ref === 'object' && (n.ref.helper || n.ref.model || n.ref.effort) ? [[n.id, n.ref] as const] : [])),
@@ -706,6 +831,31 @@ async function markStarted($: EngineInterface, named: { id: string; ref: StartRe
       return next
     }),
   )
+  const mode = helperMode()
+  for (const s of await read($, steps)) {
+    const on = launched.get(s.id)
+    if (on?.helper && targets.has(s.id)) await logEvent($, 'helper-start', { id: s.id, template: s.helper, model: s.helperModel, effort: s.helperEffort, mode })
+  }
+}
+
+/** The pane's "cut short?": marks a finished delegated run cut short (it then says nothing about the model), or puts back the verdict it had. */
+async function toggleCutShort($: EngineInterface, id: string) {
+  const step = (await read($, steps)).find(s => s.id === id)
+  if (!step || !isDelegated(step) || step.status !== 'done') return
+  const undo = step.verdict === 'cut-short'
+  const verdict = undo ? (step.verdictBefore ?? undefined) : 'cut-short'
+  await editStep($, id, s => ({ ...s, verdict, verdictBefore: undo ? undefined : (s.verdict ?? null) }))
+  if (step.historyKey) {
+    await editHistory($, h =>
+      h.map(x => {
+        if (x.key !== step.historyKey) return x
+        const { verdict: _v, ...rest } = x
+
+        return verdict ? { ...rest, verdict } : rest
+      }),
+    )
+  }
+  await logEvent($, 'verdict', { id, verdict: verdict ?? null, via: 'pane' })
 }
 
 async function applySuggestion($: EngineInterface, s: Suggestion) {
@@ -820,6 +970,35 @@ const modelsPath = async ($: EngineInterface) => {
 async function loadHelperConfig($: EngineInterface) {
   await readHelperConfig($)
   await syncPlanTool($)
+  await logHealth($)
+}
+
+/** Whether the chat holds the rules and what they say of helpers is what holds now. */
+async function rulesCurrent($: EngineInterface) {
+  return (await read($, delivery)).inChat && (await read($, toldHelpers)) === helperRuleSig(await read($, settings))
+}
+
+async function checksNow($: EngineInterface): Promise<Check[]> {
+  return healthChecks({ set: await read($, settings), st: await read($, helperCfg), rules: await rulesCurrent($) })
+}
+
+// The checks last written to the log, so a `health` event is written only when they change.
+let loggedHealth = ''
+
+async function logHealth($: EngineInterface) {
+  const checks = await checksNow($)
+  const key = `${helperMode()}|${checks.map(c => `${c.id}:${c.state}`).join(',')}`
+  if (key === loggedHealth) return
+  loggedHealth = key
+  await logEvent($, 'health', { mode: helperMode(), checks: checks.map(c => ({ id: c.id, state: c.state })) })
+}
+
+/** Whether helpers are switched on but cannot run (for the status line's "helpers ✗"). */
+async function helpersBroken($: EngineInterface) {
+  const set = await read($, settings)
+  const st = await read($, helperCfg)
+
+  return set.helpers.enabled && st.status !== 'unknown' && helperMode() === 'none'
 }
 
 /** Reads helpers.py's effective config, the shipped defaults beside it and the model cache; run at the start, when Helpers go on, and after a change. */
@@ -836,33 +1015,46 @@ async function readHelperConfig($: EngineInterface) {
     await update($, helperCfg, () => ({ status: 'missing', warnings: [], marketplace }))
     return
   }
-  if (!(await hcOnPath($))) {
-    setHelperConfig(undefined)
-    const marketplace = await marketplaceName($)
-    await update($, helperCfg, () => ({ status: 'nohc', script, warnings: [], marketplace }))
-    return
-  }
+  // Herdr runs helpers when hc starts and this chat is in a Herdr terminal; without it, direct mode may (helpers.py run).
+  const hc = await hcOnPath($)
+  const terminal = !!(await $.env.get('HC_TERMINAL_ID'))
   try {
     const r = await runHelpers($, script, ['config'], 30_000)
     const config = r.exitCode === 0 ? parseHelperConfig(r.stdout) : undefined
     if (!config) {
       setHelperConfig(undefined)
       const message = r.exitCode === 2 ? 'This helpers.py has no config command: update herdr-delegate to 0.6.0 or later.' : `helpers.py config failed: ${firstLine(r.stderr || r.stdout) || `exit ${r.exitCode}`}`
-      await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message }))
+      await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message, hc, terminal }))
       return
     }
-    setHelperConfig(config)
     const skill = script.replace(/[\\/]scripts[\\/][^\\/]*$/, '')
     const defaults = parseHelperConfig((await readText($, `${skill}/helpers.default.json`)) ?? '')
     const path = await modelsPath($)
     const models = path ? parseModelsCache((await readText($, path)) ?? '') : undefined
-    await update($, helperCfg, () => ({ status: 'ready', script, config, ...(defaults ? { defaults } : {}), ...(models ? { models } : {}), warnings: keep }))
+    const marketplace = hc ? undefined : await marketplaceName($)
+    await update($, helperCfg, () => ({ status: 'ready', script, config, ...(defaults ? { defaults } : {}), ...(models ? { models } : {}), warnings: keep, hc, terminal, ...(marketplace ? { marketplace } : {}) }))
+    await applyHelperMode($)
   } catch (err) {
     setHelperConfig(undefined)
-    await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message: `helpers.py could not run: ${String(err).slice(0, 160)}` }))
+    await update($, helperCfg, () => ({ status: 'error', script, warnings: [], message: `helpers.py could not run: ${String(err).slice(0, 160)}`, hc, terminal }))
+    await fault($, 'helpers-config', err)
     return
   }
   await resolveHelperPicks($)
+}
+
+/**
+ * Sets what the router knows of helpers from the config read and the "Run helpers" setting: the mode (Herdr, direct, none)
+ * and, unless it is none, the config's orders. With hc missing and no direct mode the status is 'nohc' (the pane says so).
+ */
+async function applyHelperMode($: EngineInterface) {
+  const set = await read($, settings)
+  const st = await read($, helperCfg)
+  if (!st.config || (st.status !== 'ready' && st.status !== 'nohc')) return
+  const mode: HelperMode = helperModeOf(set.helpers.run, { hc: st.hc === true, terminal: st.terminal === true, direct: directAvailable(st.config) })
+  setHelperConfig(mode === 'none' ? undefined : st.config, mode)
+  const status = mode === 'none' && st.hc === false ? 'nohc' : 'ready'
+  if (status !== st.status) await update($, helperCfg, x => ({ ...x, status }))
 }
 
 /**
@@ -975,7 +1167,7 @@ async function resolveHelperPicks($: EngineInterface) {
       }
     })
   } catch (err) {
-    diag.lastError = `picks: ${String(err).slice(0, 200)}`
+    await fault($, 'picks', err)
   }
 }
 
@@ -1000,8 +1192,9 @@ async function syncPlanTool($: EngineInterface) {
   if (planToolHelpers === undefined || planToolHelpers === helpersLive(await read($, settings))) return
   try {
     await registerPlanTool($)
-  } catch {
+  } catch (err) {
     // Keep the first registration; see registerPlanTool.
+    await fault($, 'register-plan-tool', err)
   }
 }
 
@@ -1036,13 +1229,14 @@ async function registerPlanTool($: EngineInterface) {
                         helper: { type: 'string', description: 'The helper template you launched, e.g. copilot-standard' },
                         model: { type: 'string', description: 'The model the helper reports on its screen' },
                         effort: { type: 'string', description: 'The thinking level the helper reports on its screen, if it shows one (e.g. high)' },
+                        fallback: { type: 'string', description: 'Instead of helper: the helper step runs as a subagent, for this short reason (e.g. "no Herdr terminal", "picker found nothing", "out of quota")' },
                       },
                       required: ['id'],
                     },
                   ],
                 }
               : { type: 'string' },
-            description: `Step ids you are starting now${hereOn ? ': the router runs this chat at a here step\'s tier\'s effort' : ''}${helpersOn ? '. A helper step may be {id, helper, model, effort}: the template you launched, and the model and thinking level its screen shows' : ''}`,
+            description: `Step ids you are starting now${hereOn ? ': the router runs this chat at a here step\'s tier\'s effort' : ''}${helpersOn ? '. A helper step may be {id, helper, model, effort}: the template you launched, and the model and thinking level its screen shows; or {id, fallback}: it runs as a subagent instead, and why' : ''}`,
           },
         }
       : {}
@@ -1058,8 +1252,8 @@ async function registerPlanTool($: EngineInterface) {
             id,
             verdict: {
               type: 'string',
-              enum: ['ok', 'weak', 'overkill'],
-              description: 'For a delegated step: ok = result used as returned or with small edits; weak = it needed a rerun, you redid part of it, or review found a substantive error; overkill = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier',
+              enum: ['ok', 'weak', 'overkill', 'cut-short'],
+              description: 'For a delegated step: ok = result used as returned or with small edits; weak = it needed a rerun, you redid part of it, or review found a substantive error; overkill = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier; cut-short = the run was stopped by something outside the model (lost connection, quota or rate limit, a crash, the person stopping it): it says nothing about the model',
             },
             why: { type: 'string', description: 'A few words on the verdict' },
             ...(helpersOn
@@ -1129,8 +1323,23 @@ function stepSchema(wheres: string[], levels: number): Record<string, unknown> {
   }
 }
 
-// A router note about the helper orders starts with this, so a newer one replaces it.
-const HELPER_NOTE = 'Helper orders changed'
+// A router note about helpers starts with this. It is worked out when a note is delivered (helperNote), not queued.
+const HELPER_NOTE = 'Helpers changed'
+
+/**
+ * The note that brings what the chat knows of helpers up to date, when it changed since the rules were delivered: whether they
+ * can run, the mode, what they are used for, the orders. Undefined when the chat has no rules yet (they will carry it) or nothing changed.
+ */
+async function helperNote($: EngineInterface) {
+  const was = await read($, toldHelpers)
+  if (!was || !(await read($, delivery)).inChat) return undefined
+  const set = await read($, settings)
+  if (helperRuleSig(set) === was) return undefined
+  if (!helpersLive(set)) return 'Helpers are now off: run every step as a subagent or here; do not plan "helper" steps.'
+  const fusion = set.helpers.fusion === 'off' ? '' : ` (Copilot Fusion ${set.helpers.fusion})`
+
+  return `${HELPER_NOTE}${fusion}; this replaces rule 6: ${helperRule(set, (await read($, helperCfg)).script)}`
+}
 
 async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers']> | ((h: Settings['helpers']) => Partial<Settings['helpers']>)) {
   const was = (await read($, settings)).helpers
@@ -1139,21 +1348,14 @@ async function editHelpers($: EngineInterface, patch: Partial<Settings['helpers'
   const after = await read($, settings)
   // Helpers just went on, or helpers.py is somewhere else now: read its config.
   if (after.helpers.enabled && (!wasOn || after.helpers.script !== was.script)) await loadHelperConfig($)
+  // The way helpers run changed: the mode follows from what was read.
+  else if (after.helpers.run !== was.run) await applyHelperMode($)
   await resolveHelperPicks($)
-  // The rules sit in the chat once; a changed order reaches it as a router note. One note
-  // says where the orders stand, and none when they are back to what the chat was told.
-  const knows = await read($, toldHelpers)
-  await update($, notes, n => n.filter(x => !x.startsWith(HELPER_NOTE)))
-  if (helpersLive(after) && knows && knows !== helperSignature(after)) {
-    const fusion = after.helpers.fusion === 'off' ? '' : ` (Copilot Fusion ${after.helpers.fusion})`
-    await update($, notes, n => [...n, `${HELPER_NOTE}${fusion}; use these instead of rule 6's: ${helperSignature(after)}.`])
-  }
-  if (after.helpers.enabled === wasOn) return
-  try {
-    await registerPlanTool($)
-  } catch {
-    // Keep the first registration; see registerPlanTool.
-  }
+  // The plan tool offers "helper" only while helpers can run. The rules sit in the chat once; what changed reaches it as
+  // one router note at the next turn (helperNote).
+  await syncPlanTool($)
+  await logHealth($)
+  await refreshStatus($)
 }
 
 /** Switches a helper off, moves one, or puts one back, for a tier. */
@@ -1174,8 +1376,9 @@ async function editHereEffort($: EngineInterface, patch: Partial<Settings['hereE
   await update($, notes, n => [...n, note])
   try {
     await registerPlanTool($)
-  } catch {
+  } catch (err) {
     // Keep the first registration; see registerPlanTool.
+    await fault($, 'register-plan-tool', err)
   }
 }
 
@@ -1262,24 +1465,37 @@ async function account($: EngineInterface, used: Usage, modelId: string, agentId
 
 // --- Policy -------------------------------------------------------------------
 
-const policy = (set: Settings, kinds: readonly string[] = []) => {
+/**
+ * Rule 6, the helper rule, without its number: how to run a helper step in the mode helpers run in now (through Herdr, or
+ * directly with helpers.py run), the orders, the fallback and the usage. `script` is the helpers.py found, for direct mode.
+ */
+const helperRule = (set: Settings, script?: string) => {
+  const h = set.helpers
+  const use =
+    h.use === 'all'
+      ? 'Use it for every self-contained step that would otherwise be "agent".'
+      : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
+  const orders = TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',') || 'none installed'}`).join('; ')
+  const fallback = `If no helper is usable, call ${PLAN_TOOL} with start: [{id, fallback: "<short reason>"}] (e.g. "no Herdr terminal", "picker found nothing", "out of quota"), then run the step as "agent" with the Agent tool, its description starting with "[<step id>]", and say so.`
+  if (helperMode() === 'direct') {
+    const py = `python3 ${h.script || script || `<the ${h.skill} skill's folder>/scripts/helpers.py`}`
+
+    return `where = "helper" runs a step on an agent from another subscription or account, directly, without Herdr (direct mode). ${use} The ${h.skill} skill's direct-mode section has the details. Pick the helper with \`${py} pick <order>\` in this order for the step's tier: ${orders}. When a helper step's plan line says "launch <template>", the router chose that model and level for it: pick <template>,<the order>. Write the brief to a file inside the workspace; nobody can approve the helper's commands while it runs, so the brief must keep it to reading and editing files in its workspace. Run \`${py} run <template> --brief <file> --cwd <dir>\` with Bash in the background (in Claude Code: run_in_background); you are notified when it ends. When you start it, call ${PLAN_TOOL} with start: [{id, helper: "<the template>", model: "<the template's model>"}]. Its last stdout line is JSON with "out" (the helper's report file), "model", "effort" and "usage". Read the report and review the work yourself. Then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage}], passing the JSON's usage as it is; leave usage out when it is null, and never send 0 or a guess. ${fallback}`
+  }
+  const usageCmd = `python3 ${h.script ? h.script : `<the ${h.skill} skill's folder>/scripts/helpers.py`} usage <the helper's name>`
+
+  return `where = "helper" runs a step on an agent from another subscription or account, through the ${h.skill} skill. ${use} To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${orders}. When a helper step's plan line says "launch <template>", the router chose that model and level for it (the template already exists): give the picker that template first, then the tier's order (pick <template>,<the order>), and launch what it prints. ${fallback} When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself. Before you close the helper, run \`${usageCmd}\`: it prints the helper's usage as JSON {"provider","amount","unit"}, or nothing. Then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], passing that JSON as usage; leave usage out when it printed nothing, and never send 0 or a guess.`
+}
+
+const policy = (set: Settings, kinds: readonly string[] = [], script?: string) => {
   const tiers = TIER_ORDER.map(t => `- ${t} (${rungLabel(set.tiers[t])}): ${TIER_USE[t]}`).join('\n')
   const skills = Object.entries(set.skills)
-  // With helpers on but no helper CLI installed, the rules do not advertise helpers or their orders.
+  // With helpers on but no helper able to run, the rules do not advertise helpers or their orders.
   const live = helpersLive(set)
   const skillRule = skills.length
     ? `\n${live ? 7 : 6}. These skills run in a subagent on a tier: ${skills.map(([n, t]) => `${n} (${t})`).join(', ')}. To use one, delegate with the Agent tool, its description starting "[${SKILL_TAG}<name>]", and a brief that tells the subagent to invoke that skill with everything it needs from this conversation.`
     : ''
-
-  const h = set.helpers
-  const usageCmd = `python3 ${h.script ? h.script : `<the ${h.skill} skill's folder>/scripts/helpers.py`} usage <the helper's name>`
-  const helperRule = live
-    ? `\n6. where = "helper" runs a step on an agent from another subscription or account, through the ${h.skill} skill. ${
-        h.use === 'all'
-          ? 'Use it for every self-contained step that would otherwise be "agent".'
-          : 'Use it for long self-contained steps (research, code to a spec, sweeps, anything over ~15 tool calls); shorter self-contained steps stay "agent".'
-      } To run one, load the ${h.skill} skill and follow it. Pick the helper with its picker in this order for the step's tier: ${TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',') || 'none installed'}`).join('; ')}. When a helper step's plan line says "launch <template>", the router chose that model and level for it (the template already exists): give the picker that template first, then the tier's order (pick <template>,<the order>), and launch what it prints. If no helper is usable (the picker prints nothing, hc is missing, or there is no $HC_TERMINAL_ID), run the step as "agent" with the Agent tool instead, its description starting with "[<step id>]", and say so. When you start a helper step, call ${PLAN_TOOL} with start: [{id, helper: "<the template you launched>", model: "<the model the helper reports on its screen>", effort: "<its thinking level, if the screen shows one>"}], so the pane shows them (leave effort out when the screen shows none; the pane then reads it from the template). Review the helper's result yourself. Before you close the helper, run \`${usageCmd}\`: it prints the helper's usage as JSON {"provider","amount","unit"}, or nothing. Then mark the step done with ${PLAN_TOOL}: done: [{id, verdict, why, usage: {provider, amount, unit}}], passing that JSON as usage; leave usage out when it printed nothing, and never send 0 or a guess.`
-    : ''
+  const helperText = live ? `\n6. ${helperRule(set, script)}` : ''
 
   return `# Model routing (model-router mod)
 
@@ -1292,7 +1508,7 @@ The user installed this mod so that each step of a task runs on the cheapest mod
 ${tiers}
 3. where = "here" for steps that need this conversation's accumulated context or back-and-forth with the user, and for small steps (under ~5 tool calls: a subagent costs ~15-40k tokens just to start). where = "agent" for self-contained steps, above all ones that read a lot. A "here" step runs on this chat's own model and thinking level, which no tier can change: still give it the tier its work needs, since that is the default if the user sends it to a subagent, and the router flags a here step rated above this chat's model. Do not mark a step "light" to mean "do it quickly here".
 4. Delegate an "agent" step with the Agent tool, its description starting with "[<step id>]". Do not set model or effort: the router sets them from the plan. Never use subagent_type "fork" for a routed step, since a fork ignores the model. Delegate a part under its own id ("[s3.a]"); with "count": N make N Agent calls with that id, started together, and the part is done when all N finish. Write a self-contained brief: goal, files, what to return. Light-tier briefs ask for a findings list, not fixes; spot-check surprising findings. If a light result is weak, say so: the user can rerun the step one rung higher from the pane.
-5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them. A group is done when all its parts are; naming it in done marks its unfinished parts done. Every delegated step (a subagent${live ? ' or helper' : ''} step, parts included) needs a verdict once you have checked its result: call ${PLAN_TOOL} with done: [{id, verdict, why}] (a subagent step is marked done when its agent ends; still give it one). The verdict says what happened, not how it felt: "ok" = you used the result as returned or with small edits; "weak" = it needed a rerun, you redid part of it, or review found a substantive error; "overkill" = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier. why: a few words.${helperRule}${skillRule}${
+5. Mark "here" steps done through ${PLAN_TOOL} (done: [ids]) as you finish them. A group is done when all its parts are; naming it in done marks its unfinished parts done. Every delegated step (a subagent${live ? ' or helper' : ''} step, parts included) needs a verdict once you have checked its result: call ${PLAN_TOOL} with done: [{id, verdict, why}] (a subagent step is marked done when its agent ends; still give it one). The verdict says what happened, not how it felt: "ok" = you used the result as returned or with small edits; "weak" = it needed a rerun, you redid part of it, or review found a substantive error; "overkill" = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier; "cut-short" = the run was stopped by something outside the model (lost connection, quota or rate limit, a crash, the person stopping it): it says nothing about the model. why: a few words.${helperText}${skillRule}${
     set.hereEffort.enabled ? `\n\nHere-step effort (an experiment the user turned on): ${hereEffortRule(set)}` : ''
   }`
 }
@@ -1306,7 +1522,7 @@ const usageOf = (u: ModelUsage): Usage => ({
   output: u.output_tokens,
 })
 
-type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string }
+type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string; fallback?: string }
 type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown }
 type PlanInput = {
   status?: boolean
@@ -1329,6 +1545,52 @@ const APPROVE = 'Run it'
 const APPROVE_AUTO = 'Run it, and auto-approve future plans'
 const REVISE = 'Change the steps'
 
+
+// --- The report ---------------------------------------------------------------
+
+/** Writes the diagnostics report to <config base>/model-router/report-YYYYMMDD-HHMM.md; the pane shows where, beside the button. */
+async function writeReport($: EngineInterface): Promise<string | undefined> {
+  try {
+    const base = await configBase($)
+    if (!base) throw new Error('no home directory to write to')
+    const at = new Date()
+    const path = `${base}/model-router/${reportFileName(at)}`
+    const set = await read($, settings)
+    const life = await read($, lifetime)
+    let platform: string | undefined
+    try {
+      platform = (await $.session.info()).platform
+    } catch {
+      platform = undefined
+    }
+    const text = reportMarkdown({
+      version: VERSION,
+      at,
+      platform,
+      surface: surfaceNow,
+      model: (await read($, main)).model ?? (await read($, policySent)).model,
+      set,
+      checks: await checksNow($),
+      mode: helperMode(),
+      st: await read($, helperCfg),
+      history: (await read($, history)).length,
+      lifetime: { steps: life.steps, plans: life.plans, helperSteps: life.helper.steps, fallbacks: life.fallbacks, since: life.since },
+      events: await lastLogLines($, 100),
+    })
+    await $.fs.write(path, text)
+    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+    const shown = home && path.startsWith(home) ? `~${path.slice(home.replace(/[\\/]+$/, '').length)}` : path
+    await update($, reportNote, () => `Report written: ${shown} — send this file`)
+    await logEvent($, 'report', {})
+
+    return shown
+  } catch (err) {
+    await update($, reportNote, () => `Report not written: ${String(err).slice(0, 120)}`)
+    await fault($, 'report', err)
+
+    return undefined
+  }
+}
 
 // --- The pane -----------------------------------------------------------------
 
@@ -1397,6 +1659,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const helperAdvice = set.helpers.enabled ? helperSuggestions(past, set, hcfg, hs.models) : []
   // Auto mode: the rung each kind has learned, for the cards (nothing while it is off).
   const learned = set.autoRoute ? learnedRungs(past, set) : undefined
+  // The health line: quiet when helpers are off or can run; the first failing check, with the full list one click away, when not.
+  const checks = healthChecks({ set, st: hs, rules: (await read($, delivery)).inChat && (await read($, toldHelpers)) === helperRuleSig(set) })
+  const health = healthLine(set, checks, hs.status, liveProviders(set))
+  const healthOpen = await read($, showHealth)
+  const reportText = await read($, reportNote)
   const models = knownModels(set)
 
   // Settings that differ from the defaults get a quiet dot, so it shows which of your own values are active.
@@ -1414,6 +1681,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     autoRoute: set.autoRoute !== D.autoRoute,
     autoMinRuns: set.autoMinRuns !== D.autoMinRuns,
     autoOkPercent: set.autoOkPercent !== D.autoOkPercent,
+    run: set.helpers.run !== D.helpers.run,
+    log: set.log !== D.log,
   }
   // A model's price differs when Settings set one other than the default table's (or any, for a new model).
   const priceDiffers = (x: string) => !!set.prices[x] && JSON.stringify(set.prices[x]) !== JSON.stringify(PRICES[x])
@@ -1509,6 +1778,46 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     </Box>
   )
 
+  // Write report, with where it went (or why not) right beside it.
+  const reportRow = (key: string) => (
+    <Box key={`report-row:${key}`} flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+      <Button key={key} plain onPress={() => void writeReport($)}>
+        Write report
+      </Button>
+      {reportText ? <Text color={reportText.startsWith('Report written') ? 'success' : 'warning'} size="footnote" wrap="wrap">{reportText}</Text> : null}
+    </Box>
+  )
+  const checkGlyph = { ok: '✓', fail: '✗', skip: '–' } as const
+  const healthRow = (
+    <Box key="health" flexDirection="column" rowGap="xs">
+      <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+        <Text key="health-line" size="footnote" color={health.ok ? undefined : 'warning'} dimColor={health.ok} wrap="wrap">
+          {health.text}
+        </Text>
+        {!health.ok && (
+          <Button key="health-why" plain onPress={() => void update($, showHealth, v => !v)}>
+            {healthOpen ? 'Why ▾' : 'Why ▸'}
+          </Button>
+        )}
+      </Box>
+      {!health.ok && healthOpen && (
+        <Box key="health-checks" flexDirection="column" rowGap="xs" paddingLeft={2}>
+          {checks.map(c => (
+            <Box key={`check:${c.id}`} flexDirection="column">
+              <Text size="footnote" color={c.state === 'fail' ? 'warning' : undefined} dimColor={c.state === 'skip'} wrap="wrap">{`${checkGlyph[c.state]} ${c.text}`}</Text>
+              {c.state === 'fail' && c.fix ? (
+                <Box paddingLeft={2}>
+                  <Text dimColor size="footnote" wrap="wrap">{c.fix}</Text>
+                </Box>
+              ) : null}
+            </Box>
+          ))}
+          {reportRow('health-report')}
+        </Box>
+      )}
+    </Box>
+  )
+
   const savedOf = (t: Totals) => Math.max(0, t.mainEquivalent - t.agentCost)
   const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—')
   const since = (iso?: string) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '')
@@ -1535,8 +1844,15 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     const lifeSaved = savedOf(life)
     // Some tokens ran on a model with no price: their money is "?".
     const planUnpriced = list.some(x => x.unpriced)
-    // What was moved to helpers, in each provider's own unit, for the span picked.
-    const moved = helperLine(view === 'plan' ? helperTotalsOf(list) : view === 'chat' ? chat.helper : life.helper)
+    // What was moved to helpers, in each provider's own unit, for the span picked; with helpers on and none run yet, an empty state.
+    // Helper steps that ran as subagents instead are counted beside it, with the latest reason.
+    const fell = view === 'plan' ? planFallbacks(list) : view === 'chat' ? { n: chat.fallbacks ?? 0, reason: chat.lastFallback } : { n: life.fallbacks ?? 0, reason: life.lastFallback }
+    const movedLine = helperLine(view === 'plan' ? helperTotalsOf(list) : view === 'chat' ? chat.helper : life.helper)
+    const moved = movedLine
+      ? `${movedLine}${fallbackLine(fell.n, fell.reason)}`
+      : set.helpers.enabled || fell.n > 0
+        ? `Off Claude: no helper steps yet${fallbackLine(fell.n, fell.reason)}`
+        : undefined
     const body =
       view === 'plan' ? (
         <Box flexDirection="row" flexWrap="wrap" columnGap="md" rowGap="xs">
@@ -1596,8 +1912,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       view === 'plan'
         ? `Since this plan was posted${base.at ? ` (${new Date(base.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })})` : ''}. A new plan starts a new count.`
         : view === 'chat'
-          ? `Since this chat was opened or its plugins reloaded: ${chat.steps} delegated steps. Earlier turns are not counted.`
-          : `Since ${since(life.since)}: ${life.steps} delegated steps in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
+          ? `Since this chat was opened or its plugins reloaded: ${chat.steps + chat.helper.steps} delegated steps${chat.helper.steps || set.helpers.enabled ? ` (${chat.helper.steps} on helpers)` : ''}. Earlier turns are not counted.`
+          : `Since ${since(life.since)}: ${life.steps + life.helper.steps} delegated steps${life.helper.steps || set.helpers.enabled ? ` (${life.helper.steps} on helpers)` : ''} in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
     return (
       <Box flexDirection="column" rowGap="xs" borderStyle="round" borderColor="subtle" paddingX="sm" paddingY="xs">
         {viewSwitch}
@@ -1702,13 +2018,28 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const verdictText = (s: Step) => {
     if (!isDelegated(s) || s.status !== 'done') return null
     const color = s.verdict === 'weak' ? 'warning' : s.verdict === 'overkill' ? 'suggestion' : undefined
+    const label =
+      s.verdict === 'cut-short'
+        ? `cut short${mini ? '' : ': says nothing about the model, left out of the advice'}`
+        : s.verdict
+          ? `verdict ${s.verdict}${s.why && !mini ? `: ${s.why}` : ''}`
+          : 'no verdict yet'
 
     return (
-      <Text key={`verdict:${s.id}`} color={color} dimColor={!s.verdict || s.verdict === 'ok'} size="footnote" wrap="wrap">
-        {s.verdict ? `verdict ${s.verdict}${s.why && !mini ? `: ${s.why}` : ''}` : 'no verdict yet'}
-      </Text>
+      <Box key={`verdict-row:${s.id}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center">
+        <Text key={`verdict:${s.id}`} color={color} dimColor={!s.verdict || s.verdict === 'ok' || s.verdict === 'cut-short'} size="footnote" wrap="wrap">
+          {label}
+        </Text>
+        {/* A run stopped by a lost connection, a quota or a crash: one quiet link takes it out of the advice; again puts it back. */}
+        <Button key={`cut:${s.id}`} plain dimColor onPress={() => void toggleCutShort($, s.id)}>
+          {s.verdict === 'cut-short' ? 'undo' : 'cut short?'}
+        </Button>
+      </Box>
     )
   }
+  // A helper step that ran as a subagent instead, and why.
+  const fallbackText = (s: Step) =>
+    s.fallback ? <Text key={`fallback:${s.id}`} dimColor size="footnote" wrap="wrap">{`ran as a subagent: ${s.fallback}`}</Text> : null
   // A step whose tokens ran on a model with no price: its money is "?".
   const unpricedText = (s: Step) =>
     s.unpriced ? <Text key={`unpriced:${s.id}`} color="warning" size="footnote">{fmtCost(s.cost, true)}</Text> : null
@@ -1771,6 +2102,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {rungFrom(s)}
           {pickLine(s)}
           {verdictText(s)}
+          {fallbackText(s)}
           {helperInfo(s)}
           {helperFactsText(s)}
           {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
@@ -1853,6 +2185,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Text>
         )}
         {verdictText(s)}
+        {fallbackText(s)}
         {s.setupHeavy && (
           <Text color="warning" size="footnote">Mostly start-up cost: a step this small is cheaper done here.</Text>
         )}
@@ -1887,6 +2220,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
   return (
     <Box flexDirection="column" rowGap={mini ? 0 : tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
+      {healthRow}
       {tty && (
         <Text dimColor size="caption" wrap="wrap">
           {site.isFocused
@@ -2123,9 +2457,37 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             void editHelpers($, { enabled: !set.helpers.enabled }),
             differs.helpers,
           )}
+          {set.helpers.enabled && (
+            <Box key="helpers-run-row" flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs" marginTop={mini ? 0 : 1}>
+              <Box flexDirection="column" flexShrink={1}>
+                <Box flexDirection="row" columnGap="xs">
+                  <Text weight="medium">Run helpers</Text>
+                  {dot('run', differs.run)}
+                </Box>
+                {!mini && (
+                  <Text dimColor size="footnote" wrap="wrap">
+                    {`Through Herdr when this chat runs in a Herdr terminal; directly (helpers.py run, no Herdr; herdr-delegate 0.15+) otherwise. Now: ${helperMode() === 'none' ? 'cannot run' : helperMode()}.`}
+                  </Text>
+                )}
+              </Box>
+              {pick(
+                'helpers-run',
+                set.helpers.run,
+                [
+                  { value: 'auto', label: 'Herdr, else direct' },
+                  { value: 'herdr', label: 'Herdr only' },
+                  { value: 'direct', label: 'direct only' },
+                ],
+                v => void editHelpers($, { run: v === 'herdr' || v === 'direct' ? v : 'auto' }),
+              )}
+            </Box>
+          )}
           {set.helpers.enabled && !helpersOn && (
             <Box key="helpers-none" flexDirection="column" rowGap="xs" marginTop={mini ? 0 : 1}>
               {hs.status === 'unknown' && <Text dimColor size="footnote">Not read yet.</Text>}
+              {hs.status === 'ready' && !noHelperCli() && health.failing && (
+                <Text key="helpers-failing" color="warning" size="footnote" wrap="wrap">{`${health.failing.text}. ${health.failing.fix ?? ''}`}</Text>
+              )}
               {hs.status === 'error' && <Text color="warning" size="footnote" wrap="wrap">{hs.message ?? 'helpers.py did not answer.'}</Text>}
               {hs.status === 'ready' && noHelperCli() && (
                 <Text key="helpers-no-cli" color="warning" size="footnote" wrap="wrap">No helper CLI is installed: install at least one (Kiro, Copilot, Codex, Antigravity, or another Claude account), then look again. Until then helpers are off and the rules do not mention them.</Text>
@@ -2405,6 +2767,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             />
           )}
 
+          {group('Diagnostics', 'What the router did, without prompts, titles or file contents; send the report when something goes wrong.')}
+          {switchRow('log', 'Log', 'One file a day under ~/.config/model-router/log/, kept 14 days.', set.log, () => void editSettings($, s => ({ ...s, log: !s.log })), differs.log)}
+          {reportRow('settings-report')}
+
           <Box flexDirection="column" rowGap="xs" marginTop={1}>
             <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
               <Button key="reset-tiers" plain dimColor onPress={() => void editSettings($, s => ({ ...s, tiers: DEFAULT_SETTINGS.tiers }))}>
@@ -2472,7 +2838,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
       {tty && status === 'pending' && costCard()}
 
-      {(stats.length > 0 || advice.length > 0 || helperAdvice.length > 0) && section('What the history says', mini ? undefined : `${past.length} runs`)}
+      {advice.length > 0 || helperAdvice.length > 0 ? (
+        section('What the history says', mini ? undefined : `${past.length} runs`)
+      ) : (
+        <Text key="history-line" dimColor size="footnote" wrap="wrap">{historyLine(past)}</Text>
+      )}
       {advice.map(a => {
         const key = a.kind ? `kind:${a.kind}` : `tier:${a.tier}`
         const what = a.kind ? `${a.kind}'s default` : `the ${a.tier} tier`
@@ -2532,7 +2902,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     loading = undefined
+    loggedHealth = ''
+    surfaceNow = e.surface ?? undefined
     await ready($)
+    await logEvent($, 'start', { version: VERSION, surface: surfaceNow, model: (await read($, main)).model })
+    await pruneLogs($)
     // The kinds the rules list are those of the history now, so the rules stay the same all chat.
     const kinds = kindsOf(await read($, history))
     await update($, ruleKinds, () => kinds)
@@ -2552,7 +2926,7 @@ export const register: Register = on => {
     if (chat.helper.steps === 0 && chat.helper.usage.length === 0 && (moved.steps > 0 || moved.usage.length > 0)) {
       await update($, chatTotals, t => ({ ...t, helper: moved }))
     }
-    await $.command.register({ name: 'router', description: 'Show the model-router pane' })
+    await $.command.register({ name: 'router', description: 'Show the model-router pane; /router report writes a diagnostics report' })
     setHelperConfig(undefined)
     planToolHelpers = undefined
     await loadHelperConfig($)
@@ -2563,7 +2937,12 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'router' }, async $ => {
+  on('command.run', { command: 'router' }, async ($, e) => {
+    if ((e.args ?? '').trim().toLowerCase() === 'report') {
+      const path = await writeReport($)
+
+      return { text: path ? `Model router report written: ${path}. Send this file.` : `Model router report not written: ${await read($, reportNote)}` }
+    }
     await $.ui.open({ id: PANE, title: 'Model router' })
 
     return { text: 'Model router pane opened.' }
@@ -2576,9 +2955,10 @@ export const register: Register = on => {
     // What the agent is handed here is the plan as it stands, so it knows every step now.
     const withNotes = async (body: string) => {
       const text = ask ? `${body}\n\n${ask}` : body
-      const pending = await read($, notes)
+      const helperChange = await helperNote($)
+      const pending = [...(await read($, notes)), ...(helperChange ? [helperChange] : [])]
       await update($, notes, () => [])
-      await noteDelivered($, pending)
+      if (helperChange) await helpersTold($)
       await tellSteps($)
       return { result: pending.length ? `${text}\n\nRouter notes:\n${pending.map(n => `- ${n}`).join('\n')}` : text }
     }
@@ -2589,6 +2969,8 @@ export const register: Register = on => {
     }
 
     if (input.status) {
+      const st = await read($, helperCfg)
+      const dir = await logDir($).catch(() => undefined)
       const report = {
         version: VERSION,
         delivery: await read($, delivery),
@@ -2596,6 +2978,12 @@ export const register: Register = on => {
         alwaysPlan: await read($, alwaysPlan),
         autoApprove: await read($, autoApprove),
         steps: (await read($, steps)).length,
+        helperMode: helperMode(),
+        helperStatus: st.status,
+        ...(st.message ? { helperMessage: st.message } : {}),
+        checks: (await checksNow($)).map(c => `${c.state} ${c.id}: ${c.text}`),
+        log: set.log && dir ? `${dir}/${logFileName(new Date())}` : 'off',
+        history: (await read($, history)).length,
         ...diag,
       }
       return { result: `model-router status: ${JSON.stringify(report)}` }
@@ -2629,6 +3017,7 @@ export const register: Register = on => {
         return { ...(was ? { ...was, title: s.title, tier: s.tier, where } : newStep(s.id, s.title, s.tier, where)), ...shape }
       }),
     )
+    await logEvent($, 'plan', { new: isNewPlan, steps: flat.steps.map(x => ({ id: x.id, tier: x.tier, where: x.where, ...(x.kind ? { kind: x.kind } : {}), ...(x.group ? { group: true } : {}) })) })
     if (flat.dropped.length) {
       await update($, notes, n => [...n, `These step ids came up twice in the plan and the repeats were ignored: ${flat.dropped.join(', ')}. Every id must be unique.`])
     }
@@ -2677,7 +3066,11 @@ export const register: Register = on => {
     return {
       result: `The user wants the steps changed before anything runs. ${note}\nTheir pane edits so far are in this version; keep a step's id when you keep the step, so its edits carry over:\n${kept}\nThen call ${PLAN_TOOL} again with the revised steps.`,
     }
-  }).catch(() => ({ deny: 'model-router: the plan tool failed; continue without routing.' }))
+  }).catch(async ($, _e, next) => {
+    await fault($, 'plan-tool', next.error)
+
+    return { deny: 'model-router: the plan tool failed; continue without routing.' }
+  })
 
   // Skills mapped to a tier run in a subagent; the main chat is told how.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
@@ -2689,7 +3082,11 @@ export const register: Register = on => {
     return {
       deny: `model-router: the user runs the skill "${name}" on the ${tier} tier. Delegate it with the Agent tool, description "[${SKILL_TAG}${name}] <a few words>", and a brief that tells the subagent to invoke the Skill tool with skill "${name}"${e.args ? ` and args ${JSON.stringify(e.args)}` : ''}, plus everything it needs from this conversation.`,
     }
-  }).catch(($, e, next) => next(e))
+  }).catch(async ($, e, next) => {
+    await fault($, 'skill-route', next.error)
+
+    return next(e)
+  })
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const tag = STEP_TAG.exec(e.description)?.[1]
@@ -2712,21 +3109,22 @@ export const register: Register = on => {
       const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
       return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
     }
-    // A finished step delegated again is a rerun: a fact the history counts as weak.
+    // A finished step delegated again is a rerun: a fact the history counts as weak. One whose last run was cut short is not.
     if (step.status === 'done') {
       const key = step.historyKey
-      if (key) await editHistory($, h => h.map(x => (x.key === key ? { ...x, rerun: true } : x)))
+      if (key && step.verdict !== 'cut-short') await editHistory($, h => h.map(x => (x.key === key ? { ...x, rerun: true } : x)))
       await editStep($, step.id, freshRun)
       step = (await read($, steps)).find(s => s.id === tag)!
     }
     // A helper step run through the Agent tool is the fallback: it is a subagent step now, and no helper ran it.
     if (step.where === 'helper') {
-      await editStep($, step.id, s => ({ ...s, where: 'agent', helper: undefined, helperModel: undefined, helperEffort: undefined, startedAt: undefined }))
-      await tellSteps($, [step.id])
-      step = { ...step, where: 'agent' }
+      await recordFallback($, step.id, 'no reason given')
+      step = (await read($, steps)).find(s => s.id === tag)!
     }
 
-    const { model, effort } = runsOn(step, set, await learnedOf($))
+    const learnedNow = await learnedOf($)
+    const { model, effort } = runsOn(step, set, learnedNow)
+    await logEvent($, 'route', { id: step.id, model, effort, source: step.model || step.effort ? 'step' : baseRung(step, set, learnedNow).source })
     const prompt = set.tiers[step.tier].scopeNote ? `${e.prompt}\n\n${SCOPE_NOTE}` : e.prompt
     const at = new Date().toISOString()
     // The run starts with its first Agent call (N calls for a counted step).
@@ -2736,7 +3134,11 @@ export const register: Register = on => {
     if (resolved) await editStep($, step.id, s => ({ ...s, resolvedModel: resolved }))
 
     return ran
-  }).catch(($, e, next) => next(e))
+  }).catch(async ($, e, next) => {
+    await fault($, 'agent-route', next.error)
+
+    return next(e)
+  })
 
   // Money is counted per model response, as it arrives, so every view moves together.
   on('turn.step', async function* ($, e, next) {
@@ -2859,7 +3261,8 @@ export const register: Register = on => {
     const extra: string[] = []
     const how = await read($, delivery)
     const set = await read($, settings)
-    if (!how.inChat) extra.push(policy(set, await read($, ruleKinds)))
+    const script = (await read($, helperCfg)).script
+    if (!how.inChat) extra.push(policy(set, await read($, ruleKinds), script))
     const list = await read($, steps)
     const replan = how.planDue && list.length > 0
     if (replan) {
@@ -2871,7 +3274,9 @@ export const register: Register = on => {
     // A step the user changed since the agent last knew it: one note, the final value.
     const changes = replan ? [] : await stepChanges($)
     const pending = await read($, notes)
-    const all = [...pending, ...changes.map(c => c.note)]
+    // What the chat knows of helpers changed since the rules: one note with the whole helper rule (none when the rules go now).
+    const helperChange = how.inChat ? await helperNote($) : undefined
+    const all = [...pending, ...(helperChange ? [helperChange] : []), ...changes.map(c => c.note)]
     if (all.length) extra.push(`Model router notes:\n${all.map(n => `- ${n}`).join('\n')}`)
 
     if (extra.length > 0) {
@@ -2880,11 +3285,12 @@ export const register: Register = on => {
         diag.appends += 1
         await update($, delivery, d => ({ ...d, inChat: true, planDue: false }))
         await update($, notes, () => [])
-        if (!how.inChat) await update($, toldHelpers, () => helperSignature(set))
-        await noteDelivered($, pending)
+        if (!how.inChat || helperChange) await helpersTold($)
+        if (!how.inChat) await logEvent($, 'rules', { delivered: true, via: how.via ?? 'message', helpers: helperMode() })
         await tellSteps($, replan ? undefined : changes.map(c => c.id))
+        await logHealth($)
       } catch (err) {
-        diag.lastError = `append: ${String(err).slice(0, 200)}`
+        await fault($, 'append', err)
       }
     }
 
@@ -2922,7 +3328,7 @@ export const register: Register = on => {
 
     // Only the settings shape this text, so it stays stable and the prompt cache holds.
     return {
-      sections: [...composed.sections, { id: 'model-router:policy', text: policy(await read($, settings), await read($, ruleKinds)), scope: 'session' as const }],
+      sections: [...composed.sections, { id: 'model-router:policy', text: policy(await read($, settings), await read($, ruleKinds), (await read($, helperCfg)).script), scope: 'session' as const }],
     }
   })
 

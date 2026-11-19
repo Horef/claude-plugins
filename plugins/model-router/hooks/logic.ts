@@ -1,5 +1,5 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperTotals, HelperUsage, HistoryEntry, Model, ModelsCache, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelsCache, PlanNode, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
 import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
@@ -171,6 +171,12 @@ type HelperEnv = {
 
 let helperEnv: HelperEnv | undefined
 
+/** How helpers run in this chat: through Herdr (hc in a Herdr terminal), directly (helpers.py run, no Herdr), or not at all. */
+export type HelperMode = 'herdr' | 'direct' | 'none'
+
+// The mode the config was set with: helpers are live only while it is not 'none'.
+let modeNow: HelperMode = 'none'
+
 /** The order a provider has when the config states none (helpers.py's own defaults). */
 const ORDER_OF: Record<string, number> = { kiro: 10, copilot: 20, codex: 30, agy: 40 }
 const orderOf = (name: string, p: HelperConfig['providers'][string]) => p.order ?? ORDER_OF[name] ?? (p.kind === 'claude' ? 50 : 100)
@@ -182,7 +188,8 @@ export const providerLabel = (provider: string) => helperEnv?.labels[provider] ?
 export const isSelfProvider = (provider: string) => helperEnv?.self.has(provider) ?? false
 
 /** What the router knows of the config's providers; undefined (no helpers.py, no hc, or a config that failed) means there are no helpers at all. */
-export const setHelperConfig = (cfg: HelperConfig | undefined) => {
+export const setHelperConfig = (cfg: HelperConfig | undefined, mode: HelperMode = 'herdr') => {
+  modeNow = cfg ? mode : 'none'
   if (!cfg) {
     helperEnv = undefined
 
@@ -215,7 +222,89 @@ export const noHelperCli = () => helperEnv?.noCli ?? false
 export const helpersAvailable = () => !!helperEnv && !helperEnv.noCli
 
 /** Whether helpers are switched on and can run; the plan tool, the rules and the pane offer helper steps only then. */
-export const helpersLive = (set: Settings) => set.helpers.enabled && helpersAvailable()
+export const helpersLive = (set: Settings) => set.helpers.enabled && helpersAvailable() && modeNow !== 'none'
+
+/** The mode helpers run in now ('none' while no config is set). */
+export const helperMode = (): HelperMode => (helperEnv ? modeNow : 'none')
+
+/** Whether a provider of the config can run a helper without Herdr: a headless command (`direct`) and its CLI installed, not this account. */
+export const directAvailable = (cfg: HelperConfig | undefined) =>
+  !!cfg && Object.values(cfg.providers).some(p => p.direct === true && p.cli_found !== false && !p.self)
+
+/**
+ * The mode helpers run in: Herdr when hc runs and this chat is in a Herdr terminal; else direct when the setting allows it and a
+ * provider can run headless; else none. The setting 'herdr' never falls back to direct; 'direct' never uses Herdr.
+ */
+export const helperModeOf = (run: Settings['helpers']['run'], f: { hc: boolean; terminal: boolean; direct: boolean }): HelperMode => {
+  const herdr = f.hc && f.terminal
+  if (run === 'herdr') return herdr ? 'herdr' : 'none'
+  if (run === 'direct') return f.direct ? 'direct' : 'none'
+
+  return herdr ? 'herdr' : f.direct ? 'direct' : 'none'
+}
+
+/** One health check of the helpers, in the order they depend on each other. */
+export type Check = { id: string; state: 'ok' | 'fail' | 'skip'; text: string; fix?: string }
+
+/** What the health checks read: the settings, what was read of helpers.py, and whether the chat has the helper rules. */
+export type HealthInput = {
+  set: Settings
+  st: Pick<HelperState, 'status' | 'message' | 'marketplace' | 'config' | 'hc' | 'terminal'>
+  /** The chat holds the rules, and what they say of helpers is current. */
+  rules: boolean
+}
+
+/**
+ * The helper health checks, in order: switched on, helpers.py found, Python runs it, a helper CLI installed, hc found, a Herdr
+ * terminal, direct mode, rules delivered. A check after a failed prerequisite is skipped; each failure has a one-line fix.
+ */
+export const healthChecks = ({ set, st, rules }: HealthInput): Check[] => {
+  const out: Check[] = []
+  let blocked = false
+  const add = (id: string, ok: boolean, okText: string, failText: string, fix: string) => {
+    if (blocked) {
+      out.push({ id, state: 'skip', text: okText })
+      return false
+    }
+    out.push(ok ? { id, state: 'ok', text: okText } : { id, state: 'fail', text: failText, fix })
+
+    return ok
+  }
+  const skip = (id: string, text: string) => out.push({ id, state: 'skip', text })
+  if (!add('enabled', set.helpers.enabled, 'Helpers switched on', 'Helpers are switched off', 'Settings → Helpers → switch Helpers on.')) blocked = true
+  const read = st.status !== 'unknown'
+  if (!add('script', !read || st.status !== 'missing', "herdr-delegate's helpers.py found", "herdr-delegate's helpers.py not found", `Install the herdr-delegate plugin: /plugin install herdr-delegate@${st.marketplace ?? 'horef-claude-plugins'}, then Look again.`)) blocked = true
+  const cfg = st.config
+  if (!add('python', !read || st.status !== 'error', 'Python runs helpers.py (config read)', `helpers.py did not answer: ${st.message ?? 'no config'}`, 'Check that python3 runs, and update herdr-delegate (0.6.0 or later).')) blocked = true
+  const providers = Object.values(cfg?.providers ?? {})
+  const cli = !cfg || providers.length === 0 || providers.some(p => p.cli_found !== false && !p.self)
+  if (!add('cli', cli, 'A helper CLI is installed', 'No helper CLI is installed', 'Install at least one: Kiro, Copilot, Codex, Antigravity, or another Claude account.')) blocked = true
+  const run = set.helpers.run
+  const direct = directAvailable(cfg)
+  const hc = st.hc === true
+  const terminal = st.terminal === true
+  const mode = helperModeOf(run, { hc, terminal, direct })
+  // In auto mode a missing Herdr is no failure while direct mode runs helpers instead; with neither, the fixes name both ways.
+  const instead = run === 'auto' && mode === 'direct'
+  const orDirect = run === 'auto' ? ', or update herdr-delegate to 0.15+ for direct mode.' : ', or use direct mode.'
+  if (run === 'direct') {
+    skip('hc', "Herdr's hc: not used in direct mode")
+    skip('terminal', 'Herdr terminal: not used in direct mode')
+  } else if (!hc && instead) {
+    skip('hc', "Herdr's hc not found: direct mode runs helpers instead")
+    skip('terminal', 'Not inside a Herdr terminal: direct mode runs helpers instead')
+  } else if (add('hc', hc, "Herdr's hc found", "Herdr's hc not found on your PATH", `Install Herdr and put hc on your PATH${orDirect}`)) {
+    if (!terminal && instead) skip('terminal', 'Not inside a Herdr terminal: direct mode runs helpers instead')
+    else add('terminal', terminal, 'This chat is inside a Herdr terminal', 'This chat is not inside a Herdr terminal', `Start Claude from a Herdr terminal${orDirect}`)
+  } else skip('terminal', 'Herdr terminal: needs hc')
+  if (run === 'herdr') skip('direct', 'Direct mode: off (Settings → Helpers → Run helpers)')
+  else if (mode === 'herdr') skip('direct', 'Direct mode: not needed inside Herdr')
+  else add('direct', direct, 'Direct mode available', 'Direct mode not available', 'Update herdr-delegate to 0.15 or later and install a helper CLI it can run headless, or start Claude from a Herdr terminal.')
+  if (mode === 'none') skip('rules', 'Helper rules: none while helpers cannot run')
+  else add('rules', rules, 'Helper rules delivered to this chat', 'Helper rules not delivered to this chat yet', 'Send any message: the next turn carries them.')
+
+  return out
+}
 
 /** The default order of a tier's helper templates: only what is installed, so none when no config is known. */
 export const defaultHelperList = (tier: Tier): string[] => helperEnv?.on[tier] ?? []
@@ -279,8 +368,12 @@ export const moveHelper = (list: readonly string[], index: number, by: -1 | 1) =
   return next.join(',')
 }
 
-/** One string for every tier's helper order, to tell whether the orders the agent knows are still current; empty while no helper can run (the rules then name none). */
+/** One string for every tier's helper order. */
 export const helperSignature = (set: Settings) => !helpersAvailable() ? '' : TIER_ORDER.map(t => `${t}: ${helperList(set, t).join(',')}`).join('; ')
+
+/** Everything the helper rule depends on (live or not, mode, use, orders, script), to tell whether what the chat was told is still current. */
+export const helperRuleSig = (set: Settings) =>
+  !helpersLive(set) ? 'off' : [helperMode(), set.helpers.use, set.helpers.skill, set.helpers.script, helperSignature(set)].join('|')
 
 /** A whole number within [lo, hi], else undefined (a stored value that is missing or unusable). */
 const wholeIn = (v: unknown, lo: number, hi: number) => (typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : undefined)
@@ -316,6 +409,7 @@ export const mergeSettings = (stored: Partial<Settings> | undefined): Settings =
     tiers: { ...DEFAULT_SETTINGS.helpers.tiers, ...(stored?.helpers?.tiers ?? {}) },
     script: asScriptPath(stored?.helpers?.script) ?? DEFAULT_SETTINGS.helpers.script,
     kinds: helperChoices(stored?.helpers?.kinds),
+    run: stored?.helpers?.run === 'herdr' || stored?.helpers?.run === 'direct' ? stored.helpers.run : 'auto',
   },
   hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
   kinds: { ...(stored?.kinds && typeof stored.kinds === 'object' ? stored.kinds : {}) },
@@ -324,6 +418,7 @@ export const mergeSettings = (stored: Partial<Settings> | undefined): Settings =
   autoOkPercent: wholeIn(stored?.autoOkPercent, 1, 100) ?? DEFAULT_SETTINGS.autoOkPercent,
   models: Array.isArray(stored?.models) ? stored.models.filter(m => typeof m === 'string' && !MODELS.includes(m)) : [],
   prices: { ...(stored?.prices && typeof stored.prices === 'object' ? stored.prices : {}) },
+  log: stored?.log !== false,
 })
 
 // --- What the agent knows of each step ----------------------------------------------
@@ -720,8 +815,13 @@ export const helperFacts = (s: Step) => {
 export const asVerdict = (v: unknown): Verdict | undefined => {
   const x = typeof v === 'string' ? v.trim().toLowerCase() : ''
 
+  if (x === 'cut-short' || x === 'cut short' || x === 'cutshort') return 'cut-short'
+
   return x === 'ok' || x === 'weak' || x === 'overkill' ? x : undefined
 }
+
+/** The runs that say something about the model: a run cut short (lost connection, quota, crash, stopped) is left out of every judgment. */
+export const judgedRuns = (h: readonly HistoryEntry[]) => h.filter(x => x.verdict !== 'cut-short')
 
 /** A step the router or a helper ran for the lead, which needs a verdict when it is done: not a group, not a here step. */
 export const isDelegated = (s: Step) => !s.group && (s.where === 'agent' || isHelperRun(s))
@@ -736,22 +836,24 @@ const isWeak = (x: HistoryEntry) => x.rerun || x.verdict === 'weak'
 const isOk = (x: HistoryEntry) => !x.rerun && x.verdict === 'ok'
 const isOverkill = (x: HistoryEntry) => !x.rerun && x.verdict === 'overkill'
 
-export type VerdictCounts = { ok: number; weak: number; overkill: number; none: number }
+export type VerdictCounts = { ok: number; weak: number; overkill: number; none: number; cutShort: number }
 
 const countVerdicts = (xs: readonly HistoryEntry[]): VerdictCounts => ({
   ok: xs.filter(x => x.verdict === 'ok').length,
   weak: xs.filter(x => x.verdict === 'weak').length,
   overkill: xs.filter(x => x.verdict === 'overkill').length,
   none: xs.filter(x => !x.verdict).length,
+  cutShort: xs.filter(x => x.verdict === 'cut-short').length,
 })
 
-/** "2 ok, 1 weak, 1 no verdict", leaving out what is zero. */
+/** "2 ok, 1 weak, 1 no verdict, 2 cut short", leaving out what is zero. */
 export const verdictLine = (c: VerdictCounts) =>
   [
     c.ok ? `${c.ok} ok` : '',
     c.weak ? `${c.weak} weak` : '',
     c.overkill ? `${c.overkill} overkill` : '',
     c.none ? `${c.none} no verdict` : '',
+    c.cutShort ? `${c.cutShort} cut short` : '',
   ]
     .filter(Boolean)
     .join(', ')
@@ -814,7 +916,7 @@ const judge = (xs: readonly HistoryEntry[], from: Rung, label: string, set: Sett
 
 /** What the history argues for: per kind on the rung it runs on now, and per tier for runs with no kind. Subagent runs only. */
 export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggestion[] => {
-  const runs = h.filter(isAgentRun)
+  const runs = judgedRuns(h).filter(isAgentRun)
   const byTier = TIER_ORDER.flatMap(tier => {
     const now = set.tiers[tier]
     const j = judge(runs.filter(x => !x.kind && x.tier === tier && sameRung(x, now)), now, `${tier} steps on ${rungLabel(now)}`, set)
@@ -842,7 +944,7 @@ export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggesti
 /** Auto mode: per kind, the cheapest rung that did it well (ok in at least `autoOkPercent` of at least `autoMinRuns` runs there). */
 export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned => {
   const out: Learned = {}
-  const runs = h.filter(isAgentRun)
+  const runs = judgedRuns(h).filter(isAgentRun)
   for (const kind of kindsOf(runs, Infinity)) {
     const by = new Map<string, HistoryEntry[]>()
     for (const x of runs.filter(r => r.kind === kind)) by.set(entryRung(x), [...(by.get(entryRung(x)) ?? []), x])
@@ -1083,7 +1185,7 @@ export type HelperAdvice = { provider: string; tier?: string; kind?: string; fro
  */
 export const helperSuggestions = (h: readonly HistoryEntry[], set: Settings, cfg: HelperConfig | undefined, cache?: ModelsCache): HelperAdvice[] => {
   if (!cfg) return []
-  const runs = h.filter(isHelperEntry)
+  const runs = judgedRuns(h).filter(isHelperEntry)
   const out: HelperAdvice[] = []
   const judged = (xs: readonly HistoryEntry[], provider: string, from: HelperRung, label: string) => {
     const ladder = helperLadder(cfg, provider, cache)
@@ -1130,7 +1232,7 @@ export type HelperLearned = Record<string, (HelperChoice & { n: number })[]>
 export const learnedHelpers = (h: readonly HistoryEntry[], set: Settings, cfg: HelperConfig | undefined, cache?: ModelsCache): HelperLearned => {
   const out: HelperLearned = {}
   if (!cfg) return out
-  const runs = h.filter(isHelperEntry)
+  const runs = judgedRuns(h).filter(isHelperEntry)
   for (const kind of kindsOf(runs, Infinity)) {
     const by = new Map<string, { choice: HelperChoice; xs: HistoryEntry[] }>()
     for (const x of runs.filter(r => r.kind === kind)) {
@@ -1181,4 +1283,145 @@ export const compareVersions = (a: string, b: string) => {
   }
 
   return 0
+}
+
+// --- Diagnostics: the health line, empty states, the log and the report ---------------
+
+/** The pane's first line: quiet when all is well, the first failing check when helpers are on and cannot run. */
+export const healthLine = (set: Settings, checks: readonly Check[], status: HelperState['status'], providers: readonly string[] = []) => {
+  if (!set.helpers.enabled) return { ok: true, text: 'Router on · helpers off' }
+  const mode = helperMode()
+  if (mode === 'herdr') return { ok: true, text: `✓ Router on · helpers: Herdr${providers.length ? ` (${providers.join(', ')})` : ''}` }
+  if (mode === 'direct') {
+    // The reason is what is missing, whatever state its check shows (in auto mode a missing Herdr is a skip, not a failure).
+    const why = set.helpers.run === 'direct' ? 'set in Settings' : checks.some(c => c.id === 'hc' && c.state !== 'ok') ? "no Herdr's hc" : 'no Herdr terminal'
+
+    return { ok: true, text: `✓ Router on · helpers: direct mode (${why})` }
+  }
+  if (status === 'unknown') return { ok: true, text: 'Router on · helpers: looking for them…' }
+  const failing = checks.find(c => c.state === 'fail')
+
+  return { ok: false, text: `✗ Helpers can't run: ${failing ? lowerFirst(failing.text) : 'unknown reason'}`, failing }
+}
+
+const lowerFirst = (v: string) => (/^[A-Z][a-z]/.test(v) ? v.charAt(0).toLowerCase() + v.slice(1) : v)
+
+/** The providers the helper orders use, as labels, in order of first use ("Copilot, Claude uni, Agy"). */
+export const liveProviders = (set: Settings) => providersOf(TIER_ORDER.flatMap(t => helperList(set, t))).map(providerLabel)
+
+/** "· 2 ran as subagents: no Herdr terminal", or nothing without fallbacks. */
+export const fallbackLine = (n: number | undefined, reason: string | undefined) =>
+  n && n > 0 ? ` · ${n} ran as subagent${n === 1 ? '' : 's'}${reason ? `: ${reason}` : ''}` : ''
+
+/** The fallbacks of a plan's steps: how many, and the latest reason (the last step that has one). */
+export const planFallbacks = (list: readonly Step[]) => {
+  const fell = list.filter(s => s.fallback)
+
+  return { n: fell.length, reason: fell.at(-1)?.fallback }
+}
+
+/** A fallback reason as the lead gave it: a short line, else nothing. */
+export const asReason = (v: unknown) => {
+  const t = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : ''
+
+  return t ? t.slice(0, 80) : undefined
+}
+
+/** The history's one line when it has no advice to show: no runs yet, or how many runs and what advice needs. */
+export const historyLine = (h: readonly HistoryEntry[]) =>
+  h.length === 0
+    ? `History: no runs yet; advice starts after ${LEARN.minRuns} runs of a kind.`
+    : `History: ${h.length} run${h.length === 1 ? '' : 's'}; advice needs ${LEARN.minRuns} on one rung.`
+
+/** The log file of a day: YYYY-MM-DD.jsonl (local date). */
+export const logFileName = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}.jsonl`
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** The log files among `names` older than `days` days before `now` (by the date in their name). */
+export const oldLogFiles = (names: readonly string[], now: Date, days = 14) => {
+  const cut = logFileName(new Date(now.getTime() - days * 86_400_000))
+
+  return names.filter(n => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n) && n < cut)
+}
+
+/** The report's file name: report-YYYYMMDD-HHMM.md. */
+export const reportFileName = (d: Date) => `report-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}.md`
+
+/** One log line: `t`, `ev`, then the event's fields; values that are undefined are left out. */
+export const logLine = (ev: string, fields: Record<string, unknown>, at = new Date()) =>
+  JSON.stringify({ t: at.toISOString(), ev, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)) })
+
+/** The settings that differ from the defaults, as flat dotted paths and their values (prices and per-kind maps summarised). */
+export const settingsDiff = (set: Settings): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  const walk = (now: unknown, was: unknown, path: string) => {
+    if (now && typeof now === 'object' && !Array.isArray(now) && was && typeof was === 'object' && !Array.isArray(was)) {
+      for (const k of new Set([...Object.keys(now), ...Object.keys(was)])) walk((now as Record<string, unknown>)[k], (was as Record<string, unknown>)[k], path ? `${path}.${k}` : k)
+      return
+    }
+    if (JSON.stringify(now) !== JSON.stringify(was)) out[path] = now
+  }
+  walk(set, DEFAULT_SETTINGS, '')
+
+  return out
+}
+
+/** What the report says, given what the router has gathered. Never prompts, briefs, titles or why-texts. */
+export type ReportInput = {
+  version: string
+  at: Date
+  platform?: string
+  surface?: string
+  model?: string
+  set: Settings
+  checks: readonly Check[]
+  mode: HelperMode
+  st: Pick<HelperState, 'status' | 'message' | 'script' | 'config' | 'hc' | 'terminal'>
+  history: number
+  lifetime: { steps: number; plans: number; helperSteps: number; fallbacks?: number; since?: string }
+  events: readonly string[]
+}
+
+export const reportMarkdown = (r: ReportInput) => {
+  const glyph = { ok: '✓', fail: '✗', skip: '–' } as const
+  const diff = settingsDiff(r.set)
+  const providers = Object.entries(r.st.config?.providers ?? {}).map(
+    ([name, p]) => `| ${name} | ${p.label ?? ''} | ${p.cli_found === false ? 'no' : 'yes'} | ${p.direct === true ? 'yes' : 'no'} | ${p.self ? 'yes' : ''} |`,
+  )
+  const lines = [
+    `# model-router report`,
+    '',
+    `- Written: ${r.at.toISOString()}`,
+    `- Router version: ${r.version}`,
+    `- Platform: ${r.platform ?? 'unknown'}; surface: ${r.surface ?? 'unknown'}`,
+    `- Main chat model: ${r.model ?? 'not seen yet'}`,
+    `- Helper mode: ${r.mode} (setting: ${r.set.helpers.run}); helpers.py status: ${r.st.status}${r.st.message ? ` (${r.st.message})` : ''}`,
+    `- hc found: ${r.st.hc === undefined ? 'not checked' : r.st.hc ? 'yes' : 'no'}; Herdr terminal: ${r.st.terminal === undefined ? 'not checked' : r.st.terminal ? 'yes' : 'no'}`,
+    `- herdr-delegate's script: ${r.st.script ?? 'not found'}`,
+    `- History entries: ${r.history}; all time: ${r.lifetime.steps} subagent steps, ${r.lifetime.helperSteps} helper steps, ${r.lifetime.fallbacks ?? 0} fallbacks, ${r.lifetime.plans} plans${r.lifetime.since ? ` since ${r.lifetime.since}` : ''}`,
+    '',
+    '## Health checks',
+    '',
+    ...r.checks.map(c => `- ${glyph[c.state]} ${c.text}${c.state === 'fail' && c.fix ? ` — fix: ${c.fix}` : ''}`),
+    '',
+    '## Settings that differ from the defaults',
+    '',
+    ...(Object.keys(diff).length ? Object.entries(diff).map(([k, v]) => `- ${k}: ${JSON.stringify(v)}`) : ['- none']),
+    '',
+    '## Helpers',
+    '',
+    ...(providers.length ? ['| provider | label | CLI found | direct | this account |', '|---|---|---|---|---|', ...providers] : ['No helper config read.']),
+    '',
+    ...TIER_ORDER.map(t => `- ${t} order: ${helperList(r.set, t).join(', ') || 'none'}`),
+    '',
+    `## Last ${r.events.length} log events`,
+    '',
+    '```',
+    ...r.events,
+    '```',
+    '',
+  ]
+
+  return lines.join('\n')
 }

@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.24.0 (2026-11-19)
+- helper health line and checks; helper mode Herdr, direct (helpers.py run, herdr-delegate 0.15) or none, never offered when they cannot run; the helper rule reaches a chat when helpers change mid-chat; cut-short verdict left out of advice and auto mode; fallback reasons; empty states; JSONL log and /router report (O3, O4, O5)
+
 ## 0.23.0 (2026-11-13)
 - helpers only from what is installed: no helpers.py, hc or helper CLI means no helper steps; pane explains how to enable them
 

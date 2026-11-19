@@ -15,8 +15,9 @@ export type Price = { input: number; cacheWrite: number; cacheRead: number; outp
 export type Rung = { model: Model; effort: Effort }
 
 /** How the lead judged a delegated step's result. ok: used as returned or with small edits; weak: needed a rerun,
- *  part redone, or a substantive error found; overkill: plainly mechanical work that ran above the light tier. */
-export type Verdict = 'ok' | 'weak' | 'overkill'
+ *  part redone, or a substantive error found; overkill: plainly mechanical work that ran above the light tier;
+ *  cut-short: stopped by something outside the model (lost connection, quota, a crash, the person): says nothing about the model. */
+export type Verdict = 'ok' | 'weak' | 'overkill' | 'cut-short'
 
 export type TierSetting = { model: Model; effort: Effort; scopeNote: boolean }
 
@@ -38,6 +39,8 @@ export type HelperSettings = {
   script: string
   /** Per kind of work, the helper model the router launches (set by applying the history's advice): wins over the tier order. */
   kinds: Record<string, HelperChoice>
+  /** How helpers run: 'auto' through Herdr inside a Herdr terminal, else directly; 'herdr' only through Herdr; 'direct' always directly (helpers.py run). */
+  run: 'auto' | 'herdr' | 'direct'
 }
 
 /** A helper provider (kiro, copilot, agy) with a model and a thinking level, as helpers.py takes them. */
@@ -68,6 +71,8 @@ export type HelperConfig = {
       cli_found?: boolean
       /** The provider is this session's own account: it cannot be its own helper. */
       self?: boolean
+      /** It has a headless command and its CLI is installed: `helpers.py run` can start it without Herdr (herdr-delegate 0.15+; absent means no). */
+      direct?: boolean
     }
   >
   custom?: { provider: string; model: string; effort: string }[]
@@ -91,6 +96,9 @@ export type HelperState = {
   busy?: boolean
   /** The marketplace this plugin came from, for the install line shown when helpers.py or hc is missing. */
   marketplace?: string
+  /** Herdr's hc can start; this chat runs in a Herdr terminal ($HC_TERMINAL_ID set). Absent: not checked yet. */
+  hc?: boolean
+  terminal?: boolean
 }
 
 /** The model and level the router chose for a helper step, with the template to launch. */
@@ -125,6 +133,8 @@ export type Settings = {
   models: Model[]
   /** Prices set in Settings, over the defaults; a model with none has no price. */
   prices: Record<string, Price>
+  /** Write the diagnostics log (~/.config/model-router/log/YYYY-MM-DD.jsonl). */
+  log: boolean
 }
 
 export type HereEffortSettings = {
@@ -194,6 +204,10 @@ export type Step = {
   /** The lead's verdict on the latest run of a delegated step, and why. */
   verdict?: Verdict
   why?: string
+  /** The verdict before the pane marked the run cut short, put back when that is undone (null: there was none). */
+  verdictBefore?: Verdict | null
+  /** A helper step that ran as a subagent instead, and why (the lead's reason, or "no reason given"). */
+  fallback?: string
   /** The lead has been asked for this step's missing verdict. */
   asked?: boolean
   /** Output tokens of the step's earlier runs, so a run's own output can be told apart. */
@@ -225,7 +239,17 @@ export type StepKnown = { where: Where; tier: Tier; model: Model; effort: Effort
 
 /** Money counted over some span: the main chat, the subagents, and what the
  *  subagents' tokens would have cost on the main chat's model. */
-export type Totals = { mainCost: number; agentCost: number; mainEquivalent: number; steps: number; helper: HelperTotals; unpriced?: boolean }
+export type Totals = {
+  mainCost: number
+  agentCost: number
+  mainEquivalent: number
+  steps: number
+  helper: HelperTotals
+  unpriced?: boolean
+  /** Helper steps that ran as subagents instead, and the latest reason. */
+  fallbacks?: number
+  lastFallback?: string
+}
 
 /** Remembered across chats: a few numbers, never per-run detail. */
 export type Lifetime = Totals & { since: string; plans: number; byTier: Record<Tier, number> }
@@ -304,6 +328,12 @@ declare module 'claude-code' {
       draft: Record<string, StepDraft>
       /** What the router has read of helpers.py (this chat only; it is read again at the start and after a change). */
       helperCfg: HelperState
+      /** The box to set helpers.py's path by hand is open (Settings → Helpers). */
+      showHelperPath: boolean
+      /** The health check list is open under the health line. */
+      showHealth: boolean
+      /** Where the last report was written (shown beside its button), or why it failed. */
+      reportNote: string
     }
   }
 }
