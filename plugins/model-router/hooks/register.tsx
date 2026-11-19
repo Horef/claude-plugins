@@ -138,6 +138,8 @@ import {
   whereLabel,
 } from './logic'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
+import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
+import type { Try } from './strengths'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
 import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from './snapshot'
 import type { RouterState } from './snapshot'
@@ -174,11 +176,13 @@ const showHelperPath = atom({ plugin: 'model-router', key: 'showHelperPath' } as
 const helperCfg = atom({ plugin: 'model-router', key: 'helperCfg' } as const, { status: 'unknown', warnings: [] })
 const showHealth = atom({ plugin: 'model-router', key: 'showHealth' } as const, false)
 const reportNote = atom({ plugin: 'model-router', key: 'reportNote' } as const, '')
-const modelNews = atom({ plugin: 'model-router', key: 'modelNews' } as const, { seen: {}, asked: [], proposals: [], dismissed: [] })
+const modelNews = atom({ plugin: 'model-router', key: 'modelNews' } as const, { seen: {}, asked: [], proposals: [], dismissed: [], dismissedTries: [] })
 const modelNotes = atom({ plugin: 'model-router', key: 'modelNotes' } as const, mergeNotes(undefined))
 const modelFeedback = atom({ plugin: 'model-router', key: 'modelFeedback' } as const, {})
 const showCardNotes = atom({ plugin: 'model-router', key: 'showCardNotes' } as const, false)
 const showAllNotes = atom({ plugin: 'model-router', key: 'showAllNotes' } as const, false)
+const showModelMap = atom({ plugin: 'model-router', key: 'showModelMap' } as const, false)
+const editKindTags = atom({ plugin: 'model-router', key: 'editKindTags' } as const, '')
 const paneView = atom({ plugin: 'model-router', key: 'paneView' } as const, { toggled: {} })
 const showGlossary = atom({ plugin: 'model-router', key: 'showGlossary' } as const, false)
 const showCostDetails = atom({ plugin: 'model-router', key: 'showCostDetails' } as const, false)
@@ -1447,6 +1451,21 @@ async function dismissProposal($: EngineInterface, key: string) {
   await logEvent($, 'model-dismissed', { key })
 }
 
+/** Applies a "Try" suggestion: a Claude model becomes the kind's default, a helper model the kind's helper choice. Nothing else changes. */
+async function applyTry($: EngineInterface, t: Try) {
+  if (t.provider === 'claude') await editSettings($, set => ({ ...set, kinds: { ...set.kinds, [t.kind]: { model: t.model, effort: t.effort as Effort } } }))
+  else {
+    await editSettings($, set => ({ ...set, helpers: { ...set.helpers, kinds: { ...set.helpers.kinds, [t.kind]: { provider: t.provider, model: t.model, effort: t.effort } } } }))
+    await resolveHelperPicks($)
+  }
+  await logEvent($, 'try-applied', { kind: t.kind, provider: t.provider, model: t.model, effort: t.effort })
+}
+
+async function dismissTry($: EngineInterface, t: Try) {
+  await editModelNews($, n => ({ ...n, dismissedTries: n.dismissedTries.includes(t.key) ? n.dismissedTries : [...n.dismissedTries, t.key].slice(-200) }))
+  await logEvent($, 'try-dismissed', { kind: t.kind, provider: t.provider, model: t.model, effort: t.effort })
+}
+
 /** The template to launch for a pick: a tier template that already has this model and level, else a one-off made by `helpers.py custom`. */
 async function templateFor($: EngineInterface, st: HelperState, want: HelperChoice, tier: Tier): Promise<{ template?: string; error?: string }> {
   const existing = st.config ? templateOfRung(st.config, want.provider, want, tier) : undefined
@@ -2071,6 +2090,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const helperAdvice = set.helpers.enabled ? helperSuggestions(past, set, hcfg, hs.models) : []
   // Auto mode: the rung each kind has learned, for the rows (nothing while it is off).
   const learned = set.autoRoute ? learnedRungs(past, set) : undefined
+  const learnedHelp = set.autoRoute && helpersOn ? learnedHelpers(past, set, hcfg, hs.models) : undefined
   // The health line: quiet when helpers are off or can run; the first failing check, with the full list one click away, when not.
   const checks = healthChecks({ set, st: hs, rules: (await read($, delivery)).inChat && (await read($, toldHelpers)) === helperRuleSig(set) })
   const health = healthLine(set, checks, hs.status, liveProviders(set))
@@ -2084,6 +2104,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const nm = newModelsCard({ news, notes: allNotes, report: hs.report, cache: hs.models, cfg: hcfg, set, today: dayOf(new Date()) })
   const cardNotes = await read($, showCardNotes)
   const allNotesOpen = await read($, showAllNotes)
+  const mapOpen = await read($, showModelMap)
+  const tagEdit = await read($, editKindTags)
+  // Strengths: the kinds seen, the models that suit the ones with little history (advice only), and where each kind would run now.
+  const planTiers = Object.fromEntries(work.filter(s => s.kind).map(s => [s.kind!, s.tier]))
+  const mapKinds = kindList(past, await read($, ruleKinds), work.flatMap(s => (s.kind ? [s.kind] : [])))
+  const tries = trySuggestions({
+    history: past,
+    set,
+    notes: allNotes,
+    cfg: hcfg,
+    cache: hs.models,
+    helpersOn,
+    kinds: mapKinds,
+    planTiers,
+    skip: new Set([...advice, ...helperAdvice].flatMap(a => (a.kind ? [a.kind] : []))),
+    learned,
+    learnedHelpers: learnedHelp,
+    dismissed: news.dismissedTries,
+  })
 
   // Settings that differ from the defaults get a quiet dot, so it shows which of your own values are active.
   const D = DEFAULT_SETTINGS
@@ -2121,7 +2160,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     helpers:
       set.helpers.enabled &&
       (differs.run || differs.fusion || set.helpers.script !== D.helpers.script || Object.keys(set.helpers.kinds).length > 0 || helperTiersDiffering.length > 0 || TIER_ORDER.some(orderDiffers)),
-    learning: differs.autoRoute || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0,
+    learning: differs.autoRoute || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0 || Object.keys(set.kindTags).length > 0,
     prices: set.models.length > 0 || models.some(priceDiffers),
     skills: Object.keys(set.skills).length > 0,
     diagnostics: differs.log || differs.herdrView,
@@ -2724,7 +2763,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         : `Since ${since(life.since)}: ${life.steps + life.helper.steps} delegated steps${life.helper.steps || set.helpers.enabled ? ` (${life.helper.steps} on helpers)` : ''} in ${life.plans} plans (light ${life.byTier.light} · standard ${life.byTier.standard} · deep ${life.byTier.deep}). Delegated steps cost ${pct(lifeSaved, life.mainEquivalent)} less than on the main model; main chats cost ≈${fmtUsd(life.mainCost)}.`
   const stats = rungStats(past)
   const kinds = kindStats(past)
-  const hasAdvice = advice.length > 0 || helperAdvice.length > 0
+  const hasAdvice = advice.length > 0 || helperAdvice.length > 0 || tries.length > 0
 
   const costSection = (
     <Box key="section:cost" flexDirection="column" rowGap="xs">
@@ -2809,6 +2848,20 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Box>
         )
       })}
+      {tries.map(t => (
+        <Box key={`try:${t.key}`} flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
+          <Text size="footnote" color="suggestion">?</Text>
+          <Box flexShrink={1}>
+            <Text size="footnote" wrap="wrap">{t.text}</Text>
+          </Box>
+          <Button key={`try-apply:${t.key}`} variant="primary" onPress={() => void applyTry($, t)}>
+            Apply
+          </Button>
+          <Button key={`try-dismiss:${t.key}`} plain dimColor onPress={() => void dismissTry($, t)}>
+            Dismiss
+          </Button>
+        </Box>
+      ))}
       {hint && <Text key="model-hint" color="suggestion" size="footnote" wrap="wrap">{hint}</Text>}
     </Box>
   )
@@ -2851,6 +2904,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const noPrice = models.filter(x => !priceOf(x, set)).length
   const notesCount = Object.keys(allNotes).length
   const kindsTuned = Object.keys(set.kinds).length
+  const tagsEditedCount = Object.keys(set.kindTags).length
 
   // The three resets: the first click names what goes, the second does it.
   const RESETS: Record<string, { key: string; label: string; ask: string; verb: string; done: string; run: () => Promise<void> }> = {
@@ -3320,6 +3374,65 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           kindsTuned === 0 ? (
             <Text key="kinds-none" dimColor size="footnote" wrap="wrap">No kind has a default of its own yet: applying the history's advice (under the cost) sets one.</Text>
           ) : null,
+          // Layer 2 inside the group: one handle that says what is behind it; the lines wrap on every surface.
+          <Box key="map-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm" rowGap="xs">
+            <Button key="model-map-toggle" plain onPress={() => void update($, showModelMap, v => !v)}>
+              {mapOpen ? 'Strengths and model map ▾' : 'Strengths and model map ▸'}
+            </Button>
+            <Text key="map-summary" dimColor size="footnote">
+              {`${mapKinds.length} kind${mapKinds.length === 1 ? '' : 's'} · ${notesCount} model${notesCount === 1 ? '' : 's'}${tagsEditedCount ? ` · ${tagsEditedCount} edited` : ''}`}
+            </Text>
+          </Box>,
+          ...(mapOpen
+            ? [
+                <Text key="map-help" dimColor size="footnote" wrap="wrap">
+                  A kind's strengths pick the models suggested for it (Try, under the cost) and are never applied by themselves. Under each kind: what would run its steps now.
+                </Text>,
+                mapKinds.length === 0 ? <Text key="map-none" dimColor size="footnote" wrap="wrap">No kinds yet: they appear once steps carry a kind.</Text> : null,
+                ...mapKinds.map(kind => {
+                  const tags = tagsOfKind(kind, set)
+                  const edited = kindTagsEdited(kind, set)
+                  const tier = tierOfKind(past, kind, planTiers)
+                  const now = tier ? runsNow(kind, tier, { set, learned, learnedHelpers: learnedHelp, cfg: hcfg, helpersOn }) : []
+
+                  return (
+                    <Box key={`map-kind:${kind}`} flexDirection="column">
+                      <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
+                        <Box flexDirection="row" columnGap="xs" flexShrink={1} flexWrap="wrap">
+                          <Text mono size="footnote" wrap="truncate">{kind}</Text>
+                          <Text key={`kind-tags:${kind}`} size="footnote" wrap="wrap" dimColor={tags.length === 0}>{tags.join(' · ') || 'no strengths'}</Text>
+                          {dot(`kind-tags:${kind}`, edited)}
+                        </Box>
+                        <Box flexDirection="row" columnGap="sm">
+                          <Button key={`kind-tags-edit:${kind}`} plain onPress={() => void update($, editKindTags, v => (v === kind ? '' : kind))}>
+                            {tagEdit === kind ? 'done' : 'edit'}
+                          </Button>
+                          {edited && (
+                            <Button key={`kind-tags-reset:${kind}`} plain dimColor onPress={() => void editSettings($, s => withKindTags(s, kind, defaultKindTags(kind)))}>
+                              reset
+                            </Button>
+                          )}
+                        </Box>
+                      </Box>
+                      {tagEdit === kind && (
+                        <Box key={`kind-tags-pick:${kind}`} flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs">
+                          {TAGS.map(t => (
+                            <Button key={`tag:${kind}:${t}`} variant={tags.includes(t) ? 'primary' : 'secondary'} onPress={() => void editSettings($, s => withKindTags(s, kind, toggleTag(tagsOfKind(kind, s), t)))}>
+                              {t}
+                            </Button>
+                          ))}
+                        </Box>
+                      )}
+                      <Text key={`map-run:${kind}`} dimColor size="footnote" wrap="wrap">{now.length ? now.map(runsNowText).join(' · ') : 'no runs yet: it runs on its tier'}</Text>
+                    </Box>
+                  )
+                }),
+                <Text key="map-models-head" size="footnote" weight="medium">Models with notes</Text>,
+                ...Object.values(allNotes)
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(n => <Text key={`map-note:${n.id}`} dimColor size="footnote" wrap="wrap">{noteMapLine(n)}</Text>),
+              ]
+            : []),
         ])}
 
         {settingsGroup(

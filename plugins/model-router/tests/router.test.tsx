@@ -8,7 +8,8 @@ import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learned
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
 import { SEED_NOTES, checkNote, findNote, mergeNotes, parseNotesFile } from '../hooks/notes'
 import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from '../hooks/snapshot'
-import { DEFAULT_SETTINGS, LADDER } from '../hooks/tiers'
+import { DEFAULT_SETTINGS, KIND_TAGS, LADDER } from '../hooks/tiers'
+import { kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from '../hooks/strengths'
 import type { HistoryEntry, Step } from '../types'
 
 const PLAN = 'mcp__model-router__plan'
@@ -3819,4 +3820,201 @@ test('a narrow terminal wraps the rows instead of laying them side by side, with
   const wide = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   expect((await wide.find({ type: 'Button', key: 'where:h1' } as never))?.text).toBe('other subscription ⇄')
   await wide.unmount()
+})
+
+// --- Strengths and the model map (0.28) -----------------------------------------------------
+
+test('a kind\'s strengths: the table, then the words of its name, then the person\'s own list (which may be empty); toggles keep the vocabulary order', () => {
+  const set = mergeSettings({})
+  expect(KIND_TAGS['code-review']).toEqual(['review', 'careful'])
+  expect(tagsOfKind('write-code', set)).toEqual(['code'])
+  expect(tagsOfKind('code-read', set)).toEqual(['careful', 'long-context'])
+  expect(tagsOfKind('summarize', set)).toEqual(['long-context', 'fast'])
+  expect(tagsOfKind('eval-run', set)).toEqual(['agentic'])
+  // Not in the table: by its own words.
+  expect(tagsOfKind('security-review', set)).toEqual(['review'])
+  expect(tagsOfKind('market-research-notes', set)).toEqual(['research'])
+  expect(tagsOfKind('refactor-codebase', set)).toEqual(['code'])
+  expect(tagsOfKind('code-review-lite', set)).toEqual(['code', 'review'])
+  expect(tagsOfKind('figure', set)).toEqual([])
+  // A name like an Object property is a kind like any other.
+  expect(tagsOfKind('constructor', set)).toEqual([])
+  expect(tagsOfKind('__proto__', set)).toEqual([])
+  // The person's list wins, even an empty one; the default put back is no override.
+  const own = withKindTags(set, 'write-code', ['code', 'review'])
+  expect(own.kindTags).toEqual({ 'write-code': ['code', 'review'] })
+  expect(tagsOfKind('write-code', own)).toEqual(['code', 'review'])
+  expect(kindTagsEdited('write-code', own)).toBe(true)
+  const none = withKindTags(own, 'write-code', [])
+  expect(tagsOfKind('write-code', none)).toEqual([])
+  expect(withKindTags(none, 'write-code', ['code']).kindTags).toEqual({})
+  expect(toggleTag(['review'], 'code')).toEqual(['code', 'review'])
+  expect(toggleTag(['code', 'review'], 'code')).toEqual(['review'])
+  // Stored lists are cleaned: only vocabulary tags, once, in order; only kinds of plain words.
+  const stored = mergeSettings({ kindTags: { 'x-y': ['review', 'nonsense', 'code', 'code'], 'Bad Kind': ['code'], z: 'code' } } as never)
+  expect(stored.kindTags).toEqual({ 'x-y': ['code', 'review'] })
+  expect(mergeSettings({ kindTags: ['code'] } as never).kindTags).toEqual({})
+  expect(mergeSettings(undefined).kindTags).toEqual({})
+})
+
+const NEON = { ...SEED_NOTES.find(n => n.id === 'gemini-4-neon')!, tags: ['careful', 'review', 'agentic'], fits: [{ tier: 'deep', effort: 'high', why: 'x' }, { tier: 'standard', effort: 'medium', why: 'y' }] } as never
+const NOTES = mergeNotes({ 'gemini-4-neon': NEON })
+
+test('Try suggestions: a model whose note has a strength the kind\'s current model lacks and fits its tier; one per kind, never for enough history, dismissed, or a kind with no strengths', () => {
+  const cfg = helperDefaults() as never
+  setHelperConfig(cfg)
+  const cache = { agy: { models: ['gemini-4-neon-high', 'claude-opus-5-5-high'] } } as never
+  const set = mergeSettings({ helpers: { enabled: true } } as never)
+  const base = { set, notes: NOTES, cfg, cache, helpersOn: true, dismissed: [] as string[] }
+  const hist = (n: number, over: Partial<HistoryEntry> = {}) => Array.from({ length: n }, (_, i) => hrun(i + 1, { tier: 'deep', helper: 'kiro-deep', kind: 'code-review', verdict: 'ok', ...over }))
+  const texts = (o: Partial<Parameters<typeof trySuggestions>[0]> & { history: HistoryEntry[]; kinds: string[] }) => trySuggestions({ ...base, ...o }).map(t => t.text)
+
+  // Opus (the deep helper now) has review but not careful: Neon adds careful. The level is the note's, offered by agy.
+  expect(texts({ history: hist(2), kinds: ['code-review'] })).toEqual(['Try Gemini 4 Neon high on Antigravity for code-review (careful)'])
+  const [t] = trySuggestions({ ...base, history: hist(2), kinds: ['code-review'] })
+  expect(t).toMatchObject({ key: 'code-review|agy|gemini-4-neon|high', provider: 'agy', model: 'gemini-4-neon', effort: 'high', tier: 'deep' })
+  // A kind with no history at all, but in the plan at deep, gets it too.
+  expect(texts({ history: [], kinds: ['code-review'], planTiers: { 'code-review': 'deep' } })).toHaveLength(1)
+  // No history and no plan: its tier is not known, so nothing.
+  expect(texts({ history: [], kinds: ['code-review'] })).toEqual([])
+  // Enough runs on the model it runs on now (autoMinRuns, 5): the history owns it.
+  expect(texts({ history: hist(5), kinds: ['code-review'] })).toEqual([])
+  expect(texts({ history: hist(4), kinds: ['code-review'] })).toHaveLength(1)
+  // Auto mode's learned rung, or advice, owns it too.
+  expect(texts({ history: hist(2), kinds: ['code-review'], learnedHelpers: { 'code-review': [{ provider: 'kiro', model: 'm', effort: 'low', n: 5 }] } })).toEqual([])
+  expect(texts({ history: hist(2), kinds: ['code-review'], skip: new Set(['code-review']) })).toEqual([])
+  // Dismissed: not again (the next best, if any, would show).
+  expect(texts({ history: hist(2), kinds: ['code-review'], dismissed: ['code-review|agy|gemini-4-neon|high'] })).toEqual([])
+  // With helpers off there is no helper model to try, and a kind that ran on helpers gets no Claude one.
+  expect(texts({ history: hist(2), kinds: ['code-review'], helpersOn: false })).toEqual([])
+  // The person's own strengths decide: none, none to suggest; research is a strength Neon's note lacks.
+  expect(texts({ history: hist(2), kinds: ['code-review'], set: withKindTags(set, 'code-review', []) })).toEqual([])
+  expect(texts({ history: hist(2), kinds: ['code-review'], set: withKindTags(set, 'code-review', ['research']) })).toEqual([])
+  // A model the provider does not offer is not suggested.
+  expect(texts({ history: hist(2), kinds: ['code-review'], cache: { agy: { models: ['claude-opus-5-5-high'] } } as never })).toEqual([])
+  // A note's level the provider lacks (a fit at xhigh on a provider with low, medium, high): not suggested.
+  const xhigh = mergeNotes({ 'gemini-4-neon': { ...(NEON as object), fits: [{ tier: 'deep', effort: 'xhigh', why: 'x' }] } as never })
+  expect(texts({ history: hist(2), kinds: ['code-review'], notes: xhigh })).toEqual([])
+  // A fit for another tier does not count.
+  const light = mergeNotes({ 'gemini-4-neon': { ...(NEON as object), fits: [{ tier: 'light', effort: 'high', why: 'x' }] } as never })
+  expect(texts({ history: hist(2), kinds: ['code-review'], notes: light })).toEqual([])
+  // At most three, in the order of the kinds.
+  const many = ['code-review', 'review', 'code-read', 'cross-check']
+  const manyHist = many.flatMap((k, j) => hist(2, { kind: k }).map((x, i) => ({ ...x, key: `${k}${i}${j}` })))
+  expect(trySuggestions({ ...base, history: manyHist, kinds: many }).map(x => x.kind)).toEqual(['code-review', 'review', 'code-read'])
+  expect(trySuggestions({ ...base, history: manyHist, kinds: many, max: 1 })).toHaveLength(1)
+  setHelperConfig(undefined)
+})
+
+test('Try suggestions for Claude: the tier\'s own rung, when the kind runs on a default of its own that lacks the strength', () => {
+  setHelperConfig(undefined)
+  const set = mergeSettings({ kinds: { 'write-code': { model: 'haiku', effort: 'low' } } })
+  const base = { set, notes: mergeNotes(undefined), helpersOn: false, dismissed: [] as string[], kinds: ['write-code'] }
+  const h = (n: number) => Array.from({ length: n }, (_, i) => run(i + 1, { tier: 'standard', kind: 'write-code', verdict: 'ok' }))
+  const [t] = trySuggestions({ ...base, history: h(2) })
+  expect(t).toMatchObject({ text: 'Try Claude Sonnet 5.5 medium for write-code (code)', provider: 'claude', model: 'sonnet', effort: 'medium', key: 'write-code|claude|sonnet|medium' })
+  // Without a default of its own the kind already runs on the tier's rung: nothing to suggest.
+  expect(trySuggestions({ ...base, set: mergeSettings({}), history: h(2) })).toEqual([])
+  // Five runs on the default it has: the history owns it.
+  expect(trySuggestions({ ...base, history: h(5) })).toEqual([])
+  // The tier's model has no fit for the tier (a note that says deep only): nothing.
+  const deepOnly = mergeNotes({ 'claude-sonnet-5-5': { ...mergeNotes(undefined)['claude-sonnet-5-5']!, fits: [{ tier: 'deep', why: 'z' }] } })
+  expect(trySuggestions({ ...base, notes: deepOnly, history: h(2) })).toEqual([])
+  // Runs mostly on helpers: a helper's business, not Claude's.
+  expect(trySuggestions({ ...base, history: [hrun(1, { kind: 'write-code' }), hrun(2, { kind: 'write-code' }), run(3, { tier: 'standard', kind: 'write-code' })] })).toEqual([])
+})
+
+test('what would run a kind now: the Claude rung and its source, and with helpers the first helper of the tier\'s order; model lines list name, tags and fits', () => {
+  const cfg = helperDefaults() as never
+  setHelperConfig(cfg)
+  const set = mergeSettings({ helpers: { enabled: true, kinds: { design: { provider: 'agy', model: 'gemini-4-neon', effort: 'medium' } } }, kinds: { design: { model: 'opus', effort: 'high' } } } as never)
+  const line = (kind: string, tier: 'light' | 'standard' | 'deep', o: object = {}) => runsNow(kind, tier, { set, cfg, helpersOn: true, ...o }).map(runsNowText)
+  expect(line('write-code', 'standard')).toEqual(['Claude: sonnet medium (tier)', 'Kiro: claude-sonnet-5.5 high (tier)'])
+  expect(line('design', 'deep')).toEqual(['Claude: opus high (kind default)', 'Antigravity: gemini-4-neon medium (kind choice)'])
+  expect(line('write-code', 'standard', { learned: { 'write-code': { rung: { model: 'haiku', effort: 'high' }, n: 6 } } })[0]).toBe('Claude: haiku high (auto, 6 runs)')
+  expect(line('write-code', 'standard', { learnedHelpers: { 'write-code': [{ provider: 'copilot', model: 'claude-sonnet-5.5', effort: 'medium', n: 7 }] } })[1]).toBe('Copilot: claude-sonnet-5.5 medium (auto, 7 runs)')
+  expect(runsNow('write-code', 'standard', { set, cfg, helpersOn: false }).map(runsNowText)).toEqual(['Claude: sonnet medium (tier)'])
+  const neon = SEED_NOTES.find(n => n.id === 'gemini-4-neon')!
+  expect(noteMapLine(neon)).toBe('Gemini 4 Neon · judgment, agentic, research, long-context, second-opinion · deep high, second high, standard medium')
+  expect(noteMapLine({ ...neon, tags: [], fits: [] })).toBe('Gemini 4 Neon · no tags · no fits')
+  expect(kindList([run(1, { kind: 'b' }), run(2, { kind: 'a' }), run(3, { kind: 'a' })], ['c', 'a'], ['d'])).toEqual(['a', 'b', 'c', 'd'])
+  expect(kindList([], ['a', 'b', 'c'], [], 2)).toEqual(['a', 'b'])
+  expect(tierOfKind([run(1, { tier: 'light' }), run(2, { tier: 'deep' }), run(3, { tier: 'deep' })], run(1).kind!)).toBe('deep')
+  expect(tierOfKind([run(1, { tier: 'light', at: '2026-11-02T00:00:00Z' }), run(2, { tier: 'deep', at: '2026-11-01T00:00:00Z' })], 'code-review')).toBe('light')
+  expect(tierOfKind([], 'x', { x: 'standard' })).toBe('standard')
+  expect(tierOfKind([], 'constructor', {})).toBeUndefined()
+  setHelperConfig(undefined)
+})
+
+test('the pane suggests a Claude model for a kind, applies it as the kind\'s default on a click, and a dismissal is remembered in the store without losing others', async ($, on) => {
+  const past = [1, 2].flatMap(n => [run(n, { tier: 'standard', kind: 'write-code', verdict: 'ok' }), run(n + 2, { tier: 'standard', kind: 'research', verdict: 'ok', key: `r${n}` })])
+  const kinds = { 'write-code': { model: 'haiku', effort: 'low' }, research: { model: 'haiku', effort: 'low' } }
+  const { store } = await boot($, on, [['settings', { kinds }], ['history', past], ['modelNews', { dismissedTries: ['old|claude|x|low'] }]])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^Try Claude Sonnet 5\.5 medium for write-code \(code\)$/))).toBeTruthy()
+  expect(await pane.find(text(/^Try Claude Sonnet 5\.5 medium for research \(research\)$/))).toBeTruthy()
+  expect(await pane.find(text(/^History: 4 runs; advice below\.$/))).toBeTruthy()
+  // Nothing has changed routing yet.
+  expect((store.get('settings') as { kinds: unknown }).kinds).toEqual(kinds)
+  await pane.press({ key: 'try-apply:write-code|claude|sonnet|medium' })
+  expect((store.get('settings') as { kinds: unknown }).kinds).toEqual({ ...kinds, 'write-code': { model: 'sonnet', effort: 'medium' } })
+  expect(await pane.find(text(/for write-code/))).toBeFalsy()
+  await pane.press({ key: 'try-dismiss:research|claude|sonnet|medium' })
+  expect((store.get('modelNews') as { dismissedTries: string[] }).dismissedTries).toEqual(['old|claude|x|low', 'research|claude|sonnet|medium'])
+  expect(await pane.find(text(/for research/))).toBeFalsy()
+  // The dismissal changed no setting.
+  expect((store.get('settings') as { kinds: unknown }).kinds).toEqual({ ...kinds, 'write-code': { model: 'sonnet', effort: 'medium' } })
+  await pane.unmount()
+})
+
+test('with helpers on, a helper model is suggested for a kind, applied as the kind\'s helper choice (nothing in helpers.py changes), and shown in the map', async ($, on) => {
+  const files = new Map<string, string>()
+  const world = helperWorld(on, files)
+  files.set(MODELS_FILE, JSON.stringify({ ...OFFERED, agy: { ...OFFERED.agy, models: [...OFFERED.agy.models, 'gemini-4-neon-high'] } }))
+  const past = [1, 2].map(n => hrun(n, { kind: 'design', verdict: 'ok' }))
+  const { store } = await boot($, on, [HELPERS_ON, ['history', past]], [], files, world.setup)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  const key = 'design|agy|gemini-4-neon|medium'
+  expect(await pane.find(text(/^Try Gemini 4 Neon medium on Antigravity for design \(judgment\)$/))).toBeTruthy()
+  await pane.press({ key: `try-apply:${key}` })
+  const choice = { provider: 'agy', model: 'gemini-4-neon', effort: 'medium' }
+  expect((store.get('settings') as { helpers: { kinds: unknown } }).helpers.kinds).toEqual({ design: choice })
+  expect(world.argsOf('set')).toEqual([])
+  expect(await pane.find({ type: 'Button', key: `try-apply:${key}` } as never)).toBeFalsy()
+  await openSettings(pane)
+  await pane.press({ key: 'model-map-toggle' })
+  expect(await pane.find(text(/^Claude: sonnet medium \(tier\) · Antigravity: gemini-4-neon medium \(kind choice\)$/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('Settings → Learning: the strengths and model map sit behind one handle; a kind\'s tags are edited by toggles, reset per kind, and the models are listed with their fits', async ($, on) => {
+  const past = [1, 2].map(n => run(n, { tier: 'standard', kind: 'write-code', verdict: 'ok' }))
+  const { store } = await boot($, on, [['settings', { kinds: { 'write-code': { model: 'haiku', effort: 'low' } } }], ['history', past]])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await openSettings(pane)
+  // Closed: the handle says what is inside; no kind lines yet.
+  expect(await pane.find(text(/^1 kind · \d+ models?$/))).toBeTruthy()
+  expect(await pane.find({ key: 'map-kind:write-code' } as never)).toBeFalsy()
+  await pane.press({ key: 'model-map-toggle' })
+  expect(await pane.find(text(/^code$/))).toBeTruthy()
+  expect(await pane.find(text(/^Claude: haiku low \(kind default\)$/))).toBeTruthy()
+  expect(await pane.find(text(new RegExp(`^Gemini 4 Neon · judgment, agentic, research, long-context, second-opinion · deep high, second high, standard medium$`)))).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'kind-tags-reset:write-code' } as never)).toBeFalsy()
+  // Edit: toggles for the vocabulary; each press is stored and marks the kind as edited.
+  await pane.press({ key: 'kind-tags-edit:write-code' })
+  await pane.press({ key: 'tag:write-code:review' })
+  expect((store.get('settings') as { kindTags: unknown }).kindTags).toEqual({ 'write-code': ['code', 'review'] })
+  expect(await pane.find(text(/^code · review$/))).toBeTruthy()
+  await pane.press({ key: 'tag:write-code:code' })
+  await pane.press({ key: 'tag:write-code:review' })
+  expect((store.get('settings') as { kindTags: unknown }).kindTags).toEqual({ 'write-code': [] })
+  expect(await pane.find(text(/^no strengths$/))).toBeTruthy()
+  await pane.press({ key: 'kind-tags-reset:write-code' })
+  expect((store.get('settings') as { kindTags: unknown }).kindTags).toEqual({})
+  expect(await pane.find(text(/^code$/))).toBeTruthy()
+  // Putting the default back by toggling leaves no override.
+  await pane.press({ key: 'tag:write-code:review' })
+  await pane.press({ key: 'tag:write-code:review' })
+  expect((store.get('settings') as { kindTags: unknown }).kindTags).toEqual({})
+  await pane.unmount()
 })

@@ -157,6 +157,8 @@ export type ModelNews = {
   proposals: Proposal[]
   /** Proposal keys the person dismissed. */
   dismissed: string[]
+  /** Model suggestions for a kind ("Try ...") the person dismissed: `kind|provider|model|effort`. */
+  dismissedTries: string[]
 }
 
 /** The model and level the router chose for a helper step, with the template to launch. */
@@ -184,6 +186,8 @@ export type Settings = {
   hereEffort: HereEffortSettings
   /** Per kind of work, the rung its steps run on instead of their tier's (set by applying the history's advice). */
   kinds: Record<string, Rung>
+  /** Per kind of work, the strengths (model tags) it wants, over the defaults in tiers.ts (KIND_TAGS); an empty list says none. */
+  kindTags: Record<string, ModelTag[]>
   /** Auto mode: a subagent step whose kind has enough history runs at the cheapest rung that did it well. */
   autoRoute: boolean
   /** Auto mode picks a rung only with at least this many runs on it, and at least `autoOkPercent` of them ok. */
@@ -405,6 +409,9 @@ declare module 'claude-code' {
       /** The notes under the New models card are open; the list of notes in Settings is open. */
       showCardNotes: boolean
       showAllNotes: boolean
+      /** Settings → Learning: the kinds' strengths and the model map are open; the kind whose tags are being edited ('' for none). */
+      showModelMap: boolean
+      editKindTags: string
       /** This chat's plan view: all steps open or closed (absent: the stored default), and steps opened or closed one by one. */
       paneView: { all?: boolean; toggled: Record<string, boolean> }
       /** The `?` glossary under the plan header is open. */

@@ -1,5 +1,5 @@
 // Default tiers, model prices, the escalation ladder and other constants of model-router.
-import type { Effort, Model, Price, Settings, Tier } from '../types'
+import type { Effort, Model, ModelTag, Price, Settings, Tier } from '../types'
 
 // Defaults only: the pane's Settings change them, remembered across sessions.
 // Aliases track the newest release, so a new model version needs no edit here.
@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   hereEffort: { enabled: false, maxContext: 40_000 },
   kinds: {},
+  kindTags: {},
   autoRoute: false,
   // Auto mode changes routing without asking, so it wants more evidence than the advice does.
   autoMinRuns: 5,
@@ -100,6 +101,32 @@ export const SCOPE_NOTE =
 
 // A finished step counts as mostly start-up cost when it wrote little but read a lot.
 export const SETUP_HEAVY = { maxOutput: 2000, minRead: 20000 }
+
+// The strengths a kind of work wants, as model tags (notes.ts has the vocabulary): what a model's note must carry to be suggested for it.
+// Settings → Learning overrides a kind (Settings.kindTags). A kind not listed matches by its own words (KIND_WORDS).
+export const KIND_TAGS: Record<string, ModelTag[]> = {
+  'write-code': ['code'],
+  'code-review': ['review', 'careful'],
+  review: ['review', 'careful'],
+  'code-read': ['careful', 'long-context'],
+  'cross-check': ['careful', 'long-context'],
+  'web-research': ['research'],
+  research: ['research'],
+  'literature-research': ['research'],
+  'design-review': ['judgment'],
+  design: ['judgment'],
+  'research-assistant': ['judgment'],
+  summarize: ['long-context', 'fast'],
+  'eval-run': ['agentic'],
+  sweep: ['agentic'],
+}
+
+// Words in a kind's name that stand for a strength, for a kind KIND_TAGS does not list.
+export const KIND_WORDS: [string, ModelTag][] = [
+  ['review', 'review'],
+  ['research', 'research'],
+  ['code', 'code'],
+]
 
 // Learned advice: how many runs it needs, and the shares that move a kind or tier a rung.
 // (Auto mode has its own thresholds, in Settings: autoMinRuns and autoOkPercent.)

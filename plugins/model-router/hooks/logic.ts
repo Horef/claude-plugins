@@ -1,11 +1,11 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelNews, ModelNote, ModelsCache, ModelsReport, PlanNode, Proposal, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
-import { findNote, normId } from './notes'
+import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelNews, ModelNote, ModelsCache, ModelTag, ModelsReport, PlanNode, Proposal, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import { TAGS, findNote, normId } from './notes'
 import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRESETS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.27.0'
+export const VERSION = '0.28.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -398,6 +398,18 @@ const helperChoices = (v: unknown): Record<string, HelperChoice> => {
   )
 }
 
+/** Stored per-kind strengths: a kind name of plain words, each tag one of the vocabulary once, in the vocabulary's order. Anything else is left out. */
+const kindTagsOf = (v: unknown): Record<string, ModelTag[]> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+
+  return Object.fromEntries(
+    Object.entries(v)
+      .filter(([k, tags]) => normKind(k) === k && Array.isArray(tags))
+      .slice(0, 100)
+      .map(([k, tags]) => [k, TAGS.filter(t => (tags as unknown[]).includes(t))]),
+  )
+}
+
 /** Settings as stored, which may be missing parts that older versions did not have, filled from the defaults. */
 export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }) | undefined): Settings => ({
   tiers: { ...DEFAULT_SETTINGS.tiers, ...(stored?.tiers ?? {}) },
@@ -416,6 +428,7 @@ export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }
   },
   hereEffort: { ...DEFAULT_SETTINGS.hereEffort, ...(stored?.hereEffort ?? {}) },
   kinds: { ...(stored?.kinds && typeof stored.kinds === 'object' ? stored.kinds : {}) },
+  kindTags: kindTagsOf(stored?.kindTags),
   autoRoute: stored?.autoRoute === true,
   autoMinRuns: wholeIn(stored?.autoMinRuns, 1, 1000) ?? DEFAULT_SETTINGS.autoMinRuns,
   autoOkPercent: wholeIn(stored?.autoOkPercent, 1, 100) ?? DEFAULT_SETTINGS.autoOkPercent,
@@ -1544,7 +1557,7 @@ export const asModelNews = (v: unknown): ModelNews => {
     (p): p is Proposal => !!p && typeof p === 'object' && str(p.provider) && str(p.tier) && str(p.model) && str(p.effort) && typeof p.why === 'string',
   )
 
-  return { seen, asked: stringsOf(x.asked).slice(-200), proposals: proposals.map(p => ({ ...p, key: proposalKey(p), at: str(p.at) ? p.at : '' })).slice(-20), dismissed: stringsOf(x.dismissed).slice(-200) }
+  return { seen, asked: stringsOf(x.asked).slice(-200), proposals: proposals.map(p => ({ ...p, key: proposalKey(p), at: str(p.at) ? p.at : '' })).slice(-20), dismissed: stringsOf(x.dismissed).slice(-200), dismissedTries: stringsOf(x.dismissedTries).slice(-200) }
 }
 
 /** Records models of a report as first seen (the earliest day wins); returns the news changed, or the same object when nothing was new. */

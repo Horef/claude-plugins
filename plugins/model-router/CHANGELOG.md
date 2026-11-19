@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.28.0 (2026-11-19)
+- strengths: kinds map to the model notes' tags (KIND_TAGS, editable per kind); Try suggestions under the advice for kinds without enough history (Apply sets the kind default or helper choice, Dismiss remembered); a model map in Settings > Learning showing what each kind would run on now
+
 ## 0.27.0 (2026-11-19)
 - one pane layout on every surface (health, new models, plan, cost, footer; steps as two-line rows with details on click, Expand all replaces Minimal view); Settings as five Basics (Spend presets Thrifty/Balanced/Best quality) and seven closed groups with summaries; plain words (this chat, Claude agent, other subscription, effort) and a glossary; resets confirm
 

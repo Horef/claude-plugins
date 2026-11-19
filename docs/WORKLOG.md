@@ -2,6 +2,16 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-19 - model-router 0.24-0.28 and herdr-delegate 0.15: health, direct mode, new models, one layout, Herdr view
+
+- Owner request: the router was hard to use for his father, whose helper statistics stayed empty with no logs to tell why; new models (Gemini 4 Neon, GA 2026-11-18) should be noticed and proposed; a proposal (claude.ai artifact) was approved whole. Code read found the likely cause: outside a Herdr terminal helpers were offered, failed, and fell back to subagents silently; helpers switched on mid-chat never got their rule (O3, O4); quota-cut runs counted as weak (O5); `helpers.py models` missed new codenames (O33).
+- herdr-delegate 0.15.0 (#104): NEW/GONE models, `models --json/--cached`, tier `argon` -> `second`, Neon defaults for agy deep/second, direct mode `helpers.py run` (no Herdr), `direct` in config; D11 gains two contracts.
+- model-router 0.24.0 (#105) health line and checks, helper mode herdr/direct/none, rule resend, direct-mode rule, cut-short verdict, fallback reasons, empty states, JSONL log, `/router report`; 0.25.0 (#106) new-model check, model notes, plan tool `models`, New models card; 0.26.0 (#107) state file + read-only Herdr mod (docked right, remote via exec on); 0.27.0 (#108) one layout everywhere, Settings = 5 Basics + 7 groups, plain words, Spend presets; 0.28.0 (#109) strengths and model map.
+- Work ran on helpers (Copilot Sonnet for herdr-delegate and the Herdr view, the personal Claude account for router steps, which can load plugin-authoring); the lead reviewed each, fixed small issues, split h1's commits so eval edits stood alone, bumped and merged.
+- Commands: `claude plugin test plugins/model-router` 125 pass; `loop.py eval` model-router and herdr-delegate exit 0; `loop.py check --base` 0/0 on each PR; CI green on each; plugins updated in both accounts; `helpers.py render` migrated templates.
+- Also: the owner's two quota-cut design-review runs removed from the router store (backup in the session scratchpad); 73 stale remote branches deleted (only `main` left); new memory: delete remote branches after merge.
+- Unverified: 0.27's layout on every surface; remote Herdr view; direct mode on Kiro/Codex/Copilot for real.
+
 ## 2026-11-17 - strange-loop 2.6.0: judged cases twice; usage across CLIs
 
 - Owner request: judged outputs are non-deterministic, so `judge` takes repeated `--old`/`--new` (one blind packet per pair; the new version wins a case only if it wins both; one pair is allowed but flagged); §4 step 6 says so. Owner allowed going over 25 KB where cutting hurts: the "never sees the comparison" sentence came back, and SKILL.md is 25.2 KB under a size-exception that names the way back under (move §8's adoption steps to a reference).
