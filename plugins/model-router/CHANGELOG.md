@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.29.2 (2026-11-20)
+- Fixes from a Gemini 4 Neon review: a step's details always say what it runs on (a group with nothing run says so); dots count only values that are shown (the experiment's limit, Long/All steps while off); helper advice and proposals use only levels a model is offered at; 'install hc' only when hc is what is missing; checks skipped after a failure say skipped, pending rules are a quiet line, not ✗; an open ▾ list closes with its view; open groups drop their summary; provider names in Order; 'second' in the glossary; cost line in plain words; refused inputs say why.
+
 ## 0.29.1 (2026-11-20)
 - Settings read calmly in the terminal: a setting's name bold with its control on one line and a short dim why under it; passing helper checks folded into one count; Helper models one line a provider, and another Claude account no longer marked as changed (it is compared with herdr-delegate's defaults for Claude accounts); Order's reset only when an order changed; no blank row between plan steps.
 

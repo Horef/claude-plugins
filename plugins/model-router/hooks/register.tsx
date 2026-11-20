@@ -2534,8 +2534,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   // Where the rung comes from when it is not the level: "auto: sonnet · high (learned, 5 runs)".
   const rungFrom = (s: Step) => {
     if (s.where !== 'agent') return null
-    if (s.model && s.effort) return <Text key={`from:${s.id}`} dimColor size="footnote">{`your pick: ${s.model} · ${s.effort}`}</Text>
     const b = baseRung(s, set, learned)
+    // A pick of the model or the effort alone fills the rest from the rung it would otherwise run on.
+    if (s.model || s.effort) return <Text key={`from:${s.id}`} dimColor size="footnote">{`your pick: ${s.model ?? b.model} · ${s.effort ?? b.effort}`}</Text>
     if (b.source === 'tier') return <Text key={`from:${s.id}`} dimColor size="footnote">{`${s.tier} level's default: ${b.model} · ${b.effort}`}</Text>
     const label =
       b.source === 'auto' ? `auto: ${b.model} · ${b.effort} (learned, ${b.n} runs)` : `${s.kind} default: ${b.model} · ${b.effort}`
@@ -3275,9 +3276,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   </Box>
                 )}
                 {dot(`order:${t}`, orderDiffers(t))}
-                <Button key={`order-edit:${t}`} plain dimColor={!editing} onPress={() => void update($, editOrder, v => (v === t ? '' : t))}>
-                  {editing ? 'Done' : 'Edit'}
-                </Button>
+                <Box flexShrink={0}>
+                  <Button key={`order-edit:${t}`} plain dimColor={!editing} onPress={() => void update($, editOrder, v => (v === t ? '' : t))}>
+                    {editing ? 'Done' : 'Edit'}
+                  </Button>
+                </Box>
               </Box>
               {editing &&
                 items.map((name, i) => (
