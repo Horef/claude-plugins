@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O14 2026-11-20 [friction] toy decoding figures: a model calibrated to the paper's noise ceiling gave ~100% identification, so the curve taught nothing; check the figure's message against the toy's numbers before accepting, and lower signal SD for that figure only (claude-code, 76901 Lecture 6 identification figure)
 
 ## Resolved
 - O13 2026-11-14 [failure] Dy.portrait draws both nullclines solid (dynamics.py:289-290), failing the section 3 second-channel rule; no label placement option and lint does not check labels on streamlines (eval grading 2026-11-14) → 7.3.0

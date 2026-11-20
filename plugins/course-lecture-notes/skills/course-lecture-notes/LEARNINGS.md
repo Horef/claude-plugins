@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O8 2026-11-16 [workaround] Workflow 6: DEVONthink update_record_content patch mode applies zero-context pure-insertion hunks (@@ -N,0 +M,k @@) one line early; deletions/replacements with zero context are fine. Write insertions as replacements of the preceding line; -U0 is needed because context lines next to inline SVGs are 20-70k chars. Verify by export_record + cmp (claude-code, 769001)
+- O10 2026-11-20 [missing] Workflow: a paper-discussion class (slides = only discussion questions, content = an assigned paper) is not covered; what worked: Parts teaching the paper, a Part for the class critique, a Part answering each question slide, plus paper-premark run in parallel (claude-code, 76901 Lecture 6, Chang & Tsao 2017)
 
 ## Resolved
 - O9 2026-11-16 [misled] Goals 2 / Math: owner found guides 'very dense mathematical lists' that are hard to read (Tutorial 3 + bonus hour); Anki-first rules (self-contained blocks, where: list after every display equation, bold label per paragraph, equation before idea) cost readability. Pilot 2026-11-16: Part intro (question/trick/answer), per-Part symbol table (owner wants to keep some where-list), takeaway-first blocks, one-line symbol glosses, analogies and meaning, asides as blockquotes. Pending owner review before changing goals/lint (claude-code, 769001) → 1.9.0
