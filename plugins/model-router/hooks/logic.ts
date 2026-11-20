@@ -245,7 +245,7 @@ export const helperModeOf = (run: Settings['helpers']['run'], f: { hc: boolean; 
 }
 
 /** One health check of the helpers, in the order they depend on each other. */
-export type Check = { id: string; state: 'ok' | 'fail' | 'skip'; text: string; fix?: string; /** Skipped because an earlier check failed. */ blocked?: true }
+export type Check = { id: string; state: 'ok' | 'fail' | 'skip'; text: string; fix?: string; /** Skipped because an earlier check failed. */ blocked?: true; /** Not done yet, and nothing to do: it happens by itself. */ pending?: true }
 
 /** What the health checks read: the settings, what was read of helpers.py, and whether the chat has the helper rules. */
 export type HealthInput = {
@@ -304,7 +304,7 @@ export const healthChecks = ({ set, st, rules }: HealthInput): Check[] => {
   else add('direct', direct, 'Direct mode available', 'Direct mode not available', 'Update herdr-delegate to 0.15 or later and install a helper CLI it can run headless, or start Claude from a Herdr terminal.')
   if (mode === 'none') skip('rules', 'Helper rules: none while helpers cannot run')
   else if (blocked || rules) add('rules', rules, 'Helper rules delivered to this chat', '', '')
-  else skip('rules', 'Helper rules go to the chat with your next message')
+  else out.push({ id: 'rules', state: 'skip', text: 'Helper rules go to the chat with your next message', pending: true })
 
   return out
 }

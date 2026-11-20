@@ -2357,7 +2357,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const noteFor = (key: string) =>
     note.key === key ? <Text key={`input-note:${key}`} color="warning" size="footnote" wrap="wrap">{note.text}</Text> : null
   const settingsChecks = () => {
-    const quiet = checks.filter(c => c.state !== 'fail')
+    // A pending check (the rules, before the next message) keeps its own quiet line: it is neither passed nor unneeded.
+    const quiet = checks.filter(c => c.state !== 'fail' && !c.pending)
     // With helpers.py or hc missing the steps under Run helpers say what to install: the fixes would repeat them.
     const withFix = hs.status !== 'missing' && hs.status !== 'nohc'
     if (checksOpen || quiet.length < 2) return checkList('settings', withFix)
@@ -2367,7 +2368,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     const notNeeded = quiet.length - ok - skipped
 
     return [
-      ...checkList('settings', withFix).filter((_, i) => checks[i]!.state === 'fail'),
+      ...checkList('settings', withFix).filter((_, i) => checks[i]!.state === 'fail' || checks[i]!.pending),
       <Box key="checks-quiet" flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
         <Text size="footnote">{`✓ ${ok} check${ok === 1 ? ' passes' : 's pass'}${notNeeded ? ` · ${notNeeded} not needed` : ''}${skipped ? ` · ${skipped} skipped` : ''}${tty ? ' ·' : ''}`}</Text>
         <Button key="checks-show" plain dimColor onPress={() => void update($, showChecks, () => true)}>
@@ -3263,9 +3264,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
           return (
             <Box key={`helper-order:${t}`} flexDirection="column">
-              <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center">
-                <Text color={TIER_COLOR[t]} weight="semibold" size="footnote">{`${t}:`}</Text>
-                {!editing && <Text size="footnote" wrap="wrap">{helperList(set, t).map(n => orderName(n, t)).join(' → ') || 'none'}</Text>}
+              <Box flexDirection="row" columnGap="xs" alignItems="flex-start">
+                <Box flexShrink={0}>
+                  <Text color={TIER_COLOR[t]} weight="semibold" size="footnote">{`${t}:`}</Text>
+                </Box>
+                {/* The order wraps inside its own column, so the level's name and Edit stay on the first line. */}
+                {!editing && (
+                  <Box flexShrink={1}>
+                    <Text size="footnote" wrap="wrap">{helperList(set, t).map(n => orderName(n, t)).join(' → ') || 'none'}</Text>
+                  </Box>
+                )}
                 {dot(`order:${t}`, orderDiffers(t))}
                 <Button key={`order-edit:${t}`} plain dimColor={!editing} onPress={() => void update($, editOrder, v => (v === t ? '' : t))}>
                   {editing ? 'Done' : 'Edit'}
