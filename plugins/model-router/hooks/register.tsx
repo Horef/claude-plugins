@@ -174,6 +174,7 @@ const ruleKinds = atom({ plugin: 'model-router', key: 'ruleKinds' } as const, []
 const genomeNoted = atom({ plugin: 'model-router', key: 'genomeNoted' } as const, [])
 const draft = atom({ plugin: 'model-router', key: 'draft' } as const, {})
 const showHelperPath = atom({ plugin: 'model-router', key: 'showHelperPath' } as const, false)
+const showChecks = atom({ plugin: 'model-router', key: 'showChecks' } as const, false)
 const helperCfg = atom({ plugin: 'model-router', key: 'helperCfg' } as const, { status: 'unknown', warnings: [] })
 const showHealth = atom({ plugin: 'model-router', key: 'showHealth' } as const, false)
 const reportNote = atom({ plugin: 'model-router', key: 'reportNote' } as const, '')
@@ -2066,6 +2067,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const seen = await read($, seenSkills)
   const isSettingsOpen = await read($, showSettings)
   const pathOpen = await read($, showHelperPath)
+  const checksOpen = await read($, showChecks)
   const known = await read($, told)
   const pv = await read($, paneView)
   const glossaryOpen = await read($, showGlossary)
@@ -2239,8 +2241,20 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ]
   }
 
-  // A settings row: the name and what it changes on the left, its control on the right.
-  const settingRow = (key: string, label: string, help: string | undefined, control: unknown, isCustom = false, below?: unknown) => (
+  // A settings row: the name and what it changes on the left, its control on the right. In the terminal the name (bold) and
+  // its control share the first line and the one-line why sits dim under them, so names stand out from the text around them.
+  const settingRow = (key: string, label: string, help: string | undefined, control: unknown, isCustom = false, below?: unknown) =>
+    tty ? (
+      <Box key={`row:${key}`} flexDirection="column">
+        <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+          <Text weight="semibold">{label}</Text>
+          {dot(key, isCustom)}
+          {control as never}
+        </Box>
+        {help ? <Text dimColor size="footnote" wrap="wrap">{help}</Text> : null}
+        {(below ?? null) as never}
+      </Box>
+    ) : (
     <Box key={`row:${key}`} flexDirection="column">
       <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
         <Box flexDirection="column" flexShrink={1}>
@@ -2254,7 +2268,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>
       {(below ?? null) as never}
     </Box>
-  )
+    )
   const switchRow = (key: string, label: string, help: string, isOn: boolean, onPress: () => void, isCustom = false) =>
     settingRow(
       key,
@@ -2316,6 +2330,23 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ) : null}
       </Box>
     ))
+  // In Settings: the failing checks with their fixes, and the rest as one count with Show (the health line's Why lists all).
+  const settingsChecks = () => {
+    const quiet = checks.filter(c => c.state !== 'fail')
+    if (checksOpen || quiet.length < 2) return checkList('settings')
+    const ok = quiet.filter(c => c.state === 'ok').length
+    const skip = quiet.length - ok
+
+    return [
+      ...checkList('settings').filter((_, i) => checks[i]!.state === 'fail'),
+      <Box key="checks-quiet" flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+        <Text size="footnote">{`✓ ${ok} check${ok === 1 ? '' : 's'} pass${skip ? ` · ${skip} not needed` : ''}`}</Text>
+        <Button key="checks-show" plain dimColor onPress={() => void update($, showChecks, () => true)}>
+          Show
+        </Button>
+      </Box>,
+    ]
+  }
   const healthRow = (
     <Box key="section:health" flexDirection="column" rowGap="xs">
       <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
@@ -2761,7 +2792,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         </Box>
       )}
       {/* In the terminal a blank row between steps: without it the rows read as one block of text. */}
-      <Box flexDirection="column" rowGap={tty ? 1 : 'xs'}>
+      <Box flexDirection="column" rowGap="xs">
         {list.map(row)}
       </Box>
       {list.length > 0 && (
@@ -3089,10 +3120,17 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         )}
       </Box>
     )
+    const orderReset = TIER_ORDER.some(orderDiffers) ? (
+      <Box key="helper-reset-row" flexDirection="row">
+        <Button key="helper-reset" plain dimColor onPress={() => void editHelpers($, { tiers: { ...D.helpers.tiers } })}>
+          Reset to default order
+        </Button>
+      </Box>
+    ) : null
     const runRow = settingRow(
       'run',
       'Run helpers',
-      `Through Herdr in a Herdr terminal, else directly (helpers.py run). Now: ${helperMode() === 'none' ? 'cannot run' : helperMode()}.`,
+      `Herdr when this chat is in a Herdr terminal, else directly. Now: ${helperMode() === 'none' ? 'cannot run' : helperMode()}.`,
       pick(
         'helpers-run',
         set.helpers.run,
@@ -3107,7 +3145,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     )
     if (!helpersOn) {
       return [
-        <Box key="helper-checks" flexDirection="column" rowGap="xs">{checkList('settings')}</Box>,
+        <Box key="helper-checks" flexDirection="column" rowGap="xs">
+          {settingsChecks() as never}
+          {checksOpen && (
+            <Box flexDirection="row">
+              <Button key="checks-hide" plain dimColor onPress={() => void update($, showChecks, () => false)}>
+                Hide passing checks
+              </Button>
+            </Box>
+          )}
+        </Box>,
         runRow,
         <Box key="helpers-none" flexDirection="column" rowGap="xs">
           {hs.status === 'unknown' && <Text dimColor size="footnote">Not read yet.</Text>}
@@ -3136,12 +3183,21 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     }
 
     return [
-      <Box key="helper-checks" flexDirection="column" rowGap="xs">{checkList('settings')}</Box>,
+      <Box key="helper-checks" flexDirection="column" rowGap="xs">
+          {settingsChecks() as never}
+          {checksOpen && (
+            <Box flexDirection="row">
+              <Button key="checks-hide" plain dimColor onPress={() => void update($, showChecks, () => false)}>
+                Hide passing checks
+              </Button>
+            </Box>
+          )}
+        </Box>,
       runRow,
       settingRow(
         'fusion',
         'Copilot Fusion',
-        "GitHub's router across Claude and GPT models, tried before the pinned Copilot helper. Measured 2026-11-01: Max is near Opus 5.5 at max effort for about half the cost; High is unmeasured.",
+        "GitHub's router across Claude and GPT models, tried before Copilot's own pick (details in the README).",
         pick(
           'helpers-fusion',
           set.helpers.fusion,
@@ -3156,15 +3212,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       ),
       // Order: one line a level; Edit swaps that line for its ↑ ↓ off / + controls, one level at a time.
       <Box key="helper-order" flexDirection="column" rowGap="xs">
-        <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
-          <Box flexDirection="column" flexShrink={1}>
-            <Text weight="medium">Order</Text>
-            <Text dimColor size="footnote" wrap="wrap">Per level, the first usable helper runs the step.</Text>
-          </Box>
-          <Button key="helper-reset" plain dimColor onPress={() => void editHelpers($, { tiers: { ...D.helpers.tiers } })}>
-            Reset to default order
-          </Button>
-        </Box>
+        {settingRow(
+          'order',
+          'Order',
+          'Per level, the first usable helper runs the step.',
+          // Only when an order was changed: a reset with nothing to reset is noise. The terminal puts it under the lines.
+          tty ? null : orderReset,
+        )}
         {TIER_ORDER.map(t => {
           const items = helperItems(set, t)
           const off = helpersOff(set, t)
@@ -3213,15 +3267,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             </Box>
           )
         })}
+        {tty ? orderReset : null}
       </Box>,
       // Helper models: only what differs from herdr-delegate's defaults; Change… opens the full grid.
       <Box key="helper-models" flexDirection="column" rowGap="xs">
-        <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm" rowGap="xs">
-          <Box flexDirection="column" flexShrink={1}>
-            <Text weight="medium">Helper models</Text>
-            <Text dimColor size="footnote" wrap="wrap">Model and effort of each helper level, kept in herdr-delegate's helpers.py.</Text>
-          </Box>
-          <Box flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
+        {settingRow(
+          'helper-models',
+          'Helper models',
+          'Kept in herdr-delegate; listed here where you changed them.',
+          // The terminal puts the check under the list, beside Change…, so the name stands alone on its line.
+          tty ? null : <Box key="helper-models-check" flexDirection="row" flexWrap="wrap" columnGap="xs" rowGap="xs" alignItems="center">
             {hs.status === 'ready' && (
               <Text dimColor size="footnote">{modelsChecked(hs.models) ? `checked ${modelsChecked(hs.models)}` : 'not checked yet'}</Text>
             )}
@@ -3230,8 +3285,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                 {hs.busy ? 'Checking…' : 'Check models'}
               </Button>
             )}
-          </Box>
-        </Box>
+          </Box>,
+        )}
         {hs.message && hs.status === 'ready' && <Text color="warning" size="footnote" wrap="wrap">{hs.message}</Text>}
         {hs.warnings.map((w, i) => (
           <Text key={`helper-warning:${i}`} color="warning" size="footnote" wrap="wrap">{w}</Text>
@@ -3241,21 +3296,42 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           (helperTiersDiffering.length === 0 ? (
             <Text key="helper-models-default" dimColor size="footnote">All at herdr-delegate's defaults.</Text>
           ) : (
-            helperTiersDiffering.map(({ provider, tier }) => {
-              const r = helperTierRung(hcfg, provider, tier)!
+            // One line a provider: its changed levels side by side, the level names in their colours.
+            [...new Set(helperTiersDiffering.map(d => d.provider))].map(provider => (
+              <Box key={`helper-differs:${provider}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center">
+                <Text size="footnote">{`${hcfg.providers[provider]?.label ?? provider}:`}</Text>
+                {helperTiersDiffering
+                  .filter(d => d.provider === provider)
+                  .map(({ tier }, i) => {
+                    const r = helperTierRung(hcfg, provider, tier)!
 
-              return (
-                <Text key={`helper-differs:${provider}:${tier}`} size="footnote" wrap="wrap">
-                  {`${hcfg.providers[provider]?.label ?? provider} ${tier}: ${r.model} ${r.effort} •`}
-                </Text>
-              )
-            })
+                    return (
+                      <Box key={`helper-differs:${provider}:${tier}`} flexDirection="row" columnGap="xs">
+                        {i > 0 ? <Text dimColor size="footnote">·</Text> : null}
+                        <Text size="footnote" color={isTier(tier) ? TIER_COLOR[tier] : undefined} dimColor={!isTier(tier)}>{tier}</Text>
+                        <Text size="footnote">{`${r.model} ${r.effort}`}</Text>
+                      </Box>
+                    )
+                  })}
+                {dot(`helper-differs:${provider}`, true)}
+              </Box>
+            ))
           ))}
-        {hcfg && (
-          <Box flexDirection="row">
-            <Button key="helper-grid" plain onPress={() => void update($, showHelperGrid, v => !v)}>
-              {gridOpen ? 'Hide the list' : 'Change…'}
-            </Button>
+        {(hcfg || (tty && hs.status === 'ready')) && (
+          <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+            {hcfg && (
+              <Button key="helper-grid" plain onPress={() => void update($, showHelperGrid, v => !v)}>
+                {gridOpen ? 'Hide the list' : 'Change…'}
+              </Button>
+            )}
+            {tty && hs.status === 'ready' && (
+              <Button key="helpers-check" plain onPress={() => void checkModels($)}>
+                {hs.busy ? 'Checking…' : 'Check models'}
+              </Button>
+            )}
+            {tty && hs.status === 'ready' && (
+              <Text dimColor size="footnote">{modelsChecked(hs.models) ? `checked ${modelsChecked(hs.models)}` : 'not checked yet'}</Text>
+            )}
           </Box>
         )}
         {gridOpen &&
@@ -3356,7 +3432,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       {settingRow(
         'helpers',
         'Other subscriptions',
-        'Send self-contained steps to agents of your other subscriptions or accounts (Copilot, Codex, Kiro…).',
+        'Send self-contained steps to your other subscriptions (Copilot, Codex, Kiro…).',
         pick(
           'helpers',
           set.helpers.enabled ? set.helpers.use : 'off',
@@ -3418,7 +3494,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           switchRow(
             'auto-route',
             'Auto mode',
-            `A Claude agent step whose kind has enough history runs on the cheapest rung that did that kind well (ok in at least ${set.autoOkPercent}% of ${set.autoMinRuns} or more runs there). Your own picks on a step still win.${helpersLive(set) ? ' A helper step gets its model the same way.' : ''}`,
+            `A kind with enough history runs on the cheapest model that did it well (ok in ${set.autoOkPercent}% of ${set.autoMinRuns}+ runs)${helpersLive(set) ? ', helpers too' : ''}. Your own picks win.`,
             set.autoRoute,
             () =>
               void (async () => {
@@ -3477,7 +3553,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           ...(mapOpen
             ? [
                 <Text key="map-help" dimColor size="footnote" wrap="wrap">
-                  A kind's strengths pick the models suggested for it (Try, under the cost) and are never applied by themselves. Under each kind: what would run its steps now.
+                  Strengths pick the models suggested for a kind (Try, under the cost); never applied by themselves. Under each kind: what runs it now.
                 </Text>,
                 mapKinds.length === 0 ? <Text key="map-none" dimColor size="footnote" wrap="wrap">No kinds yet: they appear once steps carry a kind.</Text> : null,
                 ...mapKinds.map(kind => {
@@ -3661,12 +3737,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ])}
 
         {settingsGroup('diagnostics', 'Diagnostics', `log ${set.log ? 'on' : 'off'} · Herdr view ${set.herdrView ? 'on' : 'off'}`, { custom: groupDiffers.diagnostics }, () => [
-          switchRow('log', 'Keep a log', 'One file a day under ~/.config/model-router/log/, kept 14 days; no prompts, titles or file contents.', set.log, () => void editSettings($, s => ({ ...s, log: !s.log })), differs.log),
+          switchRow('log', 'Keep a log', 'One file a day in ~/.config/model-router/log/, kept 14 days; no prompts or contents.', set.log, () => void editSettings($, s => ({ ...s, log: !s.log })), differs.log),
           reportRow('settings-report'),
           switchRow(
             'herdr-view',
             'Show in Herdr',
-            'A scrollable view of the plan in Herdr (read-only), for plans too long for this pane. Writes ~/.config/model-router/state/ when ~/.config/herdr-app exists.',
+            'The plan in a Herdr sidebar (read-only), for plans too long for this pane.',
             set.herdrView,
             () => void editSettings($, s => ({ ...s, herdrView: !s.herdrView })),
             differs.herdrView,
@@ -3682,7 +3758,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             switchRow(
               'here-effort',
               'Experiment: effort of steps done in this chat',
-              "While a step done in this chat runs, send this chat's requests at its level's effort, lower or higher than the chat's own. A change of effort makes the API write the conversation to the cache again, so only while the chat is under the limit below.",
+              "While a step runs in this chat, use its level's effort. Each switch rewrites the cache, so only under the limit below.",
               set.hereEffort.enabled,
               () => void editHereEffort($, { enabled: !set.hereEffort.enabled }),
               differs.hereEffort,

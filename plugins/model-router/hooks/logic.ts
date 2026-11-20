@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUN
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.29.0'
+export const VERSION = '0.29.1'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -1147,10 +1147,21 @@ export const fitEffort = (cfg: HelperConfig, cache: ModelsCache | undefined, pro
 }
 
 /** Whether a tier's model and level differ from the shipped defaults; a tier the defaults lack counts as different. */
+/** A provider tier's shipped default: its own entry, else its kind's (another Claude account takes `kind_defaults.claude`). */
+export const helperTierDefault = (cfg: HelperConfig | undefined, defaults: HelperConfig | undefined, provider: string, tier: string): HelperRung | undefined => {
+  const own = helperTierRung(defaults, provider, tier)
+  if (own) return own
+  const kind = cfg?.providers[provider]?.kind
+  const t = kind ? defaults?.kind_defaults?.[kind]?.tiers?.[tier] : undefined
+
+  return t && !t.command && t.model && t.effort ? { model: t.model, effort: t.effort } : undefined
+}
+
 export const helperTierDiffers = (cfg: HelperConfig | undefined, defaults: HelperConfig | undefined, provider: string, tier: string) => {
   const now = helperTierRung(cfg, provider, tier)
-  const was = helperTierRung(defaults, provider, tier)
-  if (!defaults) return { model: false, effort: false }
+  const was = helperTierDefault(cfg, defaults, provider, tier)
+  // No default to compare with (no defaults file, or a tier the person added): nothing to mark.
+  if (!defaults || !was) return { model: false, effort: false }
 
   return { model: now?.model !== was?.model, effort: now?.effort !== was?.effort }
 }

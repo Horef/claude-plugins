@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-20: model-router 0.29.1, calmer Settings in the terminal
+Owner feedback on 0.29: keeps the terminal pane (the Herdr view has no Settings, so it stays optional); the blank row between steps made the plan harder to scan; the "wall of text" was mainly Settings (screenshot of Other subscriptions).
+- Causes: names used weight medium, which the terminal draws as plain text; controls sat on their own line under 2-4 lines of help; all helper checks were listed; Helper models listed 12 levels because another Claude account's tiers were compared with no default (herdr-delegate keeps them under `kind_defaults.claude`).
+- Fixes: terminal setting rows put the bold name and its control on one line with a short dim why under it (help texts shortened; detail stays in the README); passing checks fold into `✓ 6 checks pass · 1 not needed` with Show; Helper models one line a provider, Claude accounts compared with the Claude-account defaults (`helperTierDefault`); Reset to default order only when an order changed; Check models beside Change… in the terminal; no blank row between steps.
+- Commands: `claude plugin test plugins/model-router` 126 pass; `loop.py eval model-router` exit 0; pty render of Settings → Other subscriptions at 150x60. gui-design O17-O18 recorded (terminal bold weights; blank rows between list rows).
+
 ## 2026-11-19 (evening): model-router 0.29.0, terminal fixes and the Herdr sidebar
 Owner feedback on 0.28 (screenshots): a settings list "stopped" at Antigravity light; the terminal pane read as a wall of text; the Herdr view needed a command each time.
 - Built a pty driver (scratchpad, pyte) that runs `claude` at a fixed size, presses keys and dumps the pane with the focus marked; it showed the scroll was fine and the ⇄ button was stuck: agy's next model, `gpt-oss-120b`, has only medium, so `helpers.py set ... effort=high` refused and the error showed far above.

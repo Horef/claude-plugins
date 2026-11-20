@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.29.1 (2026-11-20)
+- Settings read calmly in the terminal: a setting's name bold with its control on one line and a short dim why under it; passing helper checks folded into one count; Helper models one line a provider, and another Claude account no longer marked as changed (it is compared with herdr-delegate's defaults for Claude accounts); Order's reset only when an order changed; no blank row between plan steps.
+
 ## 0.29.0 (2026-11-19)
 - terminal pickers open a list, readable plan rows, helper model button no longer sticks, Herdr view as a right sidebar
 
