@@ -6,6 +6,8 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O3 2026-11-01 [wish] 6 Surfaces: Claude Code mod panes (terminal, desktop) cannot be rendered by the agent; a text dump of the drawn pane from the mod test harness would close the look loop for mods. (claude-code, first release; model-router 0.8-0.11 reworks)
+- O17 2026-11-20 [misled] terminal.md: the terminal draws only semibold and bold as bold; model-router's setting names used weight medium, so in the terminal names, help and values all looked alike and the owner called Settings 'a wall of text'. Use semibold for names in a terminal pane, put the control on the name's line and the one-line why dim under it. (claude-code, model-router 0.29.1 settings)
+- O18 2026-11-20 [failure] terminal.md: a blank row between plan rows (0.29.0) made the list harder to scan; the owner preferred rows without gaps (two-line rows already separate by their first-line glyph). Separate rows with weight and indentation, not empty lines. (claude-code, model-router 0.29.0 step rows)
 
 ## Resolved
 - O16 2026-11-14 [missing] SKILL.md:87 data-built picker labels: no generic fallback for unseen fields or test with a second kind of set; SKILL.md:18 no offer to write a profile; :76 warm-over-cool rule undefined on blue-red bases (eval grading 2026-11-14) → 0.5.0
