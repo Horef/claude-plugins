@@ -402,6 +402,8 @@ declare module 'claude-code' {
       showHelperPath: boolean
       /** Settings → Other subscriptions lists every helper check, not only the failing ones and a count of the rest. */
       showChecks: boolean
+      /** Why the last value typed into a Settings input was not taken, by the input's key ('' when none). */
+      inputNote: { key: string; text: string }
       /** The health check list is open under the health line. */
       showHealth: boolean
       /** Where the last report was written (shown beside its button), or why it failed. */

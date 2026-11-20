@@ -2311,7 +2311,9 @@ test('without Herdr\'s hc there are no helpers either: its own message, no helpe
 
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   await openSettings(pane)
-  expect(await pane.find(text(/^Helpers run through Herdr's hc, which was not found on your PATH\./))).toBeTruthy()
+  expect(await pane.find(text(/^Helpers run through Herdr's hc, which was not found on your PATH, or directly/))).toBeTruthy()
+  // The steps below say what to install, so the failing check does not repeat its fix.
+  expect(await pane.find(text(/^Install Herdr and put hc on your PATH/))).toBeFalsy()
   // herdr-delegate is installed here: its install line is not offered, the hc one is.
   expect(await pane.find(text(/Install herdr-delegate/))).toBeFalsy()
   expect(await pane.find(text(/^1\. Install Herdr's hc/))).toBeTruthy()
@@ -2842,9 +2844,9 @@ test('with the config naming installed CLIs the rules list those, with this acco
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   await openSettings(pane)
   // One line a level; Edit lists the helpers one per row.
-  expect(await pane.find(text(/^claudemain \(this account\) → codex$/))).toBeTruthy()
+  expect(await pane.find(text(/^Claude main \(this account\) → Codex$/))).toBeTruthy()
   await pressPick(pane, 'order-edit:standard')
-  expect(await pane.find(text(/^1\. claudemain \(this account\)$/))).toBeTruthy()
+  expect(await pane.find(text(/^1\. Claude main \(this account\)$/))).toBeTruthy()
   expect(await pane.find(text(/No helper CLI installed/))).toBeFalsy()
   await pane.unmount()
 })
@@ -2937,7 +2939,7 @@ test('health checks come in order, each failure with its fix, and what depends o
   expect(neither.find(c => c.id === 'hc')?.fix).toBe('Install Herdr and put hc on your PATH, or update herdr-delegate to 0.15+ for direct mode.')
 
   // Inside Herdr direct mode does not matter; the setting "direct" skips the Herdr checks.
-  expect(states(healthChecks({ set: on, st: { status: 'ready', config: cfg, hc: true, terminal: true }, rules: false }))).toMatchObject({ terminal: 'ok', direct: 'skip', rules: 'fail' })
+  expect(states(healthChecks({ set: on, st: { status: 'ready', config: cfg, hc: true, terminal: true }, rules: false }))).toMatchObject({ terminal: 'ok', direct: 'skip', rules: 'skip' })
   const onlyDirect = mergeSettings({ helpers: { enabled: true, run: 'direct' } })
   expect(states(healthChecks({ set: onlyDirect, st: { status: 'ready', config: cfg, hc: false, terminal: false }, rules: true }))).toMatchObject({ hc: 'skip', terminal: 'skip', direct: 'ok' })
 
@@ -3300,7 +3302,7 @@ test('the models report: parsed, older helpers.py recognised, stale providers fo
 test('proposals are checked against the config, the offered models and the levels; the card shows only what needs a click', () => {
   setHelperConfig({ providers: { agy: { label: 'Antigravity', model_id: '{model}-{effort}', efforts: ['low', 'medium', 'high'], tiers: { deep: { model: 'claude-opus-5-5', effort: 'high' }, second: { model: 'gemini-4-argon', effort: 'high' } } } } })
   const cfg = helperDefaults() as never
-  const ctx = { cfg: { providers: { agy: { label: 'Antigravity', model_id: '{model}-{effort}', efforts: ['low', 'medium', 'high'], tiers: { deep: { model: 'claude-opus-5-5', effort: 'high' }, second: { model: 'gemini-4-argon', effort: 'high' } } } } } as never, cache: { agy: { models: ['gemini-4-neon-high', 'gemini-4-argon-high'] } }, set: mergeSettings(undefined), news: asModelNews({ dismissed: ['agy|deep|gemini-4-argon|low'] }), today: '2026-11-19' }
+  const ctx = { cfg: { providers: { agy: { label: 'Antigravity', model_id: '{model}-{effort}', efforts: ['low', 'medium', 'high'], tiers: { deep: { model: 'claude-opus-5-5', effort: 'high' }, second: { model: 'gemini-4-argon', effort: 'high' } } } } } as never, cache: { agy: { models: ['gemini-4-neon-high', 'gemini-4-argon-high', 'gemini-4-argon-low'] } }, set: mergeSettings(undefined), news: asModelNews({ dismissed: ['agy|deep|gemini-4-argon|low'] }), today: '2026-11-19' }
   void cfg
   const r = checkProposals(
     [
@@ -3326,6 +3328,8 @@ test('proposals are checked against the config, the offered models and the level
   expect(r.skipped).toHaveLength(11)
   expect(r.skipped.join('\n')).toContain('already')
   expect(r.skipped.join('\n')).toContain('dismissed by the person')
+  // A level the provider has but this model is not offered at (agy lists ids per level) is refused before it reaches the card.
+  expect(r.skipped.join('\n')).toContain('gemini-4-neon on agy comes at high')
   expect(r.skipped.join('\n')).toContain('does not offer gemini-9')
   setHelperConfig(undefined)
 
@@ -3805,8 +3809,8 @@ test('each Settings group says what it holds in one line while closed, remembers
   await pressPick(pane, 'settings')
   const summary = async (re: RegExp) => (await pane.find({ type: 'Text', text: re } as never))?.text
   expect(await summary(/^light Haiku/)).toBe('light Haiku low · standard Sonnet medium · deep Opus high')
-  // Basics say "ready · Herdr"; the group's line names the helpers in their order.
-  expect(await summary(/^ready · Herdr$/)).toBeTruthy()
+  // The health line says "ready", so Basics repeat it only on a failure; the group's line names the helpers in their order.
+  expect(await summary(/^ready · Herdr$/)).toBeFalsy()
   expect(await summary(/^\w+, .* · Herdr$/)).toBe('Kiro, Copilot, Antigravity · Herdr')
   expect(await summary(/^auto off/)).toBe('auto off · 1 kind tuned')
   expect(await summary(/^\d+ models/)).toMatch(/^5 models · 1 without price · \d+ notes$/)
@@ -3824,6 +3828,8 @@ test('each Settings group says what it holds in one line while closed, remembers
   // Opening a group is remembered in the settings, for the next chat too.
   await pressPick(pane, 'group:skills')
   expect(await pane.find({ type: 'Select', key: 'skill-tier:scientific-figures' } as never)).toBeTruthy()
+  // An open group does not repeat its closed line.
+  expect(await summary(/mapped$/)).toBeFalsy()
   expect((store.get('settings') as { openGroups: string[] }).openGroups).toEqual(['skills'])
   await pane.unmount()
   const again = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
@@ -4091,4 +4097,56 @@ test('another Claude account is compared with herdr-delegate\'s defaults for Cla
   expect(helperTierDiffers(cfg, defaults, 'kiro', 'light')).toEqual({ model: false, effort: true })
   expect(helperTierDiffers(cfg, defaults, 'kiro', 'extra')).toEqual({ model: false, effort: false })
   expect(helperTierDiffers(cfg, undefined, 'kiro', 'light')).toEqual({ model: false, effort: false })
+})
+
+test('review fixes: details always say what a step runs on; dots count only what is shown; an open list closes with its view; a refused value says why', async ($, on) => {
+  const { store } = await boot($, on, [['settings', { hereEffort: { enabled: false, maxContext: 80_000 }, helpers: { enabled: false, use: 'all' } }]])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Write', tier: 'standard', where: 'agent' },
+      { id: 'g1', title: 'Group', tier: 'deep', where: 'agent', parts: [{ id: 'g1.a', title: 'Part', tier: 'light', where: 'agent' }] },
+    ],
+  } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  // A Claude agent step on its level's default, and a group with nothing run yet, still open to a line.
+  await pressPick(pane, 'open:s1')
+  expect(await pane.find(text(/^standard level's default: \w+ · \w+$/))).toBeTruthy()
+  await pressPick(pane, 'open:g1')
+  expect(await pane.find(text(/^No part has run yet/))).toBeTruthy()
+
+  // A limit kept while its experiment is off, and "All steps" kept while helpers are off, are not marked.
+  await pressPick(pane, 'settings')
+  expect(await pane.find({ key: 'dflt:helpers' } as never)).toBeFalsy()
+  expect(await pane.find({ key: 'dflt:group:advanced' } as never)).toBeFalsy()
+
+  // An open ▾ list closes when Settings close: it is not open again on the next visit.
+  await pane.press({ key: 'spend' } as never)
+  expect(await pane.find({ type: 'Button', key: 'spend:opt:balanced' } as never)).toBeTruthy()
+  await pane.press({ key: 'settings-done' } as never)
+  await pane.press({ key: 'settings' } as never)
+  expect(await pane.find({ type: 'Button', key: 'spend:opt:balanced' } as never)).toBeFalsy()
+
+  // Values an input does not take say why under it; the next one taken clears the note.
+  await pane.unmount()
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await openSettings(desk)
+  await desk.input({ key: 'add-model', text: 'opus-fast' } as never)
+  expect(await desk.find(text(/^Not taken: "opus-fast" counts as opus/))).toBeTruthy()
+  await desk.input({ key: 'add-model', text: 'nova' } as never)
+  expect(await desk.find(text(/^Not taken/))).toBeFalsy()
+  expect((store.get('settings') as { models: string[] }).models).toContain('nova')
+  await desk.input({ key: 'price:nova', text: '2' } as never)
+  expect(await desk.find(text(/^Not taken: two numbers/))).toBeTruthy()
+  await desk.unmount()
+})
+
+test('the helper checks: skipped after a failure is not "not needed"; the rules are pending, not failing, before the next message', () => {
+  const set = mergeSettings({ helpers: { enabled: true } } as never)
+  const missing = healthChecks({ set, st: { status: 'missing' } as never, rules: false })
+  const byId = Object.fromEntries(missing.map(c => [c.id, c]))
+  expect(byId.script!.state).toBe('fail')
+  expect(byId.terminal).toMatchObject({ state: 'skip', blocked: true })
+  expect(byId.terminal!.text).not.toContain('needs hc')
+  expect(byId.enabled!.fix ?? '').not.toContain('Settings → Helpers')
 })
