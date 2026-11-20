@@ -175,6 +175,7 @@ const genomeNoted = atom({ plugin: 'model-router', key: 'genomeNoted' } as const
 const draft = atom({ plugin: 'model-router', key: 'draft' } as const, {})
 const showHelperPath = atom({ plugin: 'model-router', key: 'showHelperPath' } as const, false)
 const showChecks = atom({ plugin: 'model-router', key: 'showChecks' } as const, false)
+const inputNote = atom({ plugin: 'model-router', key: 'inputNote' } as const, { key: '', text: '' })
 const helperCfg = atom({ plugin: 'model-router', key: 'helperCfg' } as const, { status: 'unknown', warnings: [] })
 const showHealth = atom({ plugin: 'model-router', key: 'showHealth' } as const, false)
 const reportNote = atom({ plugin: 'model-router', key: 'reportNote' } as const, '')
@@ -746,6 +747,7 @@ async function editStep($: EngineInterface, id: string, fn: (s: Step) => Step) {
 
 async function clearPlan($: EngineInterface) {
   await update($, steps, () => [])
+  await update($, picking, () => '')
   await update($, paneView, v => ({ ...v, toggled: {} }))
   await update($, draft, () => ({}))
   await update($, planStatus, () => 'none')
@@ -1212,7 +1214,8 @@ async function applyHelperMode($: EngineInterface) {
   if (!st.config || (st.status !== 'ready' && st.status !== 'nohc')) return
   const mode: HelperMode = helperModeOf(set.helpers.run, { hc: st.hc === true, terminal: st.terminal === true, direct: directAvailable(st.config) })
   setHelperConfig(mode === 'none' ? undefined : st.config, mode)
-  const status = mode === 'none' && st.hc === false ? 'nohc' : 'ready'
+  // 'nohc' (the pane says to install Herdr's hc) only when hc is what is missing: not in direct-only mode, not without any helper CLI.
+  const status = mode === 'none' && st.hc === false && set.helpers.run !== 'direct' && !noHelperCli() ? 'nohc' : 'ready'
   if (status !== st.status) await update($, helperCfg, x => ({ ...x, status }))
 }
 
@@ -2068,6 +2071,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const isSettingsOpen = await read($, showSettings)
   const pathOpen = await read($, showHelperPath)
   const checksOpen = await read($, showChecks)
+  const note = await read($, inputNote)
   const known = await read($, told)
   const pv = await read($, paneView)
   const glossaryOpen = await read($, showGlossary)
@@ -2140,7 +2144,8 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     hereEffort: set.hereEffort.enabled !== D.hereEffort.enabled,
     hereLimit: set.hereEffort.maxContext !== D.hereEffort.maxContext,
     helpers: set.helpers.enabled !== D.helpers.enabled,
-    use: set.helpers.use !== D.helpers.use,
+    // "Long steps / All steps" only exists while helpers are on: Off with an old "all" kept is still the default.
+    use: set.helpers.enabled && set.helpers.use !== D.helpers.use,
     fusion: set.helpers.fusion !== D.helpers.fusion,
     autoRoute: set.autoRoute !== D.autoRoute,
     autoMinRuns: set.autoMinRuns !== D.autoMinRuns,
@@ -2171,7 +2176,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     prices: set.models.length > 0 || models.some(priceDiffers),
     skills: Object.keys(set.skills).length > 0,
     diagnostics: differs.log || differs.herdrView,
-    advanced: differs.hereEffort || differs.hereLimit || TIER_ORDER.some(t => tierDiffers(t).scope),
+    advanced: differs.hereEffort || (set.hereEffort.enabled && differs.hereLimit) || TIER_ORDER.some(t => tierDiffers(t).scope),
   }
   const preset = presetOf(set)
   const anyDiffers =
@@ -2290,14 +2295,21 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Button
             key={`group:${id}`}
             plain
-            onPress={() => void editSettings($, s => ({ ...s, openGroups: s.openGroups.includes(id) ? s.openGroups.filter(x => x !== id) : [...s.openGroups, id] }))}
+            onPress={() =>
+              void (async () => {
+                await update($, picking, () => '')
+                await editSettings($, s => ({ ...s, openGroups: s.openGroups.includes(id) ? s.openGroups.filter(x => x !== id) : [...s.openGroups, id] }))
+              })()
+            }
           >
             {`${isOpen ? '▾' : '▸'} ${name}`}
           </Button>
-          <Text key={`group-summary:${id}`} size="footnote" color={flagged.fail ? 'warning' : undefined} dimColor={!flagged.fail} wrap="wrap">
-            {summary}
-          </Text>
           {dot(`group:${id}`, !!flagged.custom)}
+          {!isOpen || flagged.fail ? (
+            <Text key={`group-summary:${id}`} size="footnote" color={flagged.fail ? 'warning' : undefined} dimColor={!flagged.fail} wrap="wrap">
+              {summary}
+            </Text>
+          ) : null}
         </Box>
         {isOpen ? (
           <Box key={`group-body:${id}`} flexDirection="column" rowGap="xs" paddingLeft={2}>
@@ -2319,11 +2331,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   )
   const checkGlyph = { ok: '✓', fail: '✗', skip: '–' } as const
   // The helper checks with their fixes: under the health line's Why, and in Settings → Other subscriptions.
-  const checkList = (where: string) =>
+  const checkList = (where: string, withFix = true) =>
     checks.map(c => (
       <Box key={`check:${where}:${c.id}`} flexDirection="column">
         <Text size="footnote" color={c.state === 'fail' ? 'warning' : undefined} dimColor={c.state === 'skip'} wrap="wrap">{`${checkGlyph[c.state]} ${c.text}`}</Text>
-        {c.state === 'fail' && c.fix ? (
+        {withFix && c.state === 'fail' && c.fix ? (
           <Box paddingLeft={2}>
             <Text dimColor size="footnote" wrap="wrap">{c.fix}</Text>
           </Box>
@@ -2331,16 +2343,34 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>
     ))
   // In Settings: the failing checks with their fixes, and the rest as one count with Show (the health line's Why lists all).
+  // A template as the person knows it: "Copilot", "Copilot fusion-max", "uni (this account)".
+  const orderName = (template: string, t: string) => {
+    const short = template.split(`-${t}`).join('')
+    const provider = short.split('-')[0]!
+    const rest = short.slice(provider.length + 1)
+
+    return templateLabel(template, `${providerLabel(provider)}${rest ? ` ${rest}` : ''}`)
+  }
+  // A typed value that was not taken: why, under its input; the next value taken clears it.
+  const refuse = (key: string, text: string) => void update($, inputNote, () => ({ key, text }))
+  const accept = () => (note.key ? void update($, inputNote, () => ({ key: '', text: '' })) : undefined)
+  const noteFor = (key: string) =>
+    note.key === key ? <Text key={`input-note:${key}`} color="warning" size="footnote" wrap="wrap">{note.text}</Text> : null
   const settingsChecks = () => {
-    const quiet = checks.filter(c => c.state !== 'fail')
-    if (checksOpen || quiet.length < 2) return checkList('settings')
+    // A pending check (the rules, before the next message) keeps its own quiet line: it is neither passed nor unneeded.
+    const quiet = checks.filter(c => c.state !== 'fail' && !c.pending)
+    // With helpers.py or hc missing the steps under Run helpers say what to install: the fixes would repeat them.
+    const withFix = hs.status !== 'missing' && hs.status !== 'nohc'
+    if (checksOpen || quiet.length < 2) return checkList('settings', withFix)
     const ok = quiet.filter(c => c.state === 'ok').length
-    const skip = quiet.length - ok
+    // Checks skipped because an earlier one failed are "skipped", not "not needed".
+    const skipped = quiet.filter(c => c.blocked).length
+    const notNeeded = quiet.length - ok - skipped
 
     return [
-      ...checkList('settings').filter((_, i) => checks[i]!.state === 'fail'),
+      ...checkList('settings', withFix).filter((_, i) => checks[i]!.state === 'fail' || checks[i]!.pending),
       <Box key="checks-quiet" flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
-        <Text size="footnote">{`✓ ${ok} check${ok === 1 ? '' : 's'} pass${skip ? ` · ${skip} not needed` : ''}`}</Text>
+        <Text size="footnote">{`✓ ${ok} check${ok === 1 ? ' passes' : 's pass'}${notNeeded ? ` · ${notNeeded} not needed` : ''}${skipped ? ` · ${skipped} skipped` : ''}${tty ? ' ·' : ''}`}</Text>
         <Button key="checks-show" plain dimColor onPress={() => void update($, showChecks, () => true)}>
           Show
         </Button>
@@ -2503,9 +2533,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const kindTag = (s: Step) => (s.kind ? <Text key={`kind:${s.id}`} dimColor size="footnote">{s.kind}</Text> : null)
   // Where the rung comes from when it is not the level: "auto: sonnet · high (learned, 5 runs)".
   const rungFrom = (s: Step) => {
-    if (s.where !== 'agent' || (s.model && s.effort)) return null
+    if (s.where !== 'agent') return null
     const b = baseRung(s, set, learned)
-    if (b.source === 'tier') return null
+    // A pick of the model or the effort alone fills the rest from the rung it would otherwise run on.
+    if (s.model || s.effort) return <Text key={`from:${s.id}`} dimColor size="footnote">{`your pick: ${s.model ?? b.model} · ${s.effort ?? b.effort}`}</Text>
+    if (b.source === 'tier') return <Text key={`from:${s.id}`} dimColor size="footnote">{`${s.tier} level's default: ${b.model} · ${b.effort}`}</Text>
     const label =
       b.source === 'auto' ? `auto: ${b.model} · ${b.effort} (learned, ${b.n} runs)` : `${s.kind} default: ${b.model} · ${b.effort}`
 
@@ -2600,8 +2632,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           <Text key={`parts:${s.id}`} dimColor size="footnote">{`· ${r.done}/${r.total} done`}</Text>
           {r.cost > 0 ? <Text key={`gcost:${s.id}`} dimColor size="footnote" tabular>{`· ≈${fmtUsd(r.cost)}`}</Text> : null}
         </Box>
-        {isOpen(s) && (r.cost > 0 || moved) ? (
+        {isOpen(s) ? (
           <Box key={`details:${s.id}`} flexDirection="column" paddingLeft={4}>
+            {r.cost === 0 && !moved && <Text dimColor size="footnote" wrap="wrap">{r.done === 0 ? 'No part has run yet: its cost shows here once one has.' : 'No cost recorded for its parts.'}</Text>}
             {r.cost > 0 && (
               <Text dimColor size="footnote" tabular wrap="wrap">
                 ≈{fmtUsd(r.cost)} · {fmtTok(tokens)} tok + {fmtTok(r.usage.cacheRead)} cached
@@ -2713,6 +2746,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ['verdict', 'ok · weak (needed more) · overkill (a cheaper model would do) · cut short (stopped by a fault, not counted)'],
     ['effort', 'how long the model thinks before it answers: low, medium, high, xhigh, max'],
     ['saved', 'what delegated steps cost less than the same work on this chat’s model'],
+    ...(set.helpers.enabled ? ([['second', 'a helper level for a second opinion from another model family']] as [string, string][]) : []),
     ...(tty
       ? ([
           ['⇄', 'a button that picks the next option on Enter'],
@@ -2725,7 +2759,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       {list.length === 0 ? (
         <Box flexDirection="column">
           <Text key="plan-empty" size="footnote" wrap="wrap">No plan yet. Multi-step tasks show their steps here.</Text>
-          {!always && <Text dimColor size="footnote" wrap="wrap">Turn on "Plan every message" in Settings to plan every message.</Text>}
+          {!always && <Text dimColor size="footnote" wrap="wrap">Turn on "Plan every message" in Settings to plan single-step tasks too.</Text>}
         </Box>
       ) : (
         <Box flexDirection="column" rowGap="xs">
@@ -2881,12 +2915,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     <Box key="section:cost" flexDirection="column" rowGap="xs">
       <Box flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
         <Button key="cost-view" plain onPress={() => void update($, costView, v => cycle(VIEWS.map(x => x.value), v) as CostView)}>
-          {`${VIEWS.find(x => x.value === view)?.label ?? 'This plan'} ${tty ? '⇄' : '▾'}`}
+          {`${VIEWS.find(x => x.value === view)?.label ?? 'This plan'} ⇄`}
         </Button>
         <Text key="cost-line" size="footnote" tabular wrap="wrap">
-          <Text dimColor>{`main${m.model && view !== 'all' ? ` (${m.model})` : ''} `}</Text>
+          <Text dimColor>{`this chat${m.model && view !== 'all' ? ` (${m.model})` : ''} `}</Text>
           {fmtCost(mainSpent, mainOpen)}
-          <Text dimColor> · subagents </Text>
+          <Text dimColor> · Claude agents </Text>
           {fmtCost(agents, agentsOpen)}
           <Text dimColor> · saved </Text>
           <Text color={savedNow > 0 ? 'success' : undefined}>{savedNow > 0 ? `≈${fmtUsd(savedNow)} (${pct(savedNow, mainSpent + equivalent)})` : '—'}</Text>
@@ -2986,6 +3020,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         onPress={() =>
           void (async () => {
             await refreshShared($)
+            await update($, picking, () => '')
             await update($, showSettings, () => true)
           })()
         }
@@ -3114,10 +3149,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             submitLabel="Set"
             onSubmit={v => {
               const path = asScriptPath(v)
-              if (path !== undefined || !v.trim()) void editHelpers($, { script: path ?? '' })
+              if (path === undefined && v.trim()) return refuse('helpers-script', 'Not taken: give the full path of a file named helpers.py.')
+              accept()
+              void editHelpers($, { script: path ?? '' })
             }}
           />
         )}
+        {pathOpen ? noteFor('helpers-script') : null}
       </Box>
     )
     const orderReset = TIER_ORDER.some(orderDiffers) ? (
@@ -3166,7 +3204,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             <Box key="helpers-how" flexDirection="column">
               <Text size="footnote" wrap="wrap">
                 {hs.status === 'nohc'
-                  ? "Helpers run through Herdr's hc, which was not found on your PATH. Model-router works without it: every step runs as a Claude agent."
+                  ? "Helpers run through Herdr's hc, which was not found on your PATH, or directly (herdr-delegate 0.15+). Model-router works without them: every step runs as a Claude agent."
                   : 'Helpers are agents on other subscriptions or accounts. They are optional: model-router works without them, running every step as a Claude agent.'}
               </Text>
               <Text dimColor size="footnote" wrap="wrap">To enable them:</Text>
@@ -3227,18 +3265,27 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
           return (
             <Box key={`helper-order:${t}`} flexDirection="column">
-              <Box flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center">
-                <Text color={TIER_COLOR[t]} weight="semibold" size="footnote">{`${t}:`}</Text>
-                {!editing && <Text size="footnote" wrap="wrap">{helperOrder(set, t).split(`-${t}`).join('') || 'none'}</Text>}
+              <Box flexDirection="row" columnGap="xs" alignItems="flex-start">
+                <Box flexShrink={0}>
+                  <Text color={TIER_COLOR[t]} weight="semibold" size="footnote">{`${t}:`}</Text>
+                </Box>
+                {/* The order wraps inside its own column, so the level's name and Edit stay on the first line. */}
+                {!editing && (
+                  <Box flexShrink={1}>
+                    <Text size="footnote" wrap="wrap">{helperList(set, t).map(n => orderName(n, t)).join(' → ') || 'none'}</Text>
+                  </Box>
+                )}
                 {dot(`order:${t}`, orderDiffers(t))}
-                <Button key={`order-edit:${t}`} plain dimColor={!editing} onPress={() => void update($, editOrder, v => (v === t ? '' : t))}>
-                  {editing ? 'Done' : 'Edit'}
-                </Button>
+                <Box flexShrink={0}>
+                  <Button key={`order-edit:${t}`} plain dimColor={!editing} onPress={() => void update($, editOrder, v => (v === t ? '' : t))}>
+                    {editing ? 'Done' : 'Edit'}
+                  </Button>
+                </Box>
               </Box>
               {editing &&
                 items.map((name, i) => (
                   <Box key={`helper:${t}:${name}`} flexDirection="row" flexWrap="wrap" columnGap="xs" alignItems="center" paddingLeft={2}>
-                    <Text size="footnote">{`${i + 1}. ${templateLabel(name, short(name))}`}</Text>
+                    <Text size="footnote">{`${i + 1}. ${orderName(name, t)}`}</Text>
                     {i > 0 && (
                       <Button key={`helper-up:${t}:${name}`} plain onPress={() => void editHelperOrder($, t, l => moveHelper(l, i, -1))}>
                         ↑
@@ -3259,7 +3306,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                   <Text dimColor size="footnote">off:</Text>
                   {off.map(name => (
                     <Button key={`helper-on:${t}:${name}`} plain dimColor onPress={() => void editHelperOrder($, t, l => [...l, name].join(','))}>
-                      {`+ ${templateLabel(name, short(name))}`}
+                      {`+ ${orderName(name, t)}`}
                     </Button>
                   ))}
                 </Box>
@@ -3320,17 +3367,18 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         {(hcfg || (tty && hs.status === 'ready')) && (
           <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
             {hcfg && (
-              <Button key="helper-grid" plain onPress={() => void update($, showHelperGrid, v => !v)}>
+              <Button key="helper-grid" plain onPress={() => void (async () => { await update($, picking, () => ''); await update($, showHelperGrid, v => !v) })()}>
                 {gridOpen ? 'Hide the list' : 'Change…'}
               </Button>
             )}
+            {tty && hs.status === 'ready' && hcfg ? <Text dimColor size="footnote">·</Text> : null}
             {tty && hs.status === 'ready' && (
               <Button key="helpers-check" plain onPress={() => void checkModels($)}>
                 {hs.busy ? 'Checking…' : 'Check models'}
               </Button>
             )}
             {tty && hs.status === 'ready' && (
-              <Text dimColor size="footnote">{modelsChecked(hs.models) ? `checked ${modelsChecked(hs.models)}` : 'not checked yet'}</Text>
+              <Text dimColor size="footnote">{modelsChecked(hs.models) ? `· checked ${modelsChecked(hs.models)}` : '· not checked yet'}</Text>
             )}
           </Box>
         )}
@@ -3417,7 +3465,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     <Box key="section:settings" flexDirection="column" rowGap="sm">
       <Box flexDirection="row" justifyContent="space-between" alignItems="center">
         <Text size="heading" weight="semibold">Settings</Text>
-        <Button key="settings-done" variant="primary" onPress={() => void update($, showSettings, () => false)}>
+        <Button key="settings-done" variant="primary" onPress={() => void (async () => { await update($, picking, () => ''); await update($, showSettings, () => false) })()}>
           Done
         </Button>
       </Box>
@@ -3444,7 +3492,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           v => void editHelpers($, v === 'off' ? { enabled: false } : { enabled: true, use: v === 'all' ? 'all' : 'long' }),
         ),
         differs.helpers || differs.use,
-        set.helpers.enabled ? (
+        set.helpers.enabled && helperFails ? (
           <Text key="helpers-state" size="footnote" color={helperFails ? 'warning' : undefined} dimColor={!helperFails} wrap="wrap">
             {helperState}
           </Text>
@@ -3459,7 +3507,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ),
         preset !== 'balanced',
       )}
-      {switchRow('open-pane', 'Open the pane in new chats', 'Opens this pane whenever a chat starts.', set.openPane, () =>
+      {switchRow('open-pane', 'Open the pane in new chats', 'No need to type /router when a chat starts.', set.openPane, () =>
         void editSettings($, s => ({ ...s, openPane: !s.openPane })),
         differs.openPane,
       )}
@@ -3650,7 +3698,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                       onSubmit={v => {
                         const text = v.trim()
                         const price = parsePrice(text)
-                        if (!text || price) {
+                        if (text && !price) return refuse(`price:${x}`, 'Not taken: two numbers, dollars per million input and output tokens, e.g. 2 10.')
+                        accept()
+                        {
                           void editSettings($, s => {
                             const prices = { ...s.prices }
                             if (price) prices[x] = price
@@ -3661,6 +3711,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                       }}
                     />
                   )}
+                  {noteFor(`price:${x}`)}
                 </Box>
               )
             }),
@@ -3670,13 +3721,18 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
                 placeholder="Add a model by name, e.g. nova"
                 submitLabel="Add"
                 onSubmit={v => {
-                  const name = modelOf(v.trim().toLowerCase())
-                  if (name && name === v.trim().toLowerCase()) {
-                    void editSettings($, s => (knownModels(s).includes(name) ? s : { ...s, models: [...s.models, name] }))
-                  }
+                  const typed = v.trim().toLowerCase()
+                  const name = modelOf(typed)
+                  if (!typed) return
+                  // A name holding a known family ("opus-fast") would count as that family, so it cannot be a model of its own.
+                  if (!name) return refuse('add-model', 'Not taken: letters, digits and . _ : / - only.')
+                  if (name !== typed) return refuse('add-model', `Not taken: "${typed}" counts as ${name}, which is known already.`)
+                  accept()
+                  void editSettings($, s => (knownModels(s).includes(name) ? s : { ...s, models: [...s.models, name] }))
                 }}
               />
             ) : null,
+            noteFor('add-model'),
             <Box key="model-notes-row" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="sm" rowGap="xs">
               <Text size="footnote">{`Model notes (${notesCount}) · checked ${reportChecked(hs.report) ?? modelsChecked(hs.models) ?? 'never'}`}</Text>
               {hs.status === 'ready' && (

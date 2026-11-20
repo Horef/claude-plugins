@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUN
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.29.1'
+export const VERSION = '0.29.2'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -245,7 +245,7 @@ export const helperModeOf = (run: Settings['helpers']['run'], f: { hc: boolean; 
 }
 
 /** One health check of the helpers, in the order they depend on each other. */
-export type Check = { id: string; state: 'ok' | 'fail' | 'skip'; text: string; fix?: string }
+export type Check = { id: string; state: 'ok' | 'fail' | 'skip'; text: string; fix?: string; /** Skipped because an earlier check failed. */ blocked?: true; /** Not done yet, and nothing to do: it happens by itself. */ pending?: true }
 
 /** What the health checks read: the settings, what was read of helpers.py, and whether the chat has the helper rules. */
 export type HealthInput = {
@@ -264,7 +264,7 @@ export const healthChecks = ({ set, st, rules }: HealthInput): Check[] => {
   let blocked = false
   const add = (id: string, ok: boolean, okText: string, failText: string, fix: string) => {
     if (blocked) {
-      out.push({ id, state: 'skip', text: okText })
+      out.push({ id, state: 'skip', text: okText, blocked: true })
       return false
     }
     out.push(ok ? { id, state: 'ok', text: okText } : { id, state: 'fail', text: failText, fix })
@@ -272,7 +272,7 @@ export const healthChecks = ({ set, st, rules }: HealthInput): Check[] => {
     return ok
   }
   const skip = (id: string, text: string) => out.push({ id, state: 'skip', text })
-  if (!add('enabled', set.helpers.enabled, 'Helpers switched on', 'Helpers are switched off', 'Settings → Helpers → switch Helpers on.')) blocked = true
+  if (!add('enabled', set.helpers.enabled, 'Helpers switched on', 'Helpers are switched off', 'Settings → Other subscriptions: choose Long steps or All steps.')) blocked = true
   const read = st.status !== 'unknown'
   if (!add('script', !read || st.status !== 'missing', "herdr-delegate's helpers.py found", "herdr-delegate's helpers.py not found", `Install the herdr-delegate plugin: /plugin install herdr-delegate@${st.marketplace ?? 'horef-claude-plugins'}, then Look again.`)) blocked = true
   const cfg = st.config
@@ -297,12 +297,14 @@ export const healthChecks = ({ set, st, rules }: HealthInput): Check[] => {
   } else if (add('hc', hc, "Herdr's hc found", "Herdr's hc not found on your PATH", `Install Herdr and put hc on your PATH${orDirect}`)) {
     if (!terminal && instead) skip('terminal', 'Not inside a Herdr terminal: direct mode runs helpers instead')
     else add('terminal', terminal, 'This chat is inside a Herdr terminal', 'This chat is not inside a Herdr terminal', `Start Claude from a Herdr terminal${orDirect}`)
-  } else skip('terminal', 'Herdr terminal: needs hc')
-  if (run === 'herdr') skip('direct', 'Direct mode: off (Settings → Helpers → Run helpers)')
+  } else if (blocked) out.push({ id: 'terminal', state: 'skip', text: 'This chat is inside a Herdr terminal', blocked: true })
+  else skip('terminal', 'Herdr terminal: needs hc')
+  if (run === 'herdr') skip('direct', 'Direct mode: off (Settings → Other subscriptions → Run helpers)')
   else if (mode === 'herdr') skip('direct', 'Direct mode: not needed inside Herdr')
   else add('direct', direct, 'Direct mode available', 'Direct mode not available', 'Update herdr-delegate to 0.15 or later and install a helper CLI it can run headless, or start Claude from a Herdr terminal.')
   if (mode === 'none') skip('rules', 'Helper rules: none while helpers cannot run')
-  else add('rules', rules, 'Helper rules delivered to this chat', 'Helper rules not delivered to this chat yet', 'Send any message: the next turn carries them.')
+  else if (blocked || rules) add('rules', rules, 'Helper rules delivered to this chat', '', '')
+  else out.push({ id: 'rules', state: 'skip', text: 'Helper rules go to the chat with your next message', pending: true })
 
   return out
 }
@@ -1222,7 +1224,10 @@ export const helperLadder = (cfg: HelperConfig, provider: string, cache?: Models
     const from = floor.get(model)!
     const to = i === ordered.length - 1 || high < 0 ? efforts.length - 1 : Math.max(high, from)
 
-    return efforts.slice(from, to + 1).map(effort => ({ model, effort }))
+    // A model offered at fewer levels (agy's gpt-oss-120b: medium only) keeps only those, so advice never names a pair helpers.py refuses.
+    const offered = modelEfforts(cfg, cache, provider, model)
+
+    return efforts.slice(from, to + 1).filter(effort => offered.includes(effort)).map(effort => ({ model, effort }))
   })
 }
 
@@ -1686,8 +1691,8 @@ export const checkProposals = (raw: unknown, c: ProposalContext): { ok: Proposal
         continue
       }
       chosen = hit
-      if (!helperEfforts(c.cfg, provider).includes(effort)) {
-        skipped.push(`proposal ${label}: ${provider}'s levels are ${helperEfforts(c.cfg, provider).join(', ')}`)
+      if (!modelEfforts(c.cfg, c.cache, provider, chosen).includes(effort)) {
+        skipped.push(`proposal ${label}: ${chosen} on ${provider} comes at ${modelEfforts(c.cfg, c.cache, provider, chosen).join(', ')}`)
         continue
       }
       const now = helperTierRung(c.cfg, provider, tier)

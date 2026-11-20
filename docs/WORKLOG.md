@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-20 (later): model-router 0.29.2, fixes from a Gemini review
+- Owner: keeps the terminal pane; Herdr switched back to its `main` layout (`herdr-app do layout.switch`), ⌘⇧R binding removed from `~/.config/herdr-app/keys.json` (the `main-router` layout file stays, unused).
+- Review: agy `agy-gemini-4-neon-medium` (custom template) from a brief in an untracked `.review/` folder with a pty screen dump and the gui-design rules: B1-B7, D1-D7. Fixed 12; declined Custom-snaps-back, Write report off the footer and renaming the Basics row (owner-approved design). Its recheck of the two fix commits: no regressions; its two small notes fixed too. Usage: agy 3.06% of the Gemini weekly limit.
+- Commands: `claude plugin test plugins/model-router` 128 pass; `loop.py eval model-router` exit 0; terminal Settings rendered in the 150x80 pty after the fixes (order lines wrap beside their level).
+
 ## 2026-11-20: model-router 0.29.1, calmer Settings in the terminal
 Owner feedback on 0.29: keeps the terminal pane (the Herdr view has no Settings, so it stays optional); the blank row between steps made the plan harder to scan; the "wall of text" was mainly Settings (screenshot of Other subscriptions).
 - Causes: names used weight medium, which the terminal draws as plain text; controls sat on their own line under 2-4 lines of help; all helper checks were listed; Helper models listed 12 levels because another Claude account's tiers were compared with no default (herdr-delegate keeps them under `kind_defaults.claude`).
