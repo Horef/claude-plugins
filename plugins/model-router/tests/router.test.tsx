@@ -2,7 +2,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, applyPreset, presetOf, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, draftCount, effortOfTemplate, fitEffort, modelEfforts, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
+import { EMPTY_HELPER, EMPTY_USAGE, applyDraft, applyPreset, presetOf, asHelperEffort, asHelperUsage, baseModelId, compareVersions, customTemplate, depthOf, helperTierDefault, helperTierDiffers, draftCount, effortOfTemplate, fitEffort, modelEfforts, fmtCost, fmtMin, genomeNote, helperFacts, helperLadder, helperLine, helperPickFor, helperStep, helperSuggestions, helperTotalsOf, ladderOf, learnedHelpers, learnedRungs, mergeSettings, modelOf, modelWarnings, modelsChecked, newStep, nextRung, offeredModels, parsePrice, rollupOf, settleGroups, suggestions, templateOfRung, templateRung, trimDraft } from '../hooks/logic'
 import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, setHelperConfig } from '../hooks/logic'
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
@@ -912,8 +912,9 @@ test('moving or switching off a helper changes the order in the rules, one note 
   // Switching the helper back on puts it last; "Reset to default order" restores the defaults.
   await pressPick(pane, 'helper-on:light:agy-light')
   expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('copilot-light,kiro-light,agy-light')
-  await pressPick(pane, 'helper-up:light:kiro-light')
   await pressPick(pane, 'helper-reset')
+  // At the default order there is nothing to reset: the link goes.
+  expect(await pane.find({ type: 'Button', key: 'helper-reset' } as never)).toBeFalsy()
   await pane.unmount()
   expect((store.get('settings') as { helpers: { tiers: { light: string } } }).helpers.tiers.light).toBe('kiro-light,copilot-light,agy-light')
   // Back to the first order the chat was told, then to the order of the second.
@@ -1990,7 +1991,7 @@ test('Settings > Learning: "Auto picks a rung with at least N runs and P% ok" is
   expect((await pane.find({ type: 'Button', key: 'auto-ok-percent' } as never))?.text).toContain('90% ok')
   // Marked so far: auto-approve (boot turns it on), the auto switch (on in the stored settings) and the Learning header.
   expect(await pane.findAll(text(/^•$/))).toHaveLength(3)
-  expect(await pane.find(text(/ok in at least 90% of 5 or more runs/))).toBeTruthy()
+  expect(await pane.find(text(/ok in 90% of 5\+ runs/))).toBeTruthy()
 
   // The picker offers 3, 5, 8, 10, 20 runs and cycles forward: 5 -> 8 -> 10 -> 20 -> 3.
   for (let i = 0; i < 4; i++) await pressPick(pane, 'auto-min-runs')
@@ -2002,7 +2003,7 @@ test('Settings > Learning: "Auto picks a rung with at least N runs and P% ok" is
   expect(await pane.findAll(text(/^•$/))).toHaveLength(5)
   const written = JSON.parse(files.get(MIRROR) ?? '{}') as { settings: { autoMinRuns: number; autoOkPercent: number } }
   expect(written.settings).toMatchObject({ autoMinRuns: 3, autoOkPercent: 80 })
-  expect(await pane.find(text(/ok in at least 80% of 3 or more runs/))).toBeTruthy()
+  expect(await pane.find(text(/ok in 80% of 3\+ runs/))).toBeTruthy()
 
   // With the owner's 3 runs and 80%, the same history now teaches the kind.
   const after = await $.tool.call({ tool: PLAN, done: [] } as never)
@@ -2166,6 +2167,12 @@ test('Settings > Helpers: model and thinking pickers for each provider and tier,
   await openSettings(pane)
   // Only the helper levels that differ from herdr-delegate's defaults are listed; Change… opens the full grid.
   expect(await pane.find(text(/^All at herdr-delegate's defaults\.$/))).toBeTruthy()
+  // The checks that pass are one count; Show lists each, and Hide folds them again.
+  expect(await pane.find(text(/^✓ \d+ checks? pass/))).toBeTruthy()
+  await pressPick(pane, 'checks-show')
+  expect(await pane.find(text(/^✓ \d+ checks? pass/))).toBeFalsy()
+  await pressPick(pane, 'checks-hide')
+  expect(await pane.find(text(/^✓ \d+ checks? pass/))).toBeTruthy()
   await pressPick(pane, 'helper-grid')
   const picker = async (key: string) => (await pane.find({ type: 'Select', key } as never)) as { props: { value: string; options: { value: string; label: string }[] } }
   expect((await picker('helper-model:kiro:light')).props.options.map(o => o.value)).toEqual(['auto', 'claude-opus-5.5', 'claude-sonnet-5.5', 'claude-haiku-5.5', 'glm-5'])
@@ -2194,9 +2201,10 @@ test('Settings > Helpers: model and thinking pickers for each provider and tier,
   // Back to the default: the mark goes.
   await pane.select({ key: 'helper-effort:kiro:light', value: 'low' } as never)
   expect((await pane.findAll(text(/^•$/))).length).toBe(marks + 2)
-  // With the grid closed, the one level that differs is listed on its own line.
+  // With the grid closed, the one level that differs is listed on its provider's line.
   await pressPick(pane, 'helper-grid')
-  expect(await pane.find(text(/^Kiro standard: claude-opus-5\.5 high •$/))).toBeTruthy()
+  expect(await pane.find(text(/^Kiro:$/))).toBeTruthy()
+  expect(await pane.find(text(/^claude-opus-5\.5 high$/))).toBeTruthy()
   await pressPick(pane, 'helper-grid')
 
   // helpers.py refuses (it validates the model and level): its message shows, and the config stays as it was.
@@ -4064,4 +4072,23 @@ test('Settings → Learning: the strengths and model map sit behind one handle; 
   await pressPick(pane, 'tag:write-code:review')
   expect((store.get('settings') as { kindTags: unknown }).kindTags).toEqual({})
   await pane.unmount()
+})
+
+test('another Claude account is compared with herdr-delegate\'s defaults for Claude accounts; a tier with no default is never marked', () => {
+  const defaults = {
+    providers: { kiro: { tiers: { light: { model: 'claude-haiku-5.5', effort: 'low' } } } },
+    kind_defaults: { claude: { tiers: { light: { model: 'haiku', effort: 'high' }, deep: { model: 'opus', effort: 'high' } } } },
+  }
+  const cfg = {
+    providers: {
+      kiro: { tiers: { light: { model: 'claude-haiku-5.5', effort: 'high' }, extra: { model: 'glm-5', effort: 'high' } } },
+      uni: { kind: 'claude', tiers: { light: { model: 'haiku', effort: 'high' }, deep: { model: 'fable', effort: 'high' } } },
+    },
+  }
+  expect(helperTierDefault(cfg, defaults, 'uni', 'light')).toEqual({ model: 'haiku', effort: 'high' })
+  expect(helperTierDiffers(cfg, defaults, 'uni', 'light')).toEqual({ model: false, effort: false })
+  expect(helperTierDiffers(cfg, defaults, 'uni', 'deep')).toEqual({ model: true, effort: false })
+  expect(helperTierDiffers(cfg, defaults, 'kiro', 'light')).toEqual({ model: false, effort: true })
+  expect(helperTierDiffers(cfg, defaults, 'kiro', 'extra')).toEqual({ model: false, effort: false })
+  expect(helperTierDiffers(cfg, undefined, 'kiro', 'light')).toEqual({ model: false, effort: false })
 })

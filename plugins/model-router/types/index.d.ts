@@ -76,6 +76,8 @@ export type HelperConfig = {
     }
   >
   custom?: { provider: string; model: string; effort: string }[]
+  /** Defaults per provider kind (herdr-delegate's helpers.default.json: `claude` holds another Claude account's tiers). */
+  kind_defaults?: Record<string, { tiers?: Record<string, HelperTierConfig> }>
 }
 
 /** helpers.py's cache of the models each CLI offers (~/.config/herdr-delegate/models.json). */
@@ -398,6 +400,8 @@ declare module 'claude-code' {
       helperCfg: HelperState
       /** The box to set helpers.py's path by hand is open (Settings → Helpers). */
       showHelperPath: boolean
+      /** Settings → Other subscriptions lists every helper check, not only the failing ones and a count of the rest. */
+      showChecks: boolean
       /** The health check list is open under the health line. */
       showHealth: boolean
       /** Where the last report was written (shown beside its button), or why it failed. */
