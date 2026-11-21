@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.11.0 (2026-11-21)
+- warm status logs each declined idle compaction; once the warmer stops, the mod makes up a declined one itself 5 minutes before the cache lapses unless a message comes first (O9)
+
 ## 0.10.2 (2026-11-21)
 - cache warmer declines Claude Code's idle compaction while it keeps the cache; a chosen warm interval stays through updates, the default one follows the current default (every default) (O7, O8)
 

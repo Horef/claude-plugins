@@ -17,7 +17,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.10.2' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.11.0' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -109,6 +109,9 @@ const CONFIG = {
     // turn: it cannot see a warm. While the warmer keeps the cache, such a compaction is declined, but only
     // after this much quiet and below this context fill, so a compaction a full context needs still runs.
     idleMs: 5 * 60_000, keepBelowPercent: 80,
+    // Once the warmer stops (off, its end time, an error), the compaction it declined is owed: the mod runs
+    // it itself this long before the cache lapses, as Claude Code would have, unless a message comes first.
+    compactLeadMs: 5 * 60_000,
     prompt: 'Automated cache keep-alive from the session-status-line mod, not a message from the person. ' +
       'You have no tools here and nothing to do: reply with the single word ok, straight away, without thinking it over.',
   },
@@ -1154,7 +1157,7 @@ let epoch = 0
 /** Forget what is cached (a new chat, a compaction, another model): the warmer waits for the next request. */
 const forgetCache = ($: EngineInterface, extra: Partial<Warm> = {}) => {
   epoch++
-  return update($, warm, w => ({ ...w, lastReqAt: null, lastWarmAt: null, retryAt: null, last: undefined, ...extra }))
+  return update($, warm, w => ({ ...w, lastReqAt: null, lastWarmAt: null, retryAt: null, last: undefined, owesCompact: false, ...extra }))
 }
 
 /** API errors worth retrying: overload, server trouble, rate limits, a dropped connection. */
@@ -1236,6 +1239,48 @@ const keepingCache = async ($: EngineInterface): Promise<boolean> => {
   return ((await read($, usage)).percent ?? 0) < CONFIG.warm.keepBelowPercent
 }
 
+/** A compaction replaced the main conversation: count it; the cache is forgotten until the next request. */
+const countCompaction = async ($: EngineInterface) => {
+  const s = await update($, stats, cur => ({ ...cur, compactions: cur.compactions + 1 }))
+  await saveCompactions($, s.compactions)
+  await forgetCache($) // the summary is cached by the next request, not before
+  await refreshUsage($)
+}
+
+/**
+ * When the mod runs the idle compaction it declined: once the warmer has stopped, `compactLeadMs` before the
+ * cache lapses; null when nothing is owed, the warmer still keeps the cache, or the cache is already gone.
+ */
+const compactDue = (w: Warm, now: number): number | null => {
+  if (!w.owesCompact || (w.on && (w.until === null || now < w.until))) return null
+  const ends = cacheEnds(w)
+  return ends === null || now >= ends ? null : ends - CONFIG.warm.compactLeadMs
+}
+
+let compacting = false
+let ownCompactSeen = false // the mod's own compaction reached its session.compact hook (and was counted there)
+
+/** From the minute tick: run the owed idle compaction when it is due and no request is running. */
+const maybeCompact = async ($: EngineInterface): Promise<void> => {
+  if (compacting || inFlight > 0) return
+  const w = await read($, warm)
+  const now = await $.clock.now()
+  const due = compactDue(w, now)
+  if (due === null || now < due) return
+  compacting = true
+  ownCompactSeen = false
+  try {
+    const r = await $.session.compact({}) // trigger `plugin`
+    // Counted by the session.compact hook when it hears the mod's own call; otherwise here.
+    if (!ownCompactSeen && !('skip' in r && r.skip)) await countCompaction($)
+    await update($, warm, cur => ({ ...cur, owesCompact: false })) // also when a hook vetoed it: one attempt
+  } catch {
+    // A turn started meanwhile (compact rejects then): its request clears the debt.
+  } finally {
+    compacting = false
+  }
+}
+
 /** "50m", "8h", "1.5h", "90" (minutes unless `unit` says hours) → ms; null when unreadable. */
 const parseSpan = (text: string, unit: 'm' | 'h'): number | null => {
   const hm = /^(\d+)\s*h\s*(\d+)\s*m$/i.exec(text.trim()) // "1h30m", as fmtSpan prints it
@@ -1286,17 +1331,26 @@ const nextOf = (w: Warm, now: number): string => {
   return cacheEnds(w) === null ? 'after the next message' : 'after the next message (the cache has lapsed)'
 }
 
+/** The idle compactions declined in the latest quiet stretch, and the one owed. */
+const compactOf = (w: Warm, now: number): string => {
+  const n = w.declines?.length ?? 0
+  const declined = n ? ` Idle compaction declined ${n}× (${w.declines!.map(fmtClock).join(', ')}).` : ''
+  const due = compactDue(w, now)
+  return declined + (due === null ? '' : ` The chat compacts at ${fmtClock(Math.max(due, now))} unless a message comes first.`)
+}
+
 const warmStatus = (w: Warm, now: number): string => {
-  if (!w.on) return `${cacheStatus(w, now)} Warmer off.${lastOf(w, now)}`
+  if (!w.on) return `${cacheStatus(w, now)} Warmer off.${lastOf(w, now)}${compactOf(w, now)}`
   const end = w.until === null ? 'until switched off' : `until ${fmtClock(w.until)} (${fmtSpan(Math.max(0, w.until - now))} from now)`
-  return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(everyOf(w))}${w.everySet ? '' : ' (default)'} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}`
+  return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(everyOf(w))}${w.everySet ? '' : ' (default)'} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}${compactOf(w, now)}`
 }
 
 /** The options row's first line: one short sentence of state. */
 const panelStatus = (w: Warm, now: number): string => {
   const ends = cacheEnds(w)
   const cache = ends === null ? 'Nothing known cached' : now < ends ? `Cache ${fmtSpan(ends - now)} left of ${lifeOf(w)}` : `${lifeOf(w)} lapsed`
-  if (!w.on) return `${cache} · warmer off`
+  const due = compactDue(w, now)
+  if (!w.on) return `${cache} · warmer off${due === null ? '' : ` · compacts at ${fmtClock(Math.max(due, now))}`}`
   const parts = [cache, `warmer on ${w.until === null ? 'until switched off' : `until ${fmtClock(w.until)}`}`, `next warm ${nextOf(w, now)}`]
   if (w.last) parts.push(w.last.reason ? `last: ${w.last.reason}` : `${w.count} sent, last served ${fmt(w.last.read)}`)
   return parts.join(' · ')
@@ -1404,6 +1458,7 @@ export const register: Register = on => {
       void refreshQuotas($)
       void refreshAccounts($)
       void maybeWarm($).catch(() => {})
+      void maybeCompact($).catch(() => {})
     })
     return next(e)
   })
@@ -1507,7 +1562,7 @@ export const register: Register = on => {
       const u = res.usage
       if (u && epoch === myEpoch && (u.cache_read_input_tokens > 0 || u.cache_creation_input_tokens > 0)) {
         const ttlMs = (u.ephemeral_1h_input_tokens ?? 0) > 0 ? 3_600_000 : (u.ephemeral_5m_input_tokens ?? 0) > 0 ? 300_000 : undefined
-        await update($, warm, w => ({ ...w, lastReqAt: Math.max(sentAt, w.lastReqAt ?? 0), retryAt: null, ttlMs: ttlMs ?? w.ttlMs }))
+        await update($, warm, w => ({ ...w, lastReqAt: Math.max(sentAt, w.lastReqAt ?? 0), retryAt: null, owesCompact: false, ttlMs: ttlMs ?? w.ttlMs }))
       }
       return res
     } finally {
@@ -1556,15 +1611,19 @@ export const register: Register = on => {
   // Count compactions that actually replaced the main conversation: not a
   // subagent's, not a `precompute` (prepared ahead, installs nothing), not a veto.
   on('session.compact', async ($, e, next) => {
+    if (compacting && e.trigger === 'plugin') ownCompactSeen = true
     if (!e.agentId && e.trigger === 'auto' && (await keepingCache($))) {
+      // Kept per quiet stretch, so `warm status` shows whether Claude Code tries again; the compaction is
+      // owed and runs once the warmer stops (maybeCompact).
+      const at = await $.clock.now()
+      await update($, warm, w => ({
+        ...w, owesCompact: true, declines: [...(w.declines ?? []).filter(t => t >= (w.lastReqAt ?? 0)), at].slice(-10),
+      }))
       return { skip: 'the status-line cache warmer is keeping the cache warm (/status-line warm off allows it)' }
     }
     const result = await next(e)
     if (!e.agentId && e.trigger !== 'precompute' && !('skip' in result && result.skip)) {
-      const s = await update($, stats, cur => ({ ...cur, compactions: cur.compactions + 1 }))
-      await saveCompactions($, s.compactions)
-      await forgetCache($) // the summary is cached by the next request, not before
-      await refreshUsage($)
+      await countCompaction($)
     }
     return result
   })
