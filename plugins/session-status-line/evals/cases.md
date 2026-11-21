@@ -52,3 +52,12 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 **Good looks like:**
 - `Codex 5h N% 7d N%` (or a window labelled by its length on a free plan) with the reset of the fullest window; without Codex nothing shows.
 **Origin:** Codex as a helper provider needs its budget in view.
+
+## Cache warmer over a long wait
+**Task:** In a chat of a few hundred thousand tokens on a subscription account, run `/status-line warm until <a time 3 hours away>`, start a background job that reports back after about two hours, and leave the chat alone. Then run `/status-line warm status` and send a message.
+**Good looks like:**
+- The band's 🔥 shows the time to the next warm, about 55 minutes after the last request; the job's report-back restarts the countdown.
+- *(live)* `warm status` reports warms whose cache served roughly the whole conversation (not `cold`), and nothing about them appears in the transcript or the context size.
+- *(live)* The message after the wait reads the conversation from the cache (cost of that turn far below a full re-read) and no compaction happened during the wait.
+- Past the end time the warmer is off and says so; clicking the 🔥 switches it on and off.
+**Origin:** owner's request (2026-11-21): chats waiting hours for background runs were compacted or re-read at every wake-up.

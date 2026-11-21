@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-21: session-status-line 0.9.0, cache warmer
+Owner request: chats that wait hours for background runs lose their 1 h prompt cache and are compacted or re-read in full at every wake-up; asked for a button that sends a keep-alive message every N minutes until stopped or a set time.
+- Chose `$.model.fork` over `$.prompt.submit`: the fork re-reads the main thread's cached prefix (renewing it) and its answer is dropped, so nothing enters the transcript, the context does not grow and no turn wakes the model. Effort left unnamed so the fork reads the cache on every model.
+- `/status-line warm [on|off|now|forever|for <span>|until HH:MM|every <min>|status]`, a 🔥 plain Button at the end of the session row (toggle, 12 h default), countdown from the last main-loop `turn.step` or warm (55 min default), retry 5 min after a failed warm, waits after `nothing-to-fork`, off past `until`; per-chat state (`warm` atom).
+- Commands: `claude plugin test plugins/session-status-line` 29 pass (7 new in `tests/warm.test.tsx`); `loop.py eval session-status-line` exit 0; `loop.py check --base origin/main` 0 errors; `docmap.py check` 0 errors; tsc against the 2.1.330 API types: no errors on changed lines (11 old `noUncheckedIndexedAccess` ones remain).
+- Not yet verified: a live warm in a real chat (cache tokens served, no `cold`), the button in the desktop app.
+
 ## 2026-11-20 (later): model-router 0.29.2, fixes from a Gemini review
 - Owner: keeps the terminal pane; Herdr switched back to its `main` layout (`herdr-app do layout.switch`), ⌘⇧R binding removed from `~/.config/herdr-app/keys.json` (the `main-router` layout file stays, unused).
 - Review: agy `agy-gemini-4-neon-medium` (custom template) from a brief in an untracked `.review/` folder with a pty screen dump and the gui-design rules: B1-B7, D1-D7. Fixed 12; declined Custom-snaps-back, Write report off the footer and renaming the Basics row (owner-approved design). Its recheck of the two fix commits: no regressions; its two small notes fixed too. Usage: agy 3.06% of the Gemini weekly limit.

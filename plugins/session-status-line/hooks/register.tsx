@@ -8,15 +8,16 @@
 // Commands: `/status-line` toggles; `on|off`; `auto|one|rows` picks the layout;
 // `quotas on|off` reads the outside budgets or not; `account-label <name>` names this
 // account in the other accounts' status lines; `live on|off` lets it read other accounts' limits
-// straight from the service; `debug` reports the
+// straight from the service; `warm [on|off|now|for <span>|until HH:MM|every <span>]` keeps the
+// prompt cache warm while the chat waits (a side request, never added to the transcript); `debug` reports the
 // version, measured width and the last quota readings. Env fallbacks: NO_COLOR=1
 // drops colors, SESSION_STATUS_ASCII=1 swaps emoji/box glyphs for plain ASCII.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Win } from '../types'
+import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.8.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.9.0' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -38,14 +39,14 @@ const CONFIG = {
     working: '⏳', idle: '✅',
     switched: '⇄', effort: '·',
     barFull: '▰', barEmpty: '▱',
-    reset: '⟳', pace: '⚠', turn: '⏱', files: '✎', compact: '🗜', sep: '  ┃  ',
+    reset: '⟳', pace: '⚠', turn: '⏱', files: '✎', compact: '🗜', warm: '🔥', sep: '  ┃  ',
   },
   // Used when SESSION_STATUS_ASCII is set (terminals without emoji fonts).
   asciiIcons: {
     working: '*', idle: '-',
     switched: '<>', effort: '/',
     barFull: '#', barEmpty: '.',
-    reset: 'reset ', pace: '! ', turn: 'turn ', files: 'files ', compact: 'compacted ', sep: ' || ',
+    reset: 'reset ', pace: '! ', turn: 'turn ', files: 'files ', compact: 'compacted ', warm: 'warm ', sep: ' || ',
   },
   // Proportional fonts (the desktop app) draw ▰▱ at uneven sizes; these stay even.
   desktopBar: { barFull: '●', barEmpty: '○' },
@@ -60,7 +61,7 @@ const CONFIG = {
     { name: 'claude', label: '', ids: ['head', 'ctx', 'ctxTokens', 'hint', 'limit5h', 'reset5h', 'pace5h', 'limit7d', 'reset7d', 'pace7d',
       'limitOther', 'resetOther', 'paceOther', 'extra'] },
     { name: 'helpers', label: 'helpers', ids: [] as string[] },
-    { name: 'session', label: 'session', ids: ['cost', 'lastTurn', 'files', 'compactions', 'session'] },
+    { name: 'session', label: 'session', ids: ['cost', 'lastTurn', 'files', 'compactions', 'session', 'warm', 'warmOff'] },
   ],
   // Dim separator between two budgets inside a group; between groups on one line: the `sep` icon.
   gap: ' │ ',
@@ -93,10 +94,18 @@ const CONFIG = {
   // order; an id several segments share (`acct`) drops one of them, the last, at a time.
   // Activity, model and the context bar are never dropped. A reset or pace
   // tag is listed before its limit, since it is glued to it.
+  // Cache warmer: wait after the last main-loop request (the cache lives 1 h on a subscription, 5 min
+  // otherwise; the minute tick may add up to a minute), how long `/status-line warm` runs with no
+  // `for` / `until`, the wait after a failed warm, and the bounds `every` accepts.
+  warm: {
+    everyMs: 55 * 60_000, defaultForMs: 12 * 3_600_000, retryMs: 5 * 60_000, minEveryMs: 2 * 60_000, maxEveryMs: 59 * 60_000,
+    prompt: 'Automated cache keep-alive from the session-status-line mod, not a message from the person. ' +
+      'You have no tools here and nothing to do: reply with the single word ok, straight away, without thinking it over.',
+  },
   dropOrder: [
-    'session', 'files', 'lastTurn', 'resetacct', 'resetcodex', 'resetargon', 'resetcopilot', 'resetkiro', 'cost', 'compactions', 'ctxTokens',
+    'warmOff', 'session', 'files', 'lastTurn', 'resetacct', 'resetcodex', 'resetargon', 'resetcopilot', 'resetkiro', 'cost', 'compactions', 'ctxTokens',
     'acct', 'codex', 'agy', 'argon', 'copilot', 'kiro', 'reset7d', 'pace7d', 'limit7d', 'resetOther', 'paceOther', 'limitOther',
-    'reset5h', 'hint', 'pace5h', 'extra', 'limit5h',
+    'reset5h', 'hint', 'pace5h', 'extra', 'warm', 'limit5h',
   ],
 }
 
@@ -111,6 +120,8 @@ const usage = atom({ plugin: 'session-status-line', key: 'usage' } as const, {} 
 const layout = atom({ plugin: 'session-status-line', key: 'layout' } as const, CONFIG.layout)
 const tick = atom({ plugin: 'session-status-line', key: 'tick' } as const, 0) // minute clock for countdowns
 const quotas = atom({ plugin: 'session-status-line', key: 'quotas' } as const, { on: true, at: 0, items: [], accounts: [] } as Quotas)
+const WARM_OFF: Warm = { on: false, everyMs: CONFIG.warm.everyMs, until: null, lastReqAt: null, lastWarmAt: null, retryAt: null, count: 0 }
+const warm = atom({ plugin: 'session-status-line', key: 'warm' } as const, WARM_OFF)
 
 // Read once per load in session.start.
 let noColor = false
@@ -190,7 +201,7 @@ const timeToLimit = (lim: Limit, now: number): number | null => {
 }
 
 // A segment is a few styled pieces; `id` ties it to CONFIG.dropOrder.
-type Piece = { text: string; color?: string; dim?: boolean; bold?: boolean }
+type Piece = { text: string; color?: string; dim?: boolean; bold?: boolean; press?: 'warm' } // press: drawn as a plain Button
 type Segment = { id: string; pieces: Piece[]; glue?: boolean } // glue: no separator before it
 
 /** Money as "$2.37", "$59", or "12.40 EUR". */
@@ -309,7 +320,7 @@ const quotaSegments = (q: Quotas, u: Usage, now: number, ic: Icons): Segment[] =
   return out
 }
 
-const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: number, ic: Icons): Segment[] => {
+const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: number, ic: Icons, w: Warm = WARM_OFF): Segment[] => {
   const out: Segment[] = []
 
   // Activity + model + effort (always shown).
@@ -409,6 +420,19 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
   if (s.turns > 0) session.push(`${s.turns} turn${s.turns === 1 ? '' : 's'}`)
   if (u.startedAt !== undefined && now > u.startedAt) session.push(fmtSpan(Math.floor((now - u.startedAt) / 60_000) * 60_000))
   if (session.length > 0) out.push({ id: 'session', pieces: [{ text: session.join(' · '), dim: true }] })
+
+  // Cache warmer: a button; on, the time to the next warm (orange when the last one found the cache gone).
+  if (w.on) {
+    const due = warmDue(w)
+    const cold = w.last && !w.last.reason && w.last.read < w.last.wrote
+    const failed = !!w.last?.reason && w.last.reason !== 'nothing-to-fork'
+    out.push({ id: 'warm', pieces: [{
+      text: `${ic.warm}${due === null ? 'on' : fmtSpan(Math.max(0, due - now))}${cold ? ' cold' : failed ? ' !' : ''}`,
+      color: cold || failed ? CONFIG.colors.high : CONFIG.colors.model, press: 'warm',
+    }] })
+  } else {
+    out.push({ id: 'warmOff', pieces: [{ text: ic.warm.trim(), dim: true, press: 'warm' }] })
+  }
 
   return out
 }
@@ -1057,6 +1081,154 @@ async function readQuotas($: EngineInterface, force: boolean) {
   }
 }
 
+// ─── Cache warmer ────────────────────────────────────────────────────────
+// While on, a side request over the main conversation (`$.model.fork`: the main thread's last request
+// with one message after it, answered and dropped, never added to the transcript) reads the prompt
+// cache `everyMs` after the last main-loop request or warm, which renews the cache's lifetime. A chat
+// that waits hours for background work then resumes from the cache instead of paying for the whole
+// conversation again. The fork names no effort, so it rides the main thread's cache on every model.
+
+/** When the next warm is due, or null when there is nothing to warm yet (no request since the start or a /clear). */
+const warmDue = (w: Warm): number | null => {
+  const base = Math.max(w.lastReqAt ?? 0, w.lastWarmAt ?? 0)
+  if (!base) return null
+  return Math.max(base + w.everyMs, w.retryAt ?? 0)
+}
+
+// One warm at a time (module-local: a reload mid-warm may start another, harmlessly).
+let warming = false
+
+/** Warm now if due (or `force`); stop once `until` has passed. Called from the minute tick and `warm now`. */
+const maybeWarm = async ($: EngineInterface, force = false): Promise<string | null> => {
+  const w = await read($, warm)
+  if (!w.on || warming) return null
+  const now = await $.clock.now()
+  if (w.until !== null && now >= w.until) {
+    await update($, warm, cur => ({ ...cur, on: false }))
+    void $.ui.toast(`Cache warmer stopped: its end time passed (${w.count} warm${w.count === 1 ? '' : 's'}).`)
+    return null
+  }
+  const due = warmDue(w)
+  if (!force && (due === null || now < due)) return null
+  warming = true
+  try {
+    const r = await $.model.fork({ prompt: CONFIG.warm.prompt })
+    const at = await $.clock.now()
+    if (r.isAnswered) {
+      const last = { at, read: r.usage.cache_read_input_tokens, wrote: r.usage.cache_creation_input_tokens }
+      await update($, warm, cur => ({ ...cur, lastWarmAt: at, retryAt: null, count: cur.count + 1, last }))
+      return `warmed: the cache served ${fmt(last.read)} tokens${last.wrote ? `, ${fmt(last.wrote)} written afresh` : ''}`
+    }
+    const reason = r.reason === 'api-error' ? `api-error ${'status' in r ? r.status : ''}`.trim() : r.reason
+    // Nothing to fork yet: wait for the next main-loop request. Anything else: try again later.
+    await update($, warm, cur => ({
+      ...cur, retryAt: reason === 'nothing-to-fork' ? null : at + CONFIG.warm.retryMs,
+      lastReqAt: reason === 'nothing-to-fork' ? null : cur.lastReqAt, last: { at, read: 0, wrote: 0, reason },
+    }))
+    return `not warmed: ${reason}`
+  } catch (err) {
+    const at = await $.clock.now()
+    const reason = `threw: ${String(err).slice(0, 120)}`
+    await update($, warm, cur => ({ ...cur, retryAt: at + CONFIG.warm.retryMs, last: { at, read: 0, wrote: 0, reason } }))
+    return `not warmed: ${reason}`
+  } finally {
+    warming = false
+  }
+}
+
+/** "50m", "8h", "1.5h", "90" (minutes unless `unit` says hours) → ms; null when unreadable. */
+const parseSpan = (text: string, unit: 'm' | 'h'): number | null => {
+  const m = /^(\d+(?:\.\d+)?)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)?$/i.exec(text.trim())
+  if (!m) return null
+  const n = Number(m[1])
+  const hours = m[2] ? /^h/i.test(m[2]) : unit === 'h'
+  return Math.round(n * (hours ? 3_600_000 : 60_000))
+}
+
+/** "07:30" or "7" → the next time the clock shows it (local time), in epoch ms; null when unreadable. */
+const parseClock = (text: string, now: number): number | null => {
+  const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(text.trim())
+  if (!m || Number(m[1]) > 23 || Number(m[2] ?? 0) > 59) return null
+  const d = new Date(now)
+  d.setHours(Number(m[1]), Number(m[2] ?? 0), 0, 0)
+  if (d.getTime() <= now) d.setDate(d.getDate() + 1)
+  return d.getTime()
+}
+
+const fmtClock = (t: number) => {
+  const d = new Date(t)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const warmStatus = (w: Warm, now: number): string => {
+  if (!w.on) return 'Cache warmer off.'
+  const due = warmDue(w)
+  const next = due === null ? 'after the next request' : due <= now ? 'now' : `in ${fmtSpan(due - now)}`
+  const end = w.until === null ? 'until switched off' : `until ${fmtClock(w.until)} (${fmtSpan(w.until - now)} from now)`
+  const last = w.last
+    ? `; last ${fmtSpan(now - w.last.at)} ago: ${w.last.reason ?? `cache served ${fmt(w.last.read)} tokens${w.last.wrote ? `, wrote ${fmt(w.last.wrote)}` : ''}`}`
+    : ''
+  return `Cache warmer on, every ${fmtSpan(w.everyMs)} after the last request, ${end}; next warm ${next}; ${w.count} sent${last}.`
+}
+
+/** `/status-line warm ...`: switch on or off, set the end or the interval, warm now, or report. */
+const warmCommand = async ($: EngineInterface, args: string): Promise<string> => {
+  const now = await $.clock.now()
+  const cur = await read($, warm)
+  const [verb = '', ...rest] = args.trim().split(/\s+/)
+  const value = rest.join(' ')
+  const on = (until: number | null) =>
+    update($, warm, w => ({ ...w, on: true, until, retryAt: null, count: w.on ? w.count : 0, lastReqAt: w.lastReqAt ?? now }))
+  switch (verb.toLowerCase()) {
+    case '':
+      if (cur.on) {
+        await update($, warm, w => ({ ...w, on: false }))
+        return 'Cache warmer off.'
+      }
+      await on(now + CONFIG.warm.defaultForMs)
+      break
+    case 'on':
+      await on(now + CONFIG.warm.defaultForMs)
+      break
+    case 'off':
+      await update($, warm, w => ({ ...w, on: false }))
+      return 'Cache warmer off.'
+    case 'forever':
+      await on(null)
+      break
+    case 'for': {
+      const span = parseSpan(value, 'h')
+      if (!span) return 'Usage: /status-line warm for <span>, e.g. "for 8h" or "for 90m".'
+      await on(now + span)
+      break
+    }
+    case 'until': {
+      const t = parseClock(value, now)
+      if (t === null) return 'Usage: /status-line warm until HH:MM (local time; the next time the clock shows it).'
+      await on(t)
+      break
+    }
+    case 'every': {
+      const span = parseSpan(value, 'm')
+      if (!span || span < CONFIG.warm.minEveryMs || span > CONFIG.warm.maxEveryMs) {
+        return `Usage: /status-line warm every <minutes>, between ${CONFIG.warm.minEveryMs / 60_000} and ${CONFIG.warm.maxEveryMs / 60_000} (default ${CONFIG.warm.everyMs / 60_000}; a 5-minute cache needs 3 or less).`
+      }
+      await update($, warm, w => ({ ...w, everyMs: span }))
+      break
+    }
+    case 'now': {
+      if (!cur.on) await on(now + CONFIG.warm.defaultForMs)
+      const said = await maybeWarm($, true)
+      return `${said ?? 'A warm is already running.'} ${warmStatus(await read($, warm), await $.clock.now())}`
+    }
+    case 'status':
+      break
+    default:
+      return 'Usage: /status-line warm [on | off | now | forever | for <span> | until HH:MM | every <minutes> | status].'
+  }
+  return warmStatus(await read($, warm), now)
+}
+
 // ─── Hooks ───────────────────────────────────────────────────────────────
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -1074,7 +1246,7 @@ export const register: Register = on => {
 
     await $.command.register({
       name: 'status-line',
-      description: 'Session status line: toggle, on | off, layout auto | one | rows, quotas on | off, account-label <name>, live on | off, or debug',
+      description: 'Session status line: toggle, on | off, layout auto | one | rows, quotas on | off, account-label <name>, live on | off, warm [on | off | now | for 8h | until 07:30 | every 50m], or debug',
     })
     await Promise.all([refreshModel($), refreshUsage($), loadCompactions($)])
     void refreshQuotas($) // network and CLI calls: never hold up the session
@@ -1086,12 +1258,14 @@ export const register: Register = on => {
       void refreshModel($)
       void refreshQuotas($)
       void refreshAccounts($)
+      void maybeWarm($)
     })
     return next(e)
   })
 
   on('command.run', { command: 'status-line' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
+    if (arg === 'warm' || arg.startsWith('warm ')) return { text: await warmCommand($, e.args.trim().slice(4)) }
     const named = /^account-label(?:\s+([\s\S]*))?$/i.exec(e.args.trim())
     if (named) {
       const acc = await ownAccount($)
@@ -1126,7 +1300,8 @@ export const register: Register = on => {
           : `session-status-line ${VERSION}: not drawn yet`) +
           `. Quotas${q.at ? ` (read ${new Date(q.at).toISOString()})` : ''}: ${readings}` +
           `. Account ${own ? `${own.key} "${own.label}"` : 'unknown'}, others: ${q.accounts.map(a => `${a.label} ${a.key} ${JSON.stringify({ ...a, label: undefined, key: undefined })}`).join('; ') || 'none'}` +
-          (Object.keys(misses).length ? `. Last misses: ${Object.entries(misses).map(([k, v]) => `${k} ${v}`).join('; ')}` : ''),
+          (Object.keys(misses).length ? `. Last misses: ${Object.entries(misses).map(([k, v]) => `${k} ${v}`).join('; ')}` : '') +
+          ` ${warmStatus(await read($, warm), await $.clock.now())}`,
       }
     }
     if (arg === 'quotas on' || arg === 'quotas off' || arg === 'quotas') {
@@ -1175,6 +1350,9 @@ export const register: Register = on => {
     if (!e.agentId) {
       const effort = e.effort ?? null
       await update($, stats, s => (s.effort === effort ? s : { ...s, effort }))
+      // A main-loop request renews the cache: the warmer counts from here.
+      const at = await $.clock.now()
+      await update($, warm, w => ({ ...w, lastReqAt: at, retryAt: null }))
     }
     return yield* next(e)
   })
@@ -1233,6 +1411,7 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
       await update($, stats, s => ({ ...EMPTY, model: s.model, apiModel: s.apiModel, effort: s.effort }))
+      await update($, warm, w => ({ ...w, lastReqAt: null, lastWarmAt: null, retryAt: null })) // nothing cached to keep yet
       await refreshUsage($)
     }
     return next(e)
@@ -1241,24 +1420,33 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, enabled))) return next(e)
 
-    const [s, u, mode, q] = await Promise.all([read($, stats), read($, usage), read($, layout), read($, quotas)])
+    const [s, u, mode, q, w] = await Promise.all([read($, stats), read($, usage), read($, layout), read($, quotas), read($, warm)])
     await read($, tick) // subscribe so the countdowns redraw each minute
     const now = await $.clock.now()
     const ic = e.surface !== 'terminal' && icons === CONFIG.icons ? { ...icons, ...CONFIG.desktopBar } : icons
-    const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic), Math.max(10, e.props.bodyColumns - 1), mode, e.props.maxRows, e.surface === 'terminal')
+    const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic, w), Math.max(10, e.props.bodyColumns - 1), mode, e.props.maxRows, e.surface === 'terminal')
     lastDraw = { surface: e.surface, bodyColumns: e.props.bodyColumns, maxRows: e.props.maxRows, widths: lines.map(piecesWidth) }
     if (lines.length === 0) return next(e)
 
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const toggleWarm = async () => {
+      const said = await warmCommand($, '')
+      void $.ui.toast(said)
+    }
     return (
       <Box flexDirection="column">
         {lines.map((line, l) => (
           <Box key={`l${l}`} flexDirection="row">
-            {line.map((p, i) => (
-              <Text key={`p${l}-${i}`} wrap="truncate" color={noColor ? undefined : p.color} dimColor={p.dim} bold={p.bold}>
-                {p.text}
-              </Text>
-            ))}
+            {line.map((p, i) => {
+              const text = (
+                <Text key={`p${l}-${i}`} wrap="truncate" color={noColor ? undefined : p.color} dimColor={p.dim} bold={p.bold}>
+                  {p.text}
+                </Text>
+              )
+              return p.press === 'warm'
+                ? <Button key="warm" plain onPress={toggleWarm}>{text}</Button>
+                : text
+            })}
           </Box>
         ))}
       </Box>
