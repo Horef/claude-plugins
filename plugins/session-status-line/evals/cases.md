@@ -56,7 +56,7 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 ## Cache warmer over a long wait
 **Task:** In a chat of a few hundred thousand tokens on a subscription account, run `/status-line warm until <a time 3 hours away>`, start a background job that reports back after about two hours, and leave the chat alone. Then run `/status-line warm status` and send a message.
 **Good looks like:**
-- The band's 🔥 shows the time to the next warm, about 55 minutes after the last request; the job's report-back restarts the countdown.
+- The band's `cache` countdown falls from about 1h and jumps back to about 1h at each warm (about 50 minutes after the last request or warm) and at the job's report-back; 🔥 counts the warms sent.
 - *(live)* `warm status` reports warms whose cache served roughly the whole conversation (not `cold`), and nothing about them appears in the transcript or the context size.
 - *(live)* The message after the wait reads the conversation from the cache (cost of that turn far below a full re-read) and no compaction happened during the wait.
 - Past the end time the warmer is off and says so; clicking the 🔥 switches it on and off.
