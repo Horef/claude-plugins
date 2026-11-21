@@ -17,7 +17,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.11.1' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.12.0' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -112,6 +112,9 @@ const CONFIG = {
     // Once the warmer stops (off, its end time, an error), the compaction it declined is owed: the mod runs
     // it itself this long before the cache lapses, as Claude Code would have, unless a message comes first.
     compactLeadMs: 5 * 60_000,
+    // A warm or the owed compaction that has not come back by then counts as failed (a dropped connection
+    // can leave a request hanging): the warm is retried while the cache lives, the compaction never.
+    forkTimeoutMs: 2 * 60_000, compactTimeoutMs: 10 * 60_000,
     prompt: 'Automated cache keep-alive from the session-status-line mod, not a message from the person. ' +
       'You have no tools here and nothing to do: reply with the single word ok, straight away, without thinking it over.',
   },
@@ -1179,9 +1182,16 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
     if (!once) {
       if (!w.on) return 'Warmer off.'
       if (w.until !== null && now >= w.until) {
-        await update($, warm, cur => ({ ...cur, on: false }))
-        void $.ui.toast(`Cache warmer stopped: its end time passed (${w.count} warm${w.count === 1 ? '' : 's'} sent).`)
+        const after = await update($, warm, cur => ({ ...cur, on: false }))
+        void $.ui.toast(`Cache warmer stopped: its end time passed (${w.count} warm${w.count === 1 ? '' : 's'} sent).${debtNote(after, now)}`)
         return 'Warmer off: its end time passed.'
+      }
+      // Warms kept failing (no connection, the service down) until the cache lapsed: stop, owe nothing.
+      const ends = cacheEnds(w)
+      if (w.retryAt !== null && ends !== null && now >= ends) {
+        await update($, warm, cur => ({ ...cur, on: false, retryAt: null, owesCompact: false }))
+        void $.ui.toast(`Cache warmer stopped: no warm got through before the cache lapsed (${w.last?.reason ?? 'no answer'}). Nothing will be compacted; your next message reads the chat afresh.`)
+        return 'Warmer off: the cache lapsed while warms failed.'
       }
       const due = warmDue(w, now)
       if (due === null || now < due || inFlight > 0) return 'Not due.'
@@ -1190,7 +1200,12 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
     const sentAt = now // a cache lifetime counts from the request's start
     let r: Awaited<ReturnType<EngineInterface['model']['fork']>>
     try {
-      r = await $.model.fork({ prompt: CONFIG.warm.prompt })
+      // A fork that hangs (a dropped connection) must not hold the warmer: past the time limit it counts as
+      // a failed warm with no response, retried while the cache lives; a late answer is ignored.
+      const limit = $.clock.sleep(CONFIG.warm.forkTimeoutMs).then(() => 'timeout' as const)
+      const raced = await Promise.race([$.model.fork({ prompt: CONFIG.warm.prompt }), limit])
+      if (raced === 'timeout') throw new Error('timeout')
+      r = raced
     } catch (err) {
       r = { isAnswered: false, reason: 'api-error', status: null, error: 'unknown', usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } as any
       void err
@@ -1203,7 +1218,8 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
       const last = { at: sentAt, read: used.cache_read_input_tokens, wrote: used.cache_creation_input_tokens, out: used.output_tokens }
       const gone = last.read < last.wrote
       await update($, warm, cur => ({
-        ...cur, lastWarmAt: sentAt, retryAt: null, count: cur.count + 1, last, on: gone && !once ? false : cur.on,
+        ...cur, lastWarmAt: sentAt, retryAt: null, count: cur.count + 1, last,
+        on: gone && !once ? false : cur.on, owesCompact: gone ? false : cur.owesCompact,
       }))
       if (gone && !once) {
         void $.ui.toast('Cache warmer stopped: the warm found the cache already gone (paid a full write). It renews at your next message.')
@@ -1218,6 +1234,7 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
     const retry = !r.isAnswered && r.reason === 'api-error' ? transient(r) : !r.isAnswered && r.reason !== 'aborted' ? false : true
     await update($, warm, cur => ({
       ...cur, retryAt: retry ? at + CONFIG.warm.retryMs : null, on: retry || once ? cur.on : false,
+      owesCompact: retry || once ? cur.owesCompact : false, // a warmer stopped by an error compacts nothing
       last: { at, read: 0, wrote: 0, reason },
     }))
     if (!retry && !once) void $.ui.toast(`Cache warmer stopped: ${reason}.`)
@@ -1270,15 +1287,34 @@ const maybeCompact = async ($: EngineInterface): Promise<void> => {
   compacting = true
   ownCompactSeen = false
   try {
-    const r = await $.session.compact({}) // trigger `plugin`
+    // One attempt, whatever happens: a failure is reported, never retried.
+    await update($, warm, cur => ({ ...cur, owesCompact: false }))
+    // Only over a cache the last warm or request is known to have renewed; otherwise the summary would
+    // pay for a fresh read of the whole chat.
+    const failed = w.retryAt !== null || (w.last?.reason !== undefined && w.last.at >= renewedAt(w))
+    if (failed) {
+      void $.ui.toast(`Idle compaction skipped: the last warm did not go through (${w.last?.reason ?? 'no answer'}).`)
+      return
+    }
+    const limit = $.clock.sleep(CONFIG.warm.compactTimeoutMs).then(() => 'timeout' as const)
+    const r = await Promise.race([$.session.compact({}), limit]) // trigger `plugin`
+    if (r === 'timeout') {
+      void $.ui.toast('Idle compaction gave no answer in 10 minutes; not tried again.')
+      return
+    }
     // Counted by the session.compact hook when it hears the mod's own call; otherwise here.
     if (!ownCompactSeen && !('skip' in r && r.skip)) await countCompaction($)
-    await update($, warm, cur => ({ ...cur, owesCompact: false })) // also when a hook vetoed it: one attempt
-  } catch {
-    // A turn started meanwhile (compact rejects then): its request clears the debt.
+  } catch (err) {
+    void $.ui.toast(`Idle compaction failed (${String((err as Error)?.message ?? err).slice(0, 80)}); not tried again.`)
   } finally {
     compacting = false
   }
+}
+
+/** After the warmer stops: when the owed compaction runs and how to keep the chat as it is. */
+const debtNote = (w: Warm, now: number): string => {
+  const due = compactDue(w, now)
+  return due === null ? '' : ` The chat compacts at ${fmtClock(Math.max(due, now))} unless you write first; "Skip compaction" in ⓘ (or /status-line warm skip-compact) keeps it as it is.`
 }
 
 /** "50m", "8h", "1.5h", "90" (minutes unless `unit` says hours) → ms; null when unreadable. */
@@ -1371,7 +1407,7 @@ const panelStatus = (w: Warm, now: number, width = Infinity): string[] => {
   return wrapStatus(parts, width)
 }
 
-const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | every default | status]'
+const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | every default | skip-compact | status]'
 
 /** `/status-line warm ...`: switch on or off, set the end or the interval, warm once now, or report. */
 const warmCommand = async ($: EngineInterface, args: string): Promise<string> => {
@@ -1385,8 +1421,7 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
   switch (verb.toLowerCase()) {
     case '':
       if (cur.on) {
-        await update($, warm, w => ({ ...w, on: false }))
-        return `Warmer off. ${cacheStatus(cur, now)}`
+        return `Warmer off. ${cacheStatus(cur, now)}${debtNote(await update($, warm, w => ({ ...w, on: false })), now)}`
       }
       await on(now + CONFIG.warm.defaultForMs)
       break
@@ -1394,8 +1429,11 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
       await on(now + CONFIG.warm.defaultForMs)
       break
     case 'off':
-      await update($, warm, w => ({ ...w, on: false }))
-      return `Warmer off. ${cacheStatus(cur, now)}`
+      return `Warmer off. ${cacheStatus(cur, now)}${debtNote(await update($, warm, w => ({ ...w, on: false })), now)}`
+    case 'skip-compact':
+      if (!cur.owesCompact) return 'No compaction is waiting.'
+      await update($, warm, w => ({ ...w, owesCompact: false }))
+      return 'The idle compaction is skipped: the chat stays as it is (its cache lapses unless you write or the warmer warms).'
     case 'forever':
       await on(null)
       break
@@ -1721,6 +1759,9 @@ export const register: Register = on => {
           {label('w-l4', 'Every')}
           {[30, 40, 50].filter(m => m * 60_000 <= ttl - CONFIG.warm.minEveryMs)
             .map(m => choice(`w-e${m}`, `${m}m`, `every ${m}m`, everyOf(w) === m * 60_000))}
+          {compactDue(w, now) !== null && (
+            <Button key="w-skipc" plain onPress={() => warmCommand($, 'skip-compact')}><Text dimColor> Skip compaction</Text></Button>
+          )}
           {label('w-l6', ' more: /status-line warm help')}
           <Button key="w-close" plain role="dismiss" onPress={toggleInfo}><Text dimColor>×</Text></Button>
         </Box>

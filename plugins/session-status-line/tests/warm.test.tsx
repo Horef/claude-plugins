@@ -13,6 +13,8 @@ const usage = (read: number, wrote: number, extra: object = {}) =>
 const OK = { isAnswered: true, text: 'ok', usage: usage(480_000, 20) }
 const FAIL = { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: usage(0, 0) }
 
+const HANG = Symbol('hang') // a fork that never answers (a dropped connection)
+
 const engine = (on: any, answer: (n: number) => any = () => OK) => {
   const clock = mock.clock(on, { now: START })
   const store = new Map<string, unknown>()
@@ -20,6 +22,7 @@ const engine = (on: any, answer: (n: number) => any = () => OK) => {
   const fills: string[] = []
   const toasts: string[] = []
   const compacts: string[] = []
+  const ctl = { compactFails: false }
   // What the next main-loop request reports (a 1 h cache read and write by default).
   const step = { usage: usage(200_000, 5_000, { ephemeral_1h_input_tokens: 5_000, ephemeral_5m_input_tokens: 0 }) as any }
   on('store.get', ($: any, e: any) => ({ value: store.get(e.key) }))
@@ -29,7 +32,10 @@ const engine = (on: any, answer: (n: number) => any = () => OK) => {
   on('session.end', () => ({ sessionId: 'sess-w' }) as any)
   on('session.id', () => ({ value: 'sess-w' }))
   // A plugin's own $.session.compact reaches here with its arguments as given; the engine adds trigger `plugin`.
-  on('session.compact', ($: any, e: any) => { compacts.push(e.trigger ?? 'plugin'); return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as any })
+  on('session.compact', ($: any, e: any) => {
+    compacts.push(e.trigger ?? 'plugin')
+    if (ctl.compactFails && !e.trigger) throw new Error('offline')
+    return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as any })
   on('command.register', () => ({ value: undefined }) as any)
   on('env.get', () => ({ value: undefined }))
   on('ui.toast', ($: any, e: any) => { toasts.push(String(e.text ?? e)); return { value: undefined } })
@@ -38,11 +44,13 @@ const engine = (on: any, answer: (n: number) => any = () => OK) => {
   on('turn.step', async function* (_$: any, e: any) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: step.usage ? 'end_turn' : null, usage: step.usage } as any
   })
-  on('model.fork', ($: any, e: any) => {
+  on('model.fork', async ($: any, e: any) => {
     forks.push(e.prompt)
-    return { value: answer(forks.length) }
+    const a = answer(forks.length)
+    if (a === HANG) await new Promise(() => {})
+    return { value: a }
   })
-  return { clock, forks, fills, toasts, step, compacts }
+  return { clock, forks, fills, toasts, step, compacts, ctl }
 }
 
 /** One main-loop request, answered with what `step.usage` holds. */
@@ -164,7 +172,7 @@ test('a passing error is retried at the next minute tick, while the cache still 
   expect(await run($, 'warm status')).toContain('cache served 480k')
 })
 
-test('once the cache has lapsed nothing more is sent until the next request', async ($, on) => {
+test('once the cache has lapsed while warms fail, nothing more is sent and the warmer stops', async ($, on) => {
   const { clock, forks } = engine(on, () => FAIL)
   await $.session.start({ cwd: '/proj' } as any)
   await request($)
@@ -176,7 +184,7 @@ test('once the cache has lapsed nothing more is sent until the next request', as
   await clock.advance(3 * 60 * MIN)
   expect(forks.length).toBe(tries)
   expect(await bandText($)).toContain('cache lapsed')
-  expect(await run($, 'warm status')).toContain('after the next message (the cache has lapsed)')
+  expect(await run($, 'warm status')).toContain('Warmer off.')
 })
 
 test('a lasting error or a warm that finds the cache gone switches the warmer off', async ($, on) => {
@@ -347,7 +355,8 @@ test('once the warmer stops, the declined idle compaction runs 5 minutes before 
   expect(await run($, 'warm status')).toContain('Idle compaction declined 2×')
   expect(compacts).toEqual([])
   const off = await run($, 'warm off')
-  expect(off).not.toContain('compacts at') // the reply reads the state from before the switch
+  expect(off).toContain('The chat compacts at') // and how to keep it as it is
+  expect(off).toContain('skip-compact')
   expect(await run($, 'warm status')).toContain('The chat compacts at')
   await clock.advance(43 * MIN) // the cache lapses 110 min in (60 after the warm); compaction due at 105
   expect(compacts).toEqual([])
@@ -402,6 +411,85 @@ test("the options row's status wraps to the band's width between its parts, losi
     for (const part of parts) expect(lines.join(' · ')).toContain(part)
   }
   expect((await statusAt(45)).length).toBe(3) // the cache; on until · next warm; sent
+})
+
+test('the owed compaction can be skipped, by command or from the options row', async ($, on) => {
+  const { clock, compacts } = engine(on)
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  const msgs = [{ role: 'user', text: 'hi', toolUses: [] }]
+  await clock.advance(55 * MIN)
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any)
+  await run($, 'warm off')
+  expect(await run($, 'warm skip-compact')).toContain('skipped')
+  expect(await run($, 'warm skip-compact')).toContain('No compaction is waiting')
+  await clock.advance(60 * MIN)
+  expect(compacts).toEqual([])
+  // The same from the ⓘ row's button, shown only while a compaction is owed.
+  await request($)
+  await run($, 'warm on')
+  await clock.advance(55 * MIN)
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any)
+  await run($, 'warm off')
+  const { ui } = await band($)
+  await ui.press({ key: 'warmInfo' })
+  await ui.press({ key: 'w-skipc' })
+  await ui.unmount()
+  await clock.advance(60 * MIN)
+  expect(compacts).toEqual([])
+})
+
+test('with the connection gone: warms retry until the cache lapses, then the warmer stops and owes nothing', async ($, on) => {
+  const { clock, forks, compacts, toasts } = engine(on, n => (n === 1 ? OK : FAIL))
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  await clock.advance(55 * MIN) // the first warm got through at 50
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as any)
+  await clock.advance(60 * MIN) // warms from 100 on fail; the cache lapses at 110
+  expect(forks.length).toBeGreaterThan(5)
+  const sent = forks.length
+  expect(await run($, 'warm status')).toContain('Warmer off.')
+  expect(toasts.some(t => t.includes('no warm got through'))).toBe(true)
+  await clock.advance(120 * MIN)
+  expect(forks.length).toBe(sent)
+  expect(compacts).toEqual([])
+})
+
+test('a warm that hangs is given up after 2 minutes and retried', async ($, on) => {
+  const { clock, forks } = engine(on, n => (n === 1 ? HANG : OK))
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  await clock.advance(51 * MIN)
+  expect(forks.length).toBe(1)
+  await clock.advance(4 * MIN)
+  expect(forks.length).toBe(2)
+  expect(await run($, 'warm status')).toContain('1 sent')
+})
+
+test('a compaction that fails is reported and not tried again; one after a failed warm is skipped', async ($, on) => {
+  const { clock, compacts, toasts, ctl } = engine(on, n => (n === 1 ? OK : FAIL))
+  ctl.compactFails = true
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  const msgs = [{ role: 'user', text: 'hi', toolUses: [] }]
+  await clock.advance(55 * MIN)
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any)
+  await run($, 'warm off')
+  await clock.advance(60 * MIN) // due at 105
+  expect(compacts).toEqual(['plugin'])
+  expect(toasts.some(t => t.startsWith('Idle compaction failed') && t.includes('not tried again'))).toBe(true)
+  // A failed warm, then the warmer switched off: the owed compaction is skipped, not sent.
+  await request($)
+  await run($, 'warm on')
+  await clock.advance(55 * MIN) // warm 2 fails at 50 (retrying)
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any)
+  await run($, 'warm off')
+  await clock.advance(10 * MIN)
+  expect(compacts).toEqual(['plugin'])
 })
 
 test('help lists the options', async ($, on) => {
