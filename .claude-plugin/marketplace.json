@@ -50,7 +50,7 @@
     {
       "name": "session-status-line",
       "source": "./plugins/session-status-line",
-      "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, Kiro, Copilot and Codex quotas, your other Claude accounts' limits and Claude extra usage, cost, last turn, compactions and files edited; one line, or two when narrow",
+      "description": "A compact status line above the prompt: model and effort, context fill, 5h and weekly rate limits with reset and pace, Kiro, Copilot and Codex quotas, your other Claude accounts' limits and Claude extra usage, cost, last turn, compactions and files edited, and a cache warmer that keeps a waiting chat's prompt cache alive; one line, or two when narrow",
       "category": "general"
     },
     {

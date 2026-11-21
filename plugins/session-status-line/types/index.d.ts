@@ -72,8 +72,31 @@ export type Account = { key: string; label: string; plan?: string; at: number; f
 /** The last readings, and whether the mod reads them at all (`/status-line quotas on|off`). */
 export type Quotas = { on: boolean; at: number; items: Quota[]; accounts: Account[] }
 
+/**
+ * The cache warmer: while on, a side request over the main conversation (`$.model.fork`, never added to
+ * the transcript) re-reads its prompt cache `everyMs` after the last main-loop request, so the cache
+ * (1 h on a subscription) does not lapse while the chat waits for background work.
+ */
+export type Warm = {
+  on: boolean
+  /** Wait after the last main-loop request (or the last warm) before warming. */
+  everyMs: number
+  /** Stop at this time (epoch ms); null: until switched off. */
+  until: number | null
+  /** When the main loop last sent a request (epoch ms); tracked whether or not the warmer is on. */
+  lastReqAt: number | null
+  /** When the warmer last sent one. */
+  lastWarmAt: number | null
+  /** After a failed warm: not before this time. */
+  retryAt: number | null
+  /** Warms sent since it was switched on. */
+  count: number
+  /** The last warm: tokens the cache served and wrote, or why it did not answer. */
+  last?: { at: number; read: number; wrote: number; reason?: string }
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'session-status-line': { enabled: boolean; layout: Layout; stats: Stats; usage: Usage; tick: number; quotas: Quotas }
+    'session-status-line': { enabled: boolean; layout: Layout; stats: Stats; usage: Usage; tick: number; quotas: Quotas; warm: Warm }
   }
 }

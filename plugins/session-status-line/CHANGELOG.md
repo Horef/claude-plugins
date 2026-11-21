@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.9.0 (2026-11-21)
+- cache warmer (owner request): /status-line warm and a 🔥 band button keep a waiting chat's prompt cache alive with a fork every 55 min after the last request, never added to the transcript; for/until/every/now, retry after a failed warm; tests/warm.test.tsx
+
 ## 0.8.1 (2026-11-16)
 - agy quota read runs agy by full path with no browser opener (open, xdg-open, ...) on its PATH: with a login it could not refresh, every poll opened a browser login page (issue #89, fix by unzim; agy resolved once instead of a second fallback run)
 
