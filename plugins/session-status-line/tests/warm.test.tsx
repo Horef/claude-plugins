@@ -19,6 +19,7 @@ const engine = (on: any, answer: (n: number) => any = () => OK) => {
   const forks: string[] = []
   const fills: string[] = []
   const toasts: string[] = []
+  const compacts: string[] = []
   // What the next main-loop request reports (a 1 h cache read and write by default).
   const step = { usage: usage(200_000, 5_000, { ephemeral_1h_input_tokens: 5_000, ephemeral_5m_input_tokens: 0 }) as any }
   on('store.get', ($: any, e: any) => ({ value: store.get(e.key) }))
@@ -27,7 +28,8 @@ const engine = (on: any, answer: (n: number) => any = () => OK) => {
   on('session.start', ($: any, e: any) => ({ sessionId: 'sess-w', cwd: e.cwd ?? '/proj' }) as any)
   on('session.end', () => ({ sessionId: 'sess-w' }) as any)
   on('session.id', () => ({ value: 'sess-w' }))
-  on('session.compact', () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] }) as any)
+  // A plugin's own $.session.compact reaches here with its arguments as given; the engine adds trigger `plugin`.
+  on('session.compact', ($: any, e: any) => { compacts.push(e.trigger ?? 'plugin'); return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as any })
   on('command.register', () => ({ value: undefined }) as any)
   on('env.get', () => ({ value: undefined }))
   on('ui.toast', ($: any, e: any) => { toasts.push(String(e.text ?? e)); return { value: undefined } })
@@ -40,7 +42,7 @@ const engine = (on: any, answer: (n: number) => any = () => OK) => {
     forks.push(e.prompt)
     return { value: answer(forks.length) }
   })
-  return { clock, forks, fills, toasts, step }
+  return { clock, forks, fills, toasts, step, compacts }
 }
 
 /** One main-loop request, answered with what `step.usage` holds. */
@@ -330,6 +332,52 @@ test("while it keeps the cache, Claude Code's idle compaction is declined; other
   await clock.advance(55 * MIN)
   const off = (await $.session.compact({ trigger: 'auto', messages: msgs } as any)) as any
   expect(off.skip).toBeUndefined()
+})
+
+test('once the warmer stops, the declined idle compaction runs 5 minutes before the cache lapses, once', async ($, on) => {
+  const { clock, compacts } = engine(on)
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  const msgs = [{ role: 'user', text: 'hi', toolUses: [] }]
+  await clock.advance(55 * MIN) // warm at 50
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any)
+  await clock.advance(5 * MIN)
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any) // Claude Code trying again
+  expect(await run($, 'warm status')).toContain('Idle compaction declined 2×')
+  expect(compacts).toEqual([])
+  const off = await run($, 'warm off')
+  expect(off).not.toContain('compacts at') // the reply reads the state from before the switch
+  expect(await run($, 'warm status')).toContain('The chat compacts at')
+  await clock.advance(43 * MIN) // the cache lapses 110 min in (60 after the warm); compaction due at 105
+  expect(compacts).toEqual([])
+  await clock.advance(3 * MIN)
+  expect(compacts).toEqual(['plugin'])
+  await clock.advance(30 * MIN)
+  expect(compacts).toEqual(['plugin'])
+  expect(await run($, 'warm status')).toContain('nothing known cached')
+  expect(await bandText($)).toContain('🗜1') // counted once
+})
+
+test('the end time stops the warmer and the owed compaction follows; a message first clears the debt', async ($, on) => {
+  const { clock, compacts } = engine(on)
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm for 1h')
+  const msgs = [{ role: 'user', text: 'hi', toolUses: [] }]
+  await clock.advance(55 * MIN)
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any)
+  await clock.advance(52 * MIN) // end time at 60, cache until 110: compacts at 105
+  expect(compacts).toEqual(['plugin'])
+  // Second round: a message after the decline means Claude Code times from it again; nothing is owed.
+  await request($)
+  await run($, 'warm on')
+  await clock.advance(55 * MIN)
+  await $.session.compact({ trigger: 'auto', messages: msgs } as any)
+  await request($)
+  await run($, 'warm off')
+  await clock.advance(120 * MIN)
+  expect(compacts).toEqual(['plugin']) // the declined one never reached the engine; nothing more was owed
 })
 
 test('help lists the options', async ($, on) => {

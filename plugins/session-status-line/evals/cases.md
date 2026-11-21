@@ -76,3 +76,11 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - In (a) one warm is sent at about 50 minutes and no "Compacted while idle" happens: at most one line saying the cache warmer declined the compaction; the band still shows a `cache` countdown afterwards. With the warmer off, the idle compaction runs as before; `/compact` always runs.
 - In (b) the status still reads 40m after the reload, then `50m (default)`; the ⓘ row's lit Every button matches.
 **Origin:** owner report (2026-11-21): a 0.10.1 warm ran at 50 minutes, yet the chat was compacted while idle at 55 (O7); the owner asked that a deliberately chosen wait survive a new default (O8).
+
+## Declined idle compaction made up once the warmer stops
+**Task:** In a chat on a subscription account with `idleCompaction` on, send a message, run `/status-line warm for 1h` and leave the chat for two hours; check `/status-line warm status` at about 70 minutes.
+**Good looks like:**
+- At 70 minutes the status lists the idle compaction(s) declined (one time each; more than one means Claude Code retries) and says when the chat compacts.
+- *(live)* The chat is compacted once, about 5 minutes before the cache lapses (about 1h55m after the message: the last warm at 50 minutes plus 1 h, less 5 minutes); the compaction counter rises by one.
+- In a second run where a message is sent at 70 minutes, nothing is compacted.
+**Origin:** owner request (2026-11-21): once the warmer stops, the chat should compact as Claude Code would have, since its idle compaction may not try again (O9).

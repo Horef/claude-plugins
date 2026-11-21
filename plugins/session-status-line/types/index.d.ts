@@ -105,6 +105,10 @@ export type Warm = {
   count: number
   /** The last warm: tokens the cache served and wrote, or why it did not answer. */
   last?: { at: number; read: number; wrote: number; out?: number; reason?: string }
+  /** When the mod declined Claude Code's idle compaction, in the latest quiet stretch (at most 10). */
+  declines?: number[]
+  /** A declined idle compaction not yet made up: the mod runs it once the warmer stops, before the cache lapses. */
+  owesCompact?: boolean
 }
 
 declare module 'claude-code' {
