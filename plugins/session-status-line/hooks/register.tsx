@@ -17,7 +17,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.10.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.10.1' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -1231,7 +1231,10 @@ const fmtClock = (t: number) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const lifeOf = (w: Warm) => `${fmtSpan(ttlOf(w))} cache${w.ttlMs === undefined ? ' (assumed)' : ''}`
+const lifeOf = (w: Warm) => {
+  const ttl = ttlOf(w)
+  return `${ttl % 3_600_000 === 0 ? `${ttl / 3_600_000}h` : fmtSpan(ttl)} cache${w.ttlMs === undefined ? ' (assumed)' : ''}`
+}
 
 /** The cache alone: "Cache: 42m left (1h cache, from the last request at 21:10)." or why there is none. */
 const cacheStatus = (w: Warm, now: number): string => {
@@ -1351,6 +1354,9 @@ export const register: Register = on => {
       name: 'status-line',
       description: 'Session status line: toggle, on | off, layout auto | one | rows, quotas on | off, account-label <name>, live on | off, warm [on | off | now | for 8h | until 07:30 | every 50m], or debug',
     })
+    // A chat that ran 0.9.0 keeps its warmer state across the reload, with that version's default wait
+    // (55 min, too close to the 1 h lapse for a retry): move it to the current default.
+    await update($, warm, w => (w.everyMs === 55 * 60_000 ? { ...w, everyMs: CONFIG.warm.everyMs } : w))
     await Promise.all([refreshModel($), refreshUsage($), loadCompactions($)])
     void refreshQuotas($) // network and CLI calls: never hold up the session
     void refreshAccounts($)

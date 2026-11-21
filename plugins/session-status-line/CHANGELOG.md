@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.10.1 (2026-11-21)
+- a chat that ran 0.9.0 moves from its 55 min default wait to 50 min when the mod reloads; lifetime reads '1h cache', not '1h00m cache' (O6)
+
 ## 0.10.0 (2026-11-21)
 - cache countdown on the band and in status, warmer only keeps a live cache (waits for the next message after a lapse, /clear, /resume, compaction, /model; lifetime learned from turn.step cache writes, 5-minute caches not warmed), 50 min wait and 45 s retries for passing errors only, warm now one-shot, ⓘ options row with buttons; fixes from a Gemini 4 Neon review (O4)
 
