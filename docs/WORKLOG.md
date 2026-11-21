@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-21 (evening): session-status-line 0.12.1, compaction retried while the cache lives
+Live answer to O9: `warm status` showed "Idle compaction declined 1× (14:52)" for a 2h23m quiet stretch (last turn 13:58 local): Claude Code tries its idle compaction once, about 55 min after the last turn, and does not retry (O12). Owner asked that errors inside the warm window be ridden out.
+- Changes: a failed made-up compaction is retried every 45 s / minute tick while the cache lives (first failure announced once), dropped with one notice once it has lapsed; a timed-out one is not retried; a failed warm no longer cancels it (the cache still lives from the last renewal).
+- Commands: `claude plugin test plugins/session-status-line` 50 pass (the compaction-failure test rewritten, 1 new: warm due at 50 with no connection until 55 gets through); tsc: only the 11 old lines.
+- Not yet verified live: the made-up compaction, a real network loss.
+
 ## 2026-11-21 (afternoon): session-status-line 0.12.0, safe made-up compaction
 Live: 11:58 to 14:21 quiet with about 3 warms; the next request read 201,553 tokens from the cache and wrote 316; no compaction, and no line in the transcript about declined ones (the count is only in `warm status`). Owner asked the made-up compaction be cancellable and skipped, not retried, when anything goes wrong (O11).
 - Changes: `Skip compaction` button in the ⓘ row while one is owed, `/status-line warm skip-compact`, and switching the warmer off says when it would compact and how to skip. The owed compaction runs once: skipped when the last warm failed, reported and not retried on a rejection or no answer in 10 min. Warms with no answer in 2 min count as failed (`$.clock.sleep` race; `$.model.fork` takes no signal). Warms failing until the cache lapses switch the warmer off with a toast and clear the debt; a warmer stopped by a lasting error or a cold warm owes nothing.

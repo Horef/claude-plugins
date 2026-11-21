@@ -469,27 +469,47 @@ test('a warm that hangs is given up after 2 minutes and retried', async ($, on) 
   expect(await run($, 'warm status')).toContain('1 sent')
 })
 
-test('a compaction that fails is reported and not tried again; one after a failed warm is skipped', async ($, on) => {
+test('a compaction that fails is retried while the cache lives, then dropped; a failed warm does not stop it', async ($, on) => {
   const { clock, compacts, toasts, ctl } = engine(on, n => (n === 1 ? OK : FAIL))
   ctl.compactFails = true
   await $.session.start({ cwd: '/proj' } as any)
   await request($)
   await run($, 'warm on')
   const msgs = [{ role: 'user', text: 'hi', toolUses: [] }]
-  await clock.advance(55 * MIN)
+  await clock.advance(55 * MIN) // warm at 50
   await $.session.compact({ trigger: 'auto', messages: msgs } as any)
   await run($, 'warm off')
-  await clock.advance(60 * MIN) // due at 105
-  expect(compacts).toEqual(['plugin'])
-  expect(toasts.some(t => t.startsWith('Idle compaction failed') && t.includes('not tried again'))).toBe(true)
-  // A failed warm, then the warmer switched off: the owed compaction is skipped, not sent.
+  await clock.advance(60 * MIN) // due at 105, the cache lapses at 110
+  expect(compacts.length).toBeGreaterThanOrEqual(4) // one try a minute from 105 to 109
+  expect(compacts.length).toBeLessThanOrEqual(6)
+  expect(toasts.filter(t => t.startsWith('Idle compaction failed')).length).toBe(1)
+  expect(toasts.some(t => t.startsWith('Idle compaction skipped: the cache lapsed'))).toBe(true)
+  const tried = compacts.length
+  await clock.advance(60 * MIN)
+  expect(compacts.length).toBe(tried)
+  // The connection back: a warm failed, the warmer was switched off; the cache still lives from the
+  // request, so the owed compaction runs before it lapses.
+  ctl.compactFails = false
   await request($)
   await run($, 'warm on')
-  await clock.advance(55 * MIN) // warm 2 fails at 50 (retrying)
+  await clock.advance(55 * MIN) // the warm at 50 fails and is retried
   await $.session.compact({ trigger: 'auto', messages: msgs } as any)
   await run($, 'warm off')
-  await clock.advance(10 * MIN)
-  expect(compacts).toEqual(['plugin'])
+  await clock.advance(2 * MIN)
+  expect(compacts.length).toBe(tried + 1)
+})
+
+test('a warm due 10 minutes before the lapse, with the connection gone for 5 of them, gets through after', async ($, on) => {
+  const { clock, forks } = engine(on, n => (n <= 5 ? FAIL : OK)) // 50 to 54: no connection
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  await clock.advance(57 * MIN)
+  expect(forks.length).toBe(6)
+  const said = await run($, 'warm status')
+  expect(said).toContain('Warmer on')
+  expect(said).toContain('1 sent')
+  expect(said).toMatch(/Cache: 5[89]m left/)
 })
 
 test('help lists the options', async ($, on) => {

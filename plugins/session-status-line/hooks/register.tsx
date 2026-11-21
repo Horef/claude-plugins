@@ -17,7 +17,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.12.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.12.1' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -113,7 +113,8 @@ const CONFIG = {
     // it itself this long before the cache lapses, as Claude Code would have, unless a message comes first.
     compactLeadMs: 5 * 60_000,
     // A warm or the owed compaction that has not come back by then counts as failed (a dropped connection
-    // can leave a request hanging): the warm is retried while the cache lives, the compaction never.
+    // can leave a request hanging). A failed warm or compaction is retried while the cache lives, never
+    // after; a compaction that timed out is not (it may still finish).
     forkTimeoutMs: 2 * 60_000, compactTimeoutMs: 10 * 60_000,
     prompt: 'Automated cache keep-alive from the session-status-line mod, not a message from the person. ' +
       'You have no tools here and nothing to do: reply with the single word ok, straight away, without thinking it over.',
@@ -1278,26 +1279,30 @@ let compacting = false
 let ownCompactSeen = false // the mod's own compaction reached its session.compact hook (and was counted there)
 
 /** From the minute tick: run the owed idle compaction when it is due and no request is running. */
+let compactNotBefore = 0 // after a failed attempt: the next try, a retry pause later
+let compactFailedAt = 0 // the last failed attempt, so only the first failure of a debt is announced
+
 const maybeCompact = async ($: EngineInterface): Promise<void> => {
   if (compacting || inFlight > 0) return
   const w = await read($, warm)
   const now = await $.clock.now()
+  const ends = cacheEnds(w)
+  const keeping = w.on && (w.until === null || now < w.until)
+  // Owed, but the cache has lapsed (every attempt failed, or the computer slept through the window):
+  // a compaction now would pay for a fresh read of the whole chat, so it is dropped.
+  if (w.owesCompact && !keeping && ends !== null && now >= ends) {
+    await update($, warm, cur => ({ ...cur, owesCompact: false }))
+    void $.ui.toast('Idle compaction skipped: the cache lapsed before it could run. Your next message reads the chat afresh.')
+    return
+  }
   const due = compactDue(w, now)
-  if (due === null || now < due) return
+  if (due === null || now < Math.max(due, compactNotBefore)) return
   compacting = true
   ownCompactSeen = false
   try {
-    // One attempt, whatever happens: a failure is reported, never retried.
-    await update($, warm, cur => ({ ...cur, owesCompact: false }))
-    // Only over a cache the last warm or request is known to have renewed; otherwise the summary would
-    // pay for a fresh read of the whole chat.
-    const failed = w.retryAt !== null || (w.last?.reason !== undefined && w.last.at >= renewedAt(w))
-    if (failed) {
-      void $.ui.toast(`Idle compaction skipped: the last warm did not go through (${w.last?.reason ?? 'no answer'}).`)
-      return
-    }
     const limit = $.clock.sleep(CONFIG.warm.compactTimeoutMs).then(() => 'timeout' as const)
     const r = await Promise.race([$.session.compact({}), limit]) // trigger `plugin`
+    await update($, warm, cur => ({ ...cur, owesCompact: false }))
     if (r === 'timeout') {
       void $.ui.toast('Idle compaction gave no answer in 10 minutes; not tried again.')
       return
@@ -1305,7 +1310,13 @@ const maybeCompact = async ($: EngineInterface): Promise<void> => {
     // Counted by the session.compact hook when it hears the mod's own call; otherwise here.
     if (!ownCompactSeen && !('skip' in r && r.skip)) await countCompaction($)
   } catch (err) {
-    void $.ui.toast(`Idle compaction failed (${String((err as Error)?.message ?? err).slice(0, 80)}); not tried again.`)
+    // No connection, the service down, a turn starting: try again in a moment while the cache lives.
+    const at = await $.clock.now()
+    if (compactFailedAt < renewedAt(w)) {
+      void $.ui.toast(`Idle compaction failed (${String((err as Error)?.message ?? err).slice(0, 80)}); trying again while the cache lasts.`)
+    }
+    compactFailedAt = at
+    compactNotBefore = at + CONFIG.warm.retryMs
   } finally {
     compacting = false
   }
