@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-21 (afternoon): session-status-line 0.12.0, safe made-up compaction
+Live: 11:58 to 14:21 quiet with about 3 warms; the next request read 201,553 tokens from the cache and wrote 316; no compaction, and no line in the transcript about declined ones (the count is only in `warm status`). Owner asked the made-up compaction be cancellable and skipped, not retried, when anything goes wrong (O11).
+- Changes: `Skip compaction` button in the ⓘ row while one is owed, `/status-line warm skip-compact`, and switching the warmer off says when it would compact and how to skip. The owed compaction runs once: skipped when the last warm failed, reported and not retried on a rejection or no answer in 10 min. Warms with no answer in 2 min count as failed (`$.clock.sleep` race; `$.model.fork` takes no signal). Warms failing until the cache lapses switch the warmer off with a toast and clear the debt; a warmer stopped by a lasting error or a cold warm owes nothing.
+- Commands: `claude plugin test plugins/session-status-line` 49 pass (4 new; the lapse test now expects the warmer off); tsc: only the 11 old lines.
+- Not yet verified live: the decline count in `warm status`, the made-up compaction, a real network loss.
+
 ## 2026-11-21 (late night, later): session-status-line 0.11.1, options status wraps
 Owner screenshot: the ⓘ row's status line was cut at the band's edge ("2 sent, las…"); asked for it to wrap onto more lines (O10).
 - Changes: `panelStatus` returns lines, packed greedily between its ` · ` parts to the band's width (a part wider than the line wraps in its Text); the band sets aside 2 button rows plus the status lines it needs.

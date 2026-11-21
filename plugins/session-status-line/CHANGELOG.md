@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.12.0 (2026-11-21)
+- Skip compaction (ⓘ row, warm skip-compact) cancels the owed compaction; it runs once and only after a warm that got through; warms with no answer in 2 min count as failed; a warmer whose warms fail into the lapse stops and owes nothing (O11)
+
 ## 0.11.1 (2026-11-21)
 - the options row's status wraps between its parts onto as many lines as the band's width needs, instead of being cut off (O10)
 

@@ -84,3 +84,10 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - *(live)* The chat is compacted once, about 5 minutes before the cache lapses (about 1h55m after the message: the last warm at 50 minutes plus 1 h, less 5 minutes); the compaction counter rises by one.
 - In a second run where a message is sent at 70 minutes, nothing is compacted.
 **Origin:** owner request (2026-11-21): once the warmer stops, the chat should compact as Claude Code would have, since its idle compaction may not try again (O9).
+
+## Warmer and its compaction give way when things go wrong
+**Task:** (a) With the warmer on and a compaction declined, switch the warmer off and press `Skip compaction` in the ⓘ row; (b) with the warmer on, turn the network off from about 45 minutes after the last message until well past the hour.
+**Good looks like:**
+- In (a) switching off says when the chat would compact and how to skip it; after the press nothing is compacted.
+- In (b) the warms fail and are retried only until the cache lapses; then the warmer is off with one toast saying no warm got through, nothing is compacted, and no further requests go out until it is switched on again.
+**Origin:** owner request (2026-11-21): the made-up compaction must be cancellable and, when the connection breaks or anything else goes wrong, skipped rather than retried (O11).
