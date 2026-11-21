@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-21 (late night, later): session-status-line 0.11.1, options status wraps
+Owner screenshot: the ⓘ row's status line was cut at the band's edge ("2 sent, las…"); asked for it to wrap onto more lines (O10).
+- Changes: `panelStatus` returns lines, packed greedily between its ` · ` parts to the band's width (a part wider than the line wraps in its Text); the band sets aside 2 button rows plus the status lines it needs.
+- Commands: `claude plugin test plugins/session-status-line` 45 pass (1 new: widths 220/100/70/45, nothing lost, lines within width); tsc: only the 11 old lines; `claude plugin validate` passes with the old warnings.
+- Not yet verified: the look in the terminal and desktop app (not seen).
+
 ## 2026-11-21 (late night): session-status-line 0.11.0, declined idle compaction made up
 Live check of 0.10.2 in this chat: last turn 10:27, owner's next message 11:39 (72 min); that request read 159,637 tokens from the cache and wrote 119, no compaction. Neither Claude Code nor the mod left a line, so whether idle compaction retries after a decline is unknown; the owner expects it does not, which would leave the chat uncompacted for good once the warmer stops (O9).
 - Changes: each declined idle compaction is logged per quiet stretch (`Warm.declines`, shown in `warm status`) and owed (`Warm.owesCompact`); once the warmer stops (off, end time, error) while the cache lives, the minute tick runs `$.session.compact({})` 5 min before the lapse; a main-loop request, a compaction, or the warmer back on clears the debt. The mod counts its own compaction when its session.compact hook does not hear the call (the test kit does not route it there; the engine may).
