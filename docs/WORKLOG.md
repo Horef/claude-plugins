@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-21 (night): session-status-line 0.10.2, idle compaction declined, chosen wait kept
+Owner report after reloading 0.10.1: the chat was compacted while idle although the warmer was on. Transcript: last turn 09:00, reload 09:04, compaction 09:55 with "Compacted while idle, before the prompt cache expired"; the 🔥 counter went from 0 to 1, so the 09:50 warm ran. Claude Code's idle compaction times from the last turn and cannot see a fork (O7). Owner also asked that only a default wait follow a new default (warming at once when already overdue), a chosen one staying (O8).
+- Changes: `session.compact` with trigger `auto` on the main chat is declined (`{ skip }`) while the warmer is on, its cache alive, no request in flight, the last request at least 5 min ago and the context under 80 %; `/compact` and threshold compactions run. `Warm.everySet`: `every <m>` other than the default marks a choice, `every default` clears it; the wait is the current default otherwise. State from before 0.10.2 is migrated at session.start (55 or 50 min = default). The 0.10.1 55-to-50 migration is folded into this.
+- Commands: `claude plugin test plugins/session-status-line` 42 pass (warm tests: the 0.10.1 migration test replaced; 4 new); `claude plugin validate` same warnings as main; tsc against the 2.1.330 types: only the 11 old `noUncheckedIndexedAccess` lines.
+- Not yet verified: live, that a declined idle compaction is not retried every few minutes and that its notice reads well; the trigger of idle compaction is inferred (`auto`: it was counted, so not `precompute`). Judged case added: "Cache warmer outlasts idle compaction; a chosen wait stays".
+
 ## 2026-11-21 (evening): session-status-line 0.10.1, old wait migrated
 Owner screenshots after reloading 0.10.0: a new chat showed `Every 50m` lit; a chat that had run 0.9.0 showed "next warm in 54m" and no Every button lit: `$.state` kept 0.9.0's 55 min default across the reload (O6). session.start (which a reload runs again) now moves a 55 min wait to 50; the lifetime reads "1h cache". The judged warmer case from 0.9.0 was updated to the 0.10.0 timing in its own commit (PR #115).
 - Commands: `claude plugin test plugins/session-status-line` 39 pass (1 new); `loop.py eval session-status-line` exit 0.

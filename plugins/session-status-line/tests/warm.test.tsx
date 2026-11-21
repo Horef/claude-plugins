@@ -4,6 +4,7 @@
 // countdown; the band's 🔥 and ⓘ controls. The test's hooks stand for the engine; `model.fork` and
 // `turn.step` are answered here, no API call.
 import { test, expect, mock } from 'claude-code/testing'
+import { migrateWarm } from '../hooks/register'
 
 const START = Date.parse('2026-11-21T20:00:00Z')
 const MIN = 60_000
@@ -269,16 +270,66 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('a chat still on the 0.9.0 default wait (55 min) moves to 50 min when the mod reloads', async ($, on) => {
+test('a chosen wait survives a reload; the default one follows the current default', async ($, on) => {
   const { clock } = engine(on)
   await $.session.start({ cwd: '/proj' } as any)
   await request($)
   await run($, 'warm on')
+  expect(await run($, 'warm status')).toContain('50m (default) after each request')
   expect(await run($, 'warm every 55m')).toContain('55m after each request')
-  expect(await run($, 'warm status')).toContain('(1h cache, from the last request')
   await $.session.start({ cwd: '/proj' } as any) // a reload runs session.start again; $.state stays
-  expect(await run($, 'warm status')).toContain('50m after each request')
+  expect(await run($, 'warm status')).toContain('55m after each request')
+  expect(await run($, 'warm every 50m')).toContain('50m (default) after each request')
+  await run($, 'warm every 30m')
+  expect(await run($, 'warm every default')).toContain('50m (default) after each request')
   await clock.advance(MIN)
+})
+
+test('state from before 0.10.2: an old default wait follows the current one, a chosen one stays', async () => {
+  const old = { on: true, until: null, lastReqAt: null, lastWarmAt: null, retryAt: null, count: 0 }
+  expect(migrateWarm({ ...old, everyMs: 55 * MIN })).toMatchObject({ everySet: false, everyMs: 50 * MIN })
+  expect(migrateWarm({ ...old, everyMs: 50 * MIN })).toMatchObject({ everySet: false, everyMs: 50 * MIN })
+  expect(migrateWarm({ ...old, everyMs: 30 * MIN })).toMatchObject({ everySet: true, everyMs: 30 * MIN })
+  expect(migrateWarm({ ...old, everyMs: 40 * MIN, everySet: false }).everyMs).toBe(40 * MIN) // already migrated
+})
+
+test('moving to a shorter wait that is already overdue warms at the next tick', async ($, on) => {
+  const { clock, forks } = engine(on)
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  await run($, 'warm every 55m')
+  await clock.advance(52 * MIN)
+  expect(forks.length).toBe(0)
+  await run($, 'warm every default')
+  await clock.advance(MIN)
+  expect(forks.length).toBe(1)
+})
+
+test("while it keeps the cache, Claude Code's idle compaction is declined; otherwise compactions run", async ($, on) => {
+  const { clock, forks } = engine(on)
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  const msgs = [{ role: 'user', text: 'hi', toolUses: [] }]
+  // Right after a request (a threshold compaction mid-turn): it runs, even with the warmer on.
+  await run($, 'warm on')
+  const busy = (await $.session.compact({ trigger: 'auto', messages: msgs } as any)) as any
+  expect(busy.skip).toBeUndefined()
+  await request($)
+  await clock.advance(55 * MIN) // the warm went at 50 min; the engine compacts at about 55
+  expect(forks.length).toBe(1)
+  const idle = (await $.session.compact({ trigger: 'auto', messages: msgs } as any)) as any
+  expect(idle.skip).toContain('cache warmer')
+  expect(await run($, 'warm status')).toContain('left (1h cache, from the last warm')
+  // The person's own /compact always runs.
+  const manual = (await $.session.compact({ trigger: 'manual', messages: msgs } as any)) as any
+  expect(manual.skip).toBeUndefined()
+  // With the warmer off, the idle compaction runs as before.
+  await request($)
+  await run($, 'warm off')
+  await clock.advance(55 * MIN)
+  const off = (await $.session.compact({ trigger: 'auto', messages: msgs } as any)) as any
+  expect(off.skip).toBeUndefined()
 })
 
 test('help lists the options', async ($, on) => {

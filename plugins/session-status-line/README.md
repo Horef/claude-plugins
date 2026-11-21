@@ -51,10 +51,12 @@ The warmer keeps the cache alive while you wait. While it is on, 50 minutes afte
 **Controls.** Press ⓘ on the band for the options row: one line of state (cache left, end time, next warm, warms sent), then `Warmer On Off · For 2h 4h 8h 12h ∞ until… · Warm now` and `Every 30m 40m 50m`, the current choice bold; `until…` puts `/status-line warm until ` in the prompt for the time; `×` closes it. The same as commands:
 - `/status-line warm`: on for 12 hours (or off, when it is on); `warm on` the same without toggling; `warm off`.
 - `/status-line warm for 8h` / `for 90m` / `for 1h30m`; `warm until 07:30` (local time, the next time the clock shows it); `warm forever` (until switched off).
-- `/status-line warm every 50m`: the wait (2 minutes up to 2 minutes short of the cache's lifetime; default 50).
+- `/status-line warm every 50m`: the wait (2 minutes up to 2 minutes short of the cache's lifetime; default 50). A wait you choose stays through updates of the mod; on the default (`warm every default`, or never changed) the wait follows the mod's current default, and a warm already overdue by a new, shorter default goes at the next minute.
 - `/status-line warm now`: one warm at once, whatever the switch says (it does not switch the warmer on), and how much the cache served; `warm status`: the cache and the warmer; `warm help`.
 
-The setting belongs to the chat: a new chat, `/clear` or `/resume` starts with the warmer off. It does not stop compaction at the context threshold; it only keeps the cache from lapsing.
+**Idle compaction.** Claude Code compacts an idle chat shortly before it expects the cache to lapse ("Compacted while idle, before the prompt cache expired"), timing from the last turn: it cannot see a warm, so it would compact a chat the warmer keeps warm. While the warmer is on and the cache alive, the mod declines that compaction (one line in the chat says so). Compaction that the context needs still runs: `/compact`, any compaction within 5 minutes of a request or with the context 80% full or more. With the warmer off, idle compaction runs as before; `"idleCompaction": false` in settings.json turns it off for every chat.
+
+The setting belongs to the chat: a new chat, `/clear` or `/resume` starts with the warmer off.
 
 ## Several Claude accounts
 
