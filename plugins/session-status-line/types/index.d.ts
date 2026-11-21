@@ -74,13 +74,20 @@ export type Quotas = { on: boolean; at: number; items: Quota[]; accounts: Accoun
 
 /**
  * The cache warmer: while on, a side request over the main conversation (`$.model.fork`, never added to
- * the transcript) re-reads its prompt cache `everyMs` after the last main-loop request, so the cache
+ * the transcript) re-reads its prompt cache `everyMs` after the last main-loop request or warm, so the cache
  * (1 h on a subscription) does not lapse while the chat waits for background work.
  */
 export type Warm = {
   on: boolean
   /** Wait after the last main-loop request (or the last warm) before warming. */
   everyMs: number
+  /**
+   * The cache's lifetime as the last main-loop cache write reported it (1 h or 5 min); absent until one is
+   * seen (then 1 h is assumed, a subscription's).
+   */
+  ttlMs?: number
+  /** The band's warmer row with its option buttons is open. */
+  open?: boolean
   /** Stop at this time (epoch ms); null: until switched off. */
   until: number | null
   /** When the main loop last sent a request (epoch ms); tracked whether or not the warmer is on. */
@@ -92,7 +99,7 @@ export type Warm = {
   /** Warms sent since it was switched on. */
   count: number
   /** The last warm: tokens the cache served and wrote, or why it did not answer. */
-  last?: { at: number; read: number; wrote: number; reason?: string }
+  last?: { at: number; read: number; wrote: number; out?: number; reason?: string }
 }
 
 declare module 'claude-code' {

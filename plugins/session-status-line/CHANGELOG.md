@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.10.0 (2026-11-21)
+- cache countdown on the band and in status, warmer only keeps a live cache (waits for the next message after a lapse, /clear, /resume, compaction, /model; lifetime learned from turn.step cache writes, 5-minute caches not warmed), 50 min wait and 45 s retries for passing errors only, warm now one-shot, ⓘ options row with buttons; fixes from a Gemini 4 Neon review (O4)
+
 ## 0.9.0 (2026-11-21)
 - cache warmer (owner request): /status-line warm and a 🔥 band button keep a waiting chat's prompt cache alive with a fork every 55 min after the last request, never added to the transcript; for/until/every/now, retry after a failed warm; tests/warm.test.tsx
 

@@ -17,7 +17,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.9.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.10.0' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -39,14 +39,14 @@ const CONFIG = {
     working: '⏳', idle: '✅',
     switched: '⇄', effort: '·',
     barFull: '▰', barEmpty: '▱',
-    reset: '⟳', pace: '⚠', turn: '⏱', files: '✎', compact: '🗜', warm: '🔥', sep: '  ┃  ',
+    reset: '⟳', pace: '⚠', turn: '⏱', files: '✎', compact: '🗜', warm: '🔥', info: 'ⓘ', sep: '  ┃  ',
   },
   // Used when SESSION_STATUS_ASCII is set (terminals without emoji fonts).
   asciiIcons: {
     working: '*', idle: '-',
     switched: '<>', effort: '/',
     barFull: '#', barEmpty: '.',
-    reset: 'reset ', pace: '! ', turn: 'turn ', files: 'files ', compact: 'compacted ', warm: 'warm ', sep: ' || ',
+    reset: 'reset ', pace: '! ', turn: 'turn ', files: 'files ', compact: 'compacted ', warm: 'warm', info: '(i)', sep: ' || ',
   },
   // Proportional fonts (the desktop app) draw ▰▱ at uneven sizes; these stay even.
   desktopBar: { barFull: '●', barEmpty: '○' },
@@ -94,17 +94,21 @@ const CONFIG = {
   // order; an id several segments share (`acct`) drops one of them, the last, at a time.
   // Activity, model and the context bar are never dropped. A reset or pace
   // tag is listed before its limit, since it is glued to it.
-  // Cache warmer: wait after the last main-loop request (the cache lives 1 h on a subscription, 5 min
-  // otherwise; the minute tick may add up to a minute), how long `/status-line warm` runs with no
-  // `for` / `until`, the wait after a failed warm, and the bounds `every` accepts.
+  // Cache warmer: the cache lifetime assumed until a main-loop request reports one (1 h on a subscription),
+  // the wait after the last main-loop request or warm (the minute tick may add up to a minute; a failed
+  // warm is retried after `retryMs`, kept under the tick so the next tick takes it, while the cache
+  // lives), how long the 🔥 button and `/status-line warm` run with no `for` / `until`, the shortest
+  // `every`, and the rows the options row takes. A 5-minute cache is not warmed: a warm every 3 minutes
+  // costs more within the hour than re-reading the chat once.
   warm: {
-    everyMs: 55 * 60_000, defaultForMs: 12 * 3_600_000, retryMs: 5 * 60_000, minEveryMs: 2 * 60_000, maxEveryMs: 59 * 60_000,
+    panelRows: 3,
+    ttlMs: 60 * 60_000, everyMs: 50 * 60_000, retryMs: 45_000, defaultForMs: 12 * 3_600_000, minEveryMs: 2 * 60_000,
     prompt: 'Automated cache keep-alive from the session-status-line mod, not a message from the person. ' +
       'You have no tools here and nothing to do: reply with the single word ok, straight away, without thinking it over.',
   },
   dropOrder: [
-    'warmOff', 'session', 'files', 'lastTurn', 'resetacct', 'resetcodex', 'resetargon', 'resetcopilot', 'resetkiro', 'cost', 'compactions', 'ctxTokens',
-    'acct', 'codex', 'agy', 'argon', 'copilot', 'kiro', 'reset7d', 'pace7d', 'limit7d', 'resetOther', 'paceOther', 'limitOther',
+    'session', 'files', 'lastTurn', 'resetacct', 'resetcodex', 'resetargon', 'resetcopilot', 'resetkiro', 'cost', 'compactions', 'ctxTokens',
+    'warmOff', 'acct', 'codex', 'agy', 'argon', 'copilot', 'kiro', 'reset7d', 'pace7d', 'limit7d', 'resetOther', 'paceOther', 'limitOther',
     'reset5h', 'hint', 'pace5h', 'extra', 'warm', 'limit5h',
   ],
 }
@@ -201,7 +205,7 @@ const timeToLimit = (lim: Limit, now: number): number | null => {
 }
 
 // A segment is a few styled pieces; `id` ties it to CONFIG.dropOrder.
-type Piece = { text: string; color?: string; dim?: boolean; bold?: boolean; press?: 'warm' } // press: drawn as a plain Button
+type Piece = { text: string; color?: string; dim?: boolean; bold?: boolean; press?: 'warm' | 'warmInfo' } // press: drawn as a plain Button
 type Segment = { id: string; pieces: Piece[]; glue?: boolean } // glue: no separator before it
 
 /** Money as "$2.37", "$59", or "12.40 EUR". */
@@ -421,17 +425,28 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
   if (u.startedAt !== undefined && now > u.startedAt) session.push(fmtSpan(Math.floor((now - u.startedAt) / 60_000) * 60_000))
   if (session.length > 0) out.push({ id: 'session', pieces: [{ text: session.join(' · '), dim: true }] })
 
-  // Cache warmer: a button; on, the time to the next warm (orange when the last one found the cache gone).
-  if (w.on) {
-    const due = warmDue(w)
-    const cold = w.last && !w.last.reason && w.last.read < w.last.wrote
-    const failed = !!w.last?.reason && w.last.reason !== 'nothing-to-fork'
-    out.push({ id: 'warm', pieces: [{
-      text: `${ic.warm}${due === null ? 'on' : fmtSpan(Math.max(0, due - now))}${cold ? ' cold' : failed ? ' !' : ''}`,
-      color: cold || failed ? CONFIG.colors.high : CONFIG.colors.model, press: 'warm',
-    }] })
-  } else {
-    out.push({ id: 'warmOff', pieces: [{ text: ic.warm.trim(), dim: true, press: 'warm' }] })
+  // Cache and warmer: the time the cache has left, the 🔥 toggle (lit, with the warms sent, when on) and ⓘ for
+  // the options row. Orange when the warmer is on but the cache has lapsed or the last warm failed or found it gone.
+  {
+    const ends = cacheEnds(w)
+    const lapsed = ends !== null && now >= ends
+    // Badges about the last warm only until a real request renews the cache after it.
+    const fresh = !!w.last && w.last.at >= (w.lastReqAt ?? 0)
+    const cold = w.on && fresh && !w.last?.reason && w.last!.read < w.last!.wrote
+    const failed = w.on && fresh && !!w.last?.reason && (w.retryAt ?? 0) > 0
+    const alarm = w.on && (lapsed || cold || failed)
+    const pieces: Piece[] = []
+    if (ends !== null) {
+      pieces.push({
+        text: `cache ${lapsed ? 'lapsed' : fmtSpan(ends - now)}${cold ? ' cold' : failed ? ' !' : ''} `,
+        dim: !alarm, color: alarm ? CONFIG.colors.high : undefined,
+      })
+    }
+    pieces.push(w.on
+      ? { text: `${ic.warm}${w.count}`, color: CONFIG.colors.model, press: 'warm' }
+      : { text: ic.warm, dim: true, press: 'warm' })
+    pieces.push({ text: ' ' }, { text: ic.info, dim: !w.open, color: w.open ? CONFIG.colors.model : undefined, press: 'warmInfo' })
+    out.push({ id: w.on ? 'warm' : 'warmOff', pieces })
   }
 
   return out
@@ -1088,49 +1103,103 @@ async function readQuotas($: EngineInterface, force: boolean) {
 // that waits hours for background work then resumes from the cache instead of paying for the whole
 // conversation again. The fork names no effort, so it rides the main thread's cache on every model.
 
-/** When the next warm is due, or null when there is nothing to warm yet (no request since the start or a /clear). */
-const warmDue = (w: Warm): number | null => {
-  const base = Math.max(w.lastReqAt ?? 0, w.lastWarmAt ?? 0)
-  if (!base) return null
-  return Math.max(base + w.everyMs, w.retryAt ?? 0)
+const ttlOf = (w: Warm) => w.ttlMs ?? CONFIG.warm.ttlMs
+
+/** When the cache was last renewed: the later of the last main-loop request and the last warm; 0 when unknown. */
+const renewedAt = (w: Warm) => Math.max(w.lastReqAt ?? 0, w.lastWarmAt ?? 0)
+
+/** When the cache lapses (its lifetime from the last renewal), or null when nothing is known to be cached. */
+const cacheEnds = (w: Warm): number | null => {
+  const base = renewedAt(w)
+  return base ? base + ttlOf(w) : null
 }
 
-// One warm at a time (module-local: a reload mid-warm may start another, harmlessly).
-let warming = false
+/** A 5-minute cache is not worth warming (see CONFIG.warm). */
+const shortCache = (w: Warm) => ttlOf(w) < CONFIG.warm.minEveryMs * 3
 
-/** Warm now if due (or `force`); stop once `until` has passed. Called from the minute tick and `warm now`. */
-const maybeWarm = async ($: EngineInterface, force = false): Promise<string | null> => {
-  const w = await read($, warm)
-  if (!w.on || warming) return null
-  const now = await $.clock.now()
-  if (w.until !== null && now >= w.until) {
-    await update($, warm, cur => ({ ...cur, on: false }))
-    void $.ui.toast(`Cache warmer stopped: its end time passed (${w.count} warm${w.count === 1 ? '' : 's'}).`)
-    return null
-  }
-  const due = warmDue(w)
-  if (!force && (due === null || now < due)) return null
+/** When the next warm is due, or null when there is nothing to warm (no request yet, the cache lapsed, or it is a 5-minute one). */
+const warmDue = (w: Warm, now: number): number | null => {
+  const ends = cacheEnds(w)
+  if (ends === null || now >= ends || shortCache(w)) return null
+  return Math.max(renewedAt(w) + Math.min(w.everyMs, ttlOf(w) - CONFIG.warm.minEveryMs), w.retryAt ?? 0)
+}
+
+// Module-local, so a reload starts them over (harmless: a reload drops any fork in flight with its module):
+// one warm at a time; main-loop requests in flight (no warm then: the request renews the cache itself);
+// and an epoch that /clear, /resume, a compaction and a model switch move on, so a warm that was in
+// flight across one of them does not write its result over the new chat's.
+let warming = false
+let inFlight = 0
+let epoch = 0
+
+/** Forget what is cached (a new chat, a compaction, another model): the warmer waits for the next request. */
+const forgetCache = ($: EngineInterface, extra: Partial<Warm> = {}) => {
+  epoch++
+  return update($, warm, w => ({ ...w, lastReqAt: null, lastWarmAt: null, retryAt: null, last: undefined, ...extra }))
+}
+
+/** API errors worth retrying: overload, server trouble, rate limits, a dropped connection. */
+const transient = (r: { status: number | null; error: string }) =>
+  r.status === null || ['overloaded', 'server_error', 'rate_limit', 'unknown'].includes(r.error)
+
+/**
+ * Warm now if due; stop once `until` has passed. Called from the minute tick. `once` (from `warm now`)
+ * warms whatever the switch, the end time or the timing say, without switching the warmer on.
+ * A lapsed cache is not warmed on schedule (that would pay a full cache write); the next real request
+ * starts the countdown again. A scheduled warm that finds the cache gone switches the warmer off.
+ */
+const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
+  if (warming) return 'A warm is already running.'
   warming = true
   try {
-    const r = await $.model.fork({ prompt: CONFIG.warm.prompt })
-    const at = await $.clock.now()
-    if (r.isAnswered) {
-      const last = { at, read: r.usage.cache_read_input_tokens, wrote: r.usage.cache_creation_input_tokens }
-      await update($, warm, cur => ({ ...cur, lastWarmAt: at, retryAt: null, count: cur.count + 1, last }))
-      return `warmed: the cache served ${fmt(last.read)} tokens${last.wrote ? `, ${fmt(last.wrote)} written afresh` : ''}`
+    const w = await read($, warm)
+    const now = await $.clock.now()
+    if (!once) {
+      if (!w.on) return 'Warmer off.'
+      if (w.until !== null && now >= w.until) {
+        await update($, warm, cur => ({ ...cur, on: false }))
+        void $.ui.toast(`Cache warmer stopped: its end time passed (${w.count} warm${w.count === 1 ? '' : 's'} sent).`)
+        return 'Warmer off: its end time passed.'
+      }
+      const due = warmDue(w, now)
+      if (due === null || now < due || inFlight > 0) return 'Not due.'
     }
-    const reason = r.reason === 'api-error' ? `api-error ${'status' in r ? r.status : ''}`.trim() : r.reason
-    // Nothing to fork yet: wait for the next main-loop request. Anything else: try again later.
-    await update($, warm, cur => ({
-      ...cur, retryAt: reason === 'nothing-to-fork' ? null : at + CONFIG.warm.retryMs,
-      lastReqAt: reason === 'nothing-to-fork' ? null : cur.lastReqAt, last: { at, read: 0, wrote: 0, reason },
-    }))
-    return `not warmed: ${reason}`
-  } catch (err) {
+    const myEpoch = epoch
+    const sentAt = now // a cache lifetime counts from the request's start
+    let r: Awaited<ReturnType<EngineInterface['model']['fork']>>
+    try {
+      r = await $.model.fork({ prompt: CONFIG.warm.prompt })
+    } catch (err) {
+      r = { isAnswered: false, reason: 'api-error', status: null, error: 'unknown', usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } as any
+      void err
+    }
+    if (epoch !== myEpoch) return 'The chat changed while the warm ran; its result was dropped.'
     const at = await $.clock.now()
-    const reason = `threw: ${String(err).slice(0, 120)}`
-    await update($, warm, cur => ({ ...cur, retryAt: at + CONFIG.warm.retryMs, last: { at, read: 0, wrote: 0, reason } }))
-    return `not warmed: ${reason}`
+    const used = 'usage' in r && r.usage ? r.usage : null
+    // Any request that read the cache renewed it, answered in words or not (an empty reply, an abort).
+    if (used && (r.isAnswered || used.cache_read_input_tokens > 0)) {
+      const last = { at: sentAt, read: used.cache_read_input_tokens, wrote: used.cache_creation_input_tokens, out: used.output_tokens }
+      const gone = last.read < last.wrote
+      await update($, warm, cur => ({
+        ...cur, lastWarmAt: sentAt, retryAt: null, count: cur.count + 1, last, on: gone && !once ? false : cur.on,
+      }))
+      if (gone && !once) {
+        void $.ui.toast('Cache warmer stopped: the warm found the cache already gone (paid a full write). It renews at your next message.')
+      }
+      return `Warmed: the cache served ${fmt(last.read)} tokens${last.wrote ? `, ${fmt(last.wrote)} written afresh` : ''}, ${fmt(last.out)} out.`
+    }
+    if (!r.isAnswered && r.reason === 'nothing-to-fork') {
+      await update($, warm, cur => ({ ...cur, retryAt: null, last: { at, read: 0, wrote: 0, reason: 'nothing to warm yet' } }))
+      return 'Not warmed: nothing to warm yet (no request since the chat started).'
+    }
+    const reason = !r.isAnswered && r.reason === 'api-error' ? `api-error ${r.status ?? 'no response'} ${r.error}` : r.isAnswered ? 'no usage reported' : r.reason
+    const retry = !r.isAnswered && r.reason === 'api-error' ? transient(r) : !r.isAnswered && r.reason !== 'aborted' ? false : true
+    await update($, warm, cur => ({
+      ...cur, retryAt: retry ? at + CONFIG.warm.retryMs : null, on: retry || once ? cur.on : false,
+      last: { at, read: 0, wrote: 0, reason },
+    }))
+    if (!retry && !once) void $.ui.toast(`Cache warmer stopped: ${reason}.`)
+    return `Not warmed: ${reason}${retry ? '; trying again shortly' : ''}.`
   } finally {
     warming = false
   }
@@ -1138,6 +1207,8 @@ const maybeWarm = async ($: EngineInterface, force = false): Promise<string | nu
 
 /** "50m", "8h", "1.5h", "90" (minutes unless `unit` says hours) → ms; null when unreadable. */
 const parseSpan = (text: string, unit: 'm' | 'h'): number | null => {
+  const hm = /^(\d+)\s*h\s*(\d+)\s*m$/i.exec(text.trim()) // "1h30m", as fmtSpan prints it
+  if (hm) return Number(hm[1]) * 3_600_000 + Number(hm[2]) * 60_000
   const m = /^(\d+(?:\.\d+)?)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)?$/i.exec(text.trim())
   if (!m) return null
   const n = Number(m[1])
@@ -1160,30 +1231,59 @@ const fmtClock = (t: number) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const warmStatus = (w: Warm, now: number): string => {
-  if (!w.on) return 'Cache warmer off.'
-  const due = warmDue(w)
-  const next = due === null ? 'after the next request' : due <= now ? 'now' : `in ${fmtSpan(due - now)}`
-  const end = w.until === null ? 'until switched off' : `until ${fmtClock(w.until)} (${fmtSpan(w.until - now)} from now)`
-  const last = w.last
-    ? `; last ${fmtSpan(now - w.last.at)} ago: ${w.last.reason ?? `cache served ${fmt(w.last.read)} tokens${w.last.wrote ? `, wrote ${fmt(w.last.wrote)}` : ''}`}`
-    : ''
-  return `Cache warmer on, every ${fmtSpan(w.everyMs)} after the last request, ${end}; next warm ${next}; ${w.count} sent${last}.`
+const lifeOf = (w: Warm) => `${fmtSpan(ttlOf(w))} cache${w.ttlMs === undefined ? ' (assumed)' : ''}`
+
+/** The cache alone: "Cache: 42m left (1h cache, from the last request at 21:10)." or why there is none. */
+const cacheStatus = (w: Warm, now: number): string => {
+  const ends = cacheEnds(w)
+  if (ends === null) return 'Cache: nothing known cached (no request seen since the chat started, a /clear, a compaction or a model switch).'
+  const from = w.lastWarmAt !== null && w.lastWarmAt >= (w.lastReqAt ?? 0) ? 'warm' : 'request'
+  const life = `${lifeOf(w)}, from the last ${from} at ${fmtClock(renewedAt(w))}`
+  return now < ends ? `Cache: ${fmtSpan(ends - now)} left (${life}).` : `Cache: lapsed ${fmtSpan(now - ends)} ago (${life}); the next message re-reads the whole chat.`
 }
 
-/** `/status-line warm ...`: switch on or off, set the end or the interval, warm now, or report. */
+const lastOf = (w: Warm, now: number) =>
+  !w.last ? '' : ` Last warm ${fmtSpan(now - w.last.at)} ago: ${w.last.reason ?? `cache served ${fmt(w.last.read)} tokens${w.last.wrote ? `, wrote ${fmt(w.last.wrote)}` : ''}${w.last.out !== undefined ? `, ${fmt(w.last.out)} out` : ''}`}.`
+
+const nextOf = (w: Warm, now: number): string => {
+  const due = warmDue(w, now)
+  if (due !== null) return due <= now ? 'now' : `in ${fmtSpan(due - now)}`
+  if (shortCache(w)) return 'none: a 5-minute cache costs more to keep warm than to re-read'
+  return cacheEnds(w) === null ? 'after the next message' : 'after the next message (the cache has lapsed)'
+}
+
+const warmStatus = (w: Warm, now: number): string => {
+  if (!w.on) return `${cacheStatus(w, now)} Warmer off.${lastOf(w, now)}`
+  const end = w.until === null ? 'until switched off' : `until ${fmtClock(w.until)} (${fmtSpan(Math.max(0, w.until - now))} from now)`
+  return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(w.everyMs)} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}`
+}
+
+/** The options row's first line: one short sentence of state. */
+const panelStatus = (w: Warm, now: number): string => {
+  const ends = cacheEnds(w)
+  const cache = ends === null ? 'Nothing known cached' : now < ends ? `Cache ${fmtSpan(ends - now)} left of ${lifeOf(w)}` : `${lifeOf(w)} lapsed`
+  if (!w.on) return `${cache} · warmer off`
+  const parts = [cache, `warmer on ${w.until === null ? 'until switched off' : `until ${fmtClock(w.until)}`}`, `next warm ${nextOf(w, now)}`]
+  if (w.last) parts.push(w.last.reason ? `last: ${w.last.reason}` : `${w.count} sent, last served ${fmt(w.last.read)}`)
+  return parts.join(' · ')
+}
+
+const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | status]'
+
+/** `/status-line warm ...`: switch on or off, set the end or the interval, warm once now, or report. */
 const warmCommand = async ($: EngineInterface, args: string): Promise<string> => {
   const now = await $.clock.now()
   const cur = await read($, warm)
   const [verb = '', ...rest] = args.trim().split(/\s+/)
   const value = rest.join(' ')
+  // Switching on never invents a request time: with none seen, the warmer waits for the next message.
   const on = (until: number | null) =>
-    update($, warm, w => ({ ...w, on: true, until, retryAt: null, count: w.on ? w.count : 0, lastReqAt: w.lastReqAt ?? now }))
+    update($, warm, w => ({ ...w, on: true, until, retryAt: null, count: w.on ? w.count : 0 }))
   switch (verb.toLowerCase()) {
     case '':
       if (cur.on) {
         await update($, warm, w => ({ ...w, on: false }))
-        return 'Cache warmer off.'
+        return `Warmer off. ${cacheStatus(cur, now)}`
       }
       await on(now + CONFIG.warm.defaultForMs)
       break
@@ -1192,13 +1292,13 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
       break
     case 'off':
       await update($, warm, w => ({ ...w, on: false }))
-      return 'Cache warmer off.'
+      return `Warmer off. ${cacheStatus(cur, now)}`
     case 'forever':
       await on(null)
       break
     case 'for': {
       const span = parseSpan(value, 'h')
-      if (!span) return 'Usage: /status-line warm for <span>, e.g. "for 8h" or "for 90m".'
+      if (!span) return 'Usage: /status-line warm for <span>, e.g. "for 8h", "for 90m" or "for 1h30m".'
       await on(now + span)
       break
     }
@@ -1210,21 +1310,24 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
     }
     case 'every': {
       const span = parseSpan(value, 'm')
-      if (!span || span < CONFIG.warm.minEveryMs || span > CONFIG.warm.maxEveryMs) {
-        return `Usage: /status-line warm every <minutes>, between ${CONFIG.warm.minEveryMs / 60_000} and ${CONFIG.warm.maxEveryMs / 60_000} (default ${CONFIG.warm.everyMs / 60_000}; a 5-minute cache needs 3 or less).`
+      const max = ttlOf(cur) - CONFIG.warm.minEveryMs
+      if (!span || span < CONFIG.warm.minEveryMs || span > max) {
+        return `Usage: /status-line warm every <minutes>, from ${CONFIG.warm.minEveryMs / 60_000} to ${max / 60_000} with a ${lifeOf(cur)} (default ${CONFIG.warm.everyMs / 60_000}).`
       }
       await update($, warm, w => ({ ...w, everyMs: span }))
       break
     }
     case 'now': {
-      if (!cur.on) await on(now + CONFIG.warm.defaultForMs)
+      // One warm, whatever the switch says; it does not switch the warmer on.
       const said = await maybeWarm($, true)
-      return `${said ?? 'A warm is already running.'} ${warmStatus(await read($, warm), await $.clock.now())}`
+      return `${said} ${warmStatus(await read($, warm), await $.clock.now())}`
     }
     case 'status':
       break
+    case 'help':
+      return `Cache warmer: ${WARM_HELP}. The 🔥 button switches it on for ${fmtSpan(CONFIG.warm.defaultForMs)} or off; ⓘ opens its options.`
     default:
-      return 'Usage: /status-line warm [on | off | now | forever | for <span> | until HH:MM | every <minutes> | status].'
+      return `Usage: ${WARM_HELP}.`
   }
   return warmStatus(await read($, warm), now)
 }
@@ -1258,7 +1361,7 @@ export const register: Register = on => {
       void refreshModel($)
       void refreshQuotas($)
       void refreshAccounts($)
-      void maybeWarm($)
+      void maybeWarm($).catch(() => {})
     })
     return next(e)
   })
@@ -1350,11 +1453,38 @@ export const register: Register = on => {
     if (!e.agentId) {
       const effort = e.effort ?? null
       await update($, stats, s => (s.effort === effort ? s : { ...s, effort }))
-      // A main-loop request renews the cache: the warmer counts from here.
-      const at = await $.clock.now()
-      await update($, warm, w => ({ ...w, lastReqAt: at, retryAt: null }))
     }
-    return yield* next(e)
+    if (e.agentId) return yield* next(e)
+    // A main-loop request that reached the cache renews it from its start; its cache write says for how
+    // long (1 h or 5 min). A request with no response renews nothing. No warm runs while one is in flight.
+    const sentAt = await $.clock.now()
+    const myEpoch = epoch
+    inFlight++
+    try {
+      const res = yield* next(e)
+      const u = res.usage
+      if (u && epoch === myEpoch && (u.cache_read_input_tokens > 0 || u.cache_creation_input_tokens > 0)) {
+        const ttlMs = (u.ephemeral_1h_input_tokens ?? 0) > 0 ? 3_600_000 : (u.ephemeral_5m_input_tokens ?? 0) > 0 ? 300_000 : undefined
+        await update($, warm, w => ({ ...w, lastReqAt: Math.max(sentAt, w.lastReqAt ?? 0), retryAt: null, ttlMs: ttlMs ?? w.ttlMs }))
+      }
+      return res
+    } finally {
+      inFlight = Math.max(0, inFlight - 1)
+    }
+  })
+
+  // A resumed chat: its cache may still live, counted from its last response; a model switch forfeits it.
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'resume' || e.source === 'fork') {
+      const now = await $.clock.now()
+      const ago = e.seconds_since_last_response
+      await forgetCache($, ago !== undefined && !e.prompt_cache_likely_expired ? { lastReqAt: now - ago * 1000 } : {})
+    }
+    return next(e)
+  })
+  on('classic.PostModelSwitch', async ($, e, next) => {
+    if (e.from_model !== e.to_model) await forgetCache($, { ttlMs: e.cache_ttl === '5m' ? 300_000 : 3_600_000 })
+    return next(e)
   })
 
   // Files edited this session (main loop and subagents), counted once each.
@@ -1388,6 +1518,7 @@ export const register: Register = on => {
     if (!e.agentId && e.trigger !== 'precompute' && !('skip' in result && result.skip)) {
       const s = await update($, stats, cur => ({ ...cur, compactions: cur.compactions + 1 }))
       await saveCompactions($, s.compactions)
+      await forgetCache($) // the summary is cached by the next request, not before
       await refreshUsage($)
     }
     return result
@@ -1409,12 +1540,16 @@ export const register: Register = on => {
 
   // /clear starts a fresh conversation in the same process: reset totals.
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') {
+    if (e.reason === 'clear' || e.reason === 'resume') {
       await update($, stats, s => ({ ...EMPTY, model: s.model, apiModel: s.apiModel, effort: s.effort }))
-      await update($, warm, w => ({ ...w, lastReqAt: null, lastWarmAt: null, retryAt: null })) // nothing cached to keep yet
+      // The warmer belongs to the chat: the next one starts with it off and nothing known cached.
+      epoch++
+      await update($, warm, w => ({ ...WARM_OFF, ttlMs: w.ttlMs, open: w.open }))
       await refreshUsage($)
     }
-    return next(e)
+    const result = await next(e)
+    if (e.reason === 'resume') await loadCompactions($) // the resumed chat's own count
+    return result
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -1424,7 +1559,9 @@ export const register: Register = on => {
     await read($, tick) // subscribe so the countdowns redraw each minute
     const now = await $.clock.now()
     const ic = e.surface !== 'terminal' && icons === CONFIG.icons ? { ...icons, ...CONFIG.desktopBar } : icons
-    const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic, w), Math.max(10, e.props.bodyColumns - 1), mode, e.props.maxRows, e.surface === 'terminal')
+    // The warmer's options row takes its rows first while it is open; the status rows get the rest.
+    const panelRows = w.open ? CONFIG.warm.panelRows : 0
+    const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic, w), Math.max(10, e.props.bodyColumns - 1), mode, Math.max(1, e.props.maxRows - panelRows), e.surface === 'terminal')
     lastDraw = { surface: e.surface, bodyColumns: e.props.bodyColumns, maxRows: e.props.maxRows, widths: lines.map(piecesWidth) }
     if (lines.length === 0) return next(e)
 
@@ -1433,6 +1570,42 @@ export const register: Register = on => {
       const said = await warmCommand($, '')
       void $.ui.toast(said)
     }
+    const toggleInfo = () => update($, warm, cur => ({ ...cur, open: !cur.open }))
+    const pressOf = (press: Piece['press']) => (press === 'warm' ? toggleWarm : toggleInfo)
+    // A choice in the options row: bold in the accent colour when it is the current one, dim otherwise.
+    const choice = (key: string, label: string, args: string, isOn = false) => (
+      <Button key={key} plain onPress={() => warmCommand($, args)}>
+        <Text bold={isOn} dimColor={!isOn} color={isOn && !noColor ? CONFIG.colors.model : undefined}>{label}</Text>
+      </Button>
+    )
+    const label = (key: string, text: string) => <Text key={key} dimColor>{text}</Text>
+    const ttl = ttlOf(w)
+    const panel = !w.open ? null : (
+      <Box key="warm-panel" flexDirection="column">
+        <Text key="warm-status" wrap="truncate" dimColor>{panelStatus(w, now)}</Text>
+        <Box key="warm-row1" flexDirection="row" flexWrap="wrap" columnGap={1}>
+          {label('w-l1', 'Warmer')}
+          {choice('w-on', 'On', 'on', w.on)}
+          {choice('w-off', 'Off', 'off', !w.on)}
+          {label('w-l2', ' For')}
+          {choice('w-2h', '2h', 'for 2h')}
+          {choice('w-4h', '4h', 'for 4h')}
+          {choice('w-8h', '8h', 'for 8h')}
+          {choice('w-12h', '12h', 'for 12h')}
+          {choice('w-inf', '∞', 'forever', w.on && w.until === null)}
+          <Button key="w-until" plain onPress={() => $.prompt.fill({ text: '/status-line warm until ' })}><Text dimColor>until…</Text></Button>
+          {label('w-l3', ' ')}
+          {choice('w-now', 'Warm now', 'now')}
+        </Box>
+        <Box key="warm-row2" flexDirection="row" flexWrap="wrap" columnGap={1}>
+          {label('w-l4', 'Every')}
+          {[30, 40, 50].filter(m => m * 60_000 <= ttl - CONFIG.warm.minEveryMs)
+            .map(m => choice(`w-e${m}`, `${m}m`, `every ${m}m`, w.everyMs === m * 60_000))}
+          {label('w-l6', ' more: /status-line warm help')}
+          <Button key="w-close" plain role="dismiss" onPress={toggleInfo}><Text dimColor>×</Text></Button>
+        </Box>
+      </Box>
+    )
     return (
       <Box flexDirection="column">
         {lines.map((line, l) => (
@@ -1443,12 +1616,13 @@ export const register: Register = on => {
                   {p.text}
                 </Text>
               )
-              return p.press === 'warm'
-                ? <Button key="warm" plain onPress={toggleWarm}>{text}</Button>
+              return p.press
+                ? <Button key={p.press} plain onPress={pressOf(p.press)}>{text}</Button>
                 : text
             })}
           </Box>
         ))}
+        {panel}
       </Box>
     )
   })
