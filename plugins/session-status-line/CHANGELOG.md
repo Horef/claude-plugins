@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.11.1 (2026-11-21)
+- the options row's status wraps between its parts onto as many lines as the band's width needs, instead of being cut off (O10)
+
 ## 0.11.0 (2026-11-21)
 - warm status logs each declined idle compaction; once the warmer stops, the mod makes up a declined one itself 5 minutes before the cache lapses unless a message comes first (O9)
 

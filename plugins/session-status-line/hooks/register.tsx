@@ -17,7 +17,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.11.0' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.11.1' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -101,7 +101,7 @@ const CONFIG = {
   // `every`, and the rows the options row takes. A 5-minute cache is not warmed: a warm every 3 minutes
   // costs more within the hour than re-reading the chat once.
   warm: {
-    panelRows: 3,
+    panelRows: 2, // the options row's button rows; its status adds as many lines as it wraps to
     ttlMs: 60 * 60_000, everyMs: 50 * 60_000, retryMs: 45_000, defaultForMs: 12 * 3_600_000, minEveryMs: 2 * 60_000,
     // Earlier defaults of `everyMs` (0.9.0: 55 min): a chat whose wait is one of them was on the default.
     oldEveryMs: [55 * 60_000, 50 * 60_000],
@@ -1345,15 +1345,30 @@ const warmStatus = (w: Warm, now: number): string => {
   return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(everyOf(w))}${w.everySet ? '' : ' (default)'} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}${compactOf(w, now)}`
 }
 
-/** The options row's first line: one short sentence of state. */
-const panelStatus = (w: Warm, now: number): string => {
+/**
+ * Lay the parts out on as many lines as `width` cells need, breaking only between parts (a part wider
+ * than the line gets a line of its own and the Text wraps it).
+ */
+const wrapStatus = (parts: string[], width: number): string[] => {
+  const lines: string[] = []
+  for (const p of parts) {
+    const last = lines[lines.length - 1]
+    if (last !== undefined && cells(`${last} · ${p}`) <= width) lines[lines.length - 1] = `${last} · ${p}`
+    else lines.push(p)
+  }
+  return lines
+}
+
+/** The options row's status: the cache and the warmer's state, wrapped to the band's width. */
+const panelStatus = (w: Warm, now: number, width = Infinity): string[] => {
   const ends = cacheEnds(w)
   const cache = ends === null ? 'Nothing known cached' : now < ends ? `Cache ${fmtSpan(ends - now)} left of ${lifeOf(w)}` : `${lifeOf(w)} lapsed`
   const due = compactDue(w, now)
-  if (!w.on) return `${cache} · warmer off${due === null ? '' : ` · compacts at ${fmtClock(Math.max(due, now))}`}`
+  const compacts = due === null ? [] : [`compacts at ${fmtClock(Math.max(due, now))}`]
+  if (!w.on) return wrapStatus([cache, 'warmer off', ...compacts], width)
   const parts = [cache, `warmer on ${w.until === null ? 'until switched off' : `until ${fmtClock(w.until)}`}`, `next warm ${nextOf(w, now)}`]
   if (w.last) parts.push(w.last.reason ? `last: ${w.last.reason}` : `${w.count} sent, last served ${fmt(w.last.read)}`)
-  return parts.join(' · ')
+  return wrapStatus(parts, width)
 }
 
 const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | every default | status]'
@@ -1664,7 +1679,8 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const ic = e.surface !== 'terminal' && icons === CONFIG.icons ? { ...icons, ...CONFIG.desktopBar } : icons
     // The warmer's options row takes its rows first while it is open; the status rows get the rest.
-    const panelRows = w.open ? CONFIG.warm.panelRows : 0
+    const statusLines = w.open ? panelStatus(w, now, Math.max(10, e.props.bodyColumns - 1)) : []
+    const panelRows = w.open ? CONFIG.warm.panelRows + statusLines.length : 0
     const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic, w), Math.max(10, e.props.bodyColumns - 1), mode, Math.max(1, e.props.maxRows - panelRows), e.surface === 'terminal')
     lastDraw = { surface: e.surface, bodyColumns: e.props.bodyColumns, maxRows: e.props.maxRows, widths: lines.map(piecesWidth) }
     if (lines.length === 0) return next(e)
@@ -1686,7 +1702,7 @@ export const register: Register = on => {
     const ttl = ttlOf(w)
     const panel = !w.open ? null : (
       <Box key="warm-panel" flexDirection="column">
-        <Text key="warm-status" wrap="truncate" dimColor>{panelStatus(w, now)}</Text>
+        {statusLines.map((line, i) => <Text key={`warm-status-${i}`} wrap="wrap" dimColor>{line}</Text>)}
         <Box key="warm-row1" flexDirection="row" flexWrap="wrap" columnGap={1}>
           {label('w-l1', 'Warmer')}
           {choice('w-on', 'On', 'on', w.on)}

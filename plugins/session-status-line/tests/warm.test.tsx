@@ -52,10 +52,10 @@ const request = async ($: any) => {
   return st.result
 }
 
-const band = async ($: any, surface: 'terminal' | 'desktop' = 'terminal') => {
+const band = async ($: any, surface: 'terminal' | 'desktop' = 'terminal', bodyColumns = 220) => {
   const ui = await $.ui.mount({
     plugin: 'session-status-line', surface, component: 'AbovePrompt',
-    props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 220, scroll: { offset: 0, bodyRows: 9 }, view: {} },
+    props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns, scroll: { offset: 0, bodyRows: 9 }, view: {} },
   })
   const text = ((await ui.findAll({ type: 'Text' })) as any[]).map(t => t.text).join('')
   return { ui, text }
@@ -378,6 +378,30 @@ test('the end time stops the warmer and the owed compaction follows; a message f
   await run($, 'warm off')
   await clock.advance(120 * MIN)
   expect(compacts).toEqual(['plugin']) // the declined one never reached the engine; nothing more was owed
+})
+
+test("the options row's status wraps to the band's width between its parts, losing nothing", async ($, on) => {
+  const { clock } = engine(on)
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm for 3h')
+  await clock.advance(51 * MIN) // one warm sent
+  const statusAt = async (cols: number) => {
+    const { ui } = await band($, 'terminal', cols)
+    if (!(await ui.findAll({ type: 'Text' }) as any[]).some(t => String(t.text).startsWith('Cache 59m left'))) await ui.press({ key: 'warmInfo' })
+    const texts = ((await ui.findAll({ type: 'Text' })) as any[]).map(t => String(t.text))
+    await ui.unmount()
+    const first = texts.findIndex(t => t.startsWith('Cache 59m left'))
+    return texts.slice(first, texts.indexOf('Warmer', first))
+  }
+  const parts = ['Cache 59m left of 1h cache', 'warmer on until', 'next warm in 49m', '1 sent, last served 480k']
+  expect((await statusAt(220)).length).toBe(1)
+  for (const cols of [100, 70, 45]) {
+    const lines = await statusAt(cols)
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(cols - 1)
+    for (const part of parts) expect(lines.join(' · ')).toContain(part)
+  }
+  expect((await statusAt(45)).length).toBe(3) // the cache; on until · next warm; sent
 })
 
 test('help lists the options', async ($, on) => {
