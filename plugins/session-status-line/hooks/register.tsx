@@ -17,7 +17,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.10.1' // keep in step with plugin.json; `/status-line debug` reports it
+const VERSION = '0.10.2' // keep in step with plugin.json; `/status-line debug` reports it
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -103,6 +103,12 @@ const CONFIG = {
   warm: {
     panelRows: 3,
     ttlMs: 60 * 60_000, everyMs: 50 * 60_000, retryMs: 45_000, defaultForMs: 12 * 3_600_000, minEveryMs: 2 * 60_000,
+    // Earlier defaults of `everyMs` (0.9.0: 55 min): a chat whose wait is one of them was on the default.
+    oldEveryMs: [55 * 60_000, 50 * 60_000],
+    // Claude Code compacts an idle chat shortly before it expects the cache to lapse, timing from the last
+    // turn: it cannot see a warm. While the warmer keeps the cache, such a compaction is declined, but only
+    // after this much quiet and below this context fill, so a compaction a full context needs still runs.
+    idleMs: 5 * 60_000, keepBelowPercent: 80,
     prompt: 'Automated cache keep-alive from the session-status-line mod, not a message from the person. ' +
       'You have no tools here and nothing to do: reply with the single word ok, straight away, without thinking it over.',
   },
@@ -124,7 +130,7 @@ const usage = atom({ plugin: 'session-status-line', key: 'usage' } as const, {} 
 const layout = atom({ plugin: 'session-status-line', key: 'layout' } as const, CONFIG.layout)
 const tick = atom({ plugin: 'session-status-line', key: 'tick' } as const, 0) // minute clock for countdowns
 const quotas = atom({ plugin: 'session-status-line', key: 'quotas' } as const, { on: true, at: 0, items: [], accounts: [] } as Quotas)
-const WARM_OFF: Warm = { on: false, everyMs: CONFIG.warm.everyMs, until: null, lastReqAt: null, lastWarmAt: null, retryAt: null, count: 0 }
+const WARM_OFF: Warm = { on: false, everyMs: CONFIG.warm.everyMs, everySet: false, until: null, lastReqAt: null, lastWarmAt: null, retryAt: null, count: 0 }
 const warm = atom({ plugin: 'session-status-line', key: 'warm' } as const, WARM_OFF)
 
 // Read once per load in session.start.
@@ -1105,6 +1111,19 @@ async function readQuotas($: EngineInterface, force: boolean) {
 
 const ttlOf = (w: Warm) => w.ttlMs ?? CONFIG.warm.ttlMs
 
+/** The wait before a warm: the person's own choice, or else the current default (which a new version may change). */
+const everyOf = (w: Warm) => (w.everySet ? w.everyMs : CONFIG.warm.everyMs)
+
+/**
+ * State from before 0.10.2 has no `everySet`: a wait equal to an old default was the default (and now follows
+ * the current one); any other was chosen and stays.
+ */
+export const migrateWarm = (w: Warm): Warm => {
+  if (w.everySet !== undefined) return w
+  const chosen = !CONFIG.warm.oldEveryMs.includes(w.everyMs) && w.everyMs !== CONFIG.warm.everyMs
+  return { ...w, everySet: chosen, everyMs: chosen ? w.everyMs : CONFIG.warm.everyMs }
+}
+
 /** When the cache was last renewed: the later of the last main-loop request and the last warm; 0 when unknown. */
 const renewedAt = (w: Warm) => Math.max(w.lastReqAt ?? 0, w.lastWarmAt ?? 0)
 
@@ -1121,7 +1140,7 @@ const shortCache = (w: Warm) => ttlOf(w) < CONFIG.warm.minEveryMs * 3
 const warmDue = (w: Warm, now: number): number | null => {
   const ends = cacheEnds(w)
   if (ends === null || now >= ends || shortCache(w)) return null
-  return Math.max(renewedAt(w) + Math.min(w.everyMs, ttlOf(w) - CONFIG.warm.minEveryMs), w.retryAt ?? 0)
+  return Math.max(renewedAt(w) + Math.min(everyOf(w), ttlOf(w) - CONFIG.warm.minEveryMs), w.retryAt ?? 0)
 }
 
 // Module-local, so a reload starts them over (harmless: a reload drops any fork in flight with its module):
@@ -1205,6 +1224,18 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
   }
 }
 
+/**
+ * Whether an `auto` compaction now is Claude Code's idle one, made needless by the warmer: the warmer is on
+ * and keeps a live cache, no main-loop request is in flight or recent, and the context is far from full.
+ */
+const keepingCache = async ($: EngineInterface): Promise<boolean> => {
+  const w = await read($, warm)
+  const now = await $.clock.now()
+  if (!w.on || (w.until !== null && now >= w.until) || warmDue(w, now) === null || inFlight > 0) return false
+  if (now - (w.lastReqAt ?? 0) < CONFIG.warm.idleMs) return false
+  return ((await read($, usage)).percent ?? 0) < CONFIG.warm.keepBelowPercent
+}
+
 /** "50m", "8h", "1.5h", "90" (minutes unless `unit` says hours) → ms; null when unreadable. */
 const parseSpan = (text: string, unit: 'm' | 'h'): number | null => {
   const hm = /^(\d+)\s*h\s*(\d+)\s*m$/i.exec(text.trim()) // "1h30m", as fmtSpan prints it
@@ -1258,7 +1289,7 @@ const nextOf = (w: Warm, now: number): string => {
 const warmStatus = (w: Warm, now: number): string => {
   if (!w.on) return `${cacheStatus(w, now)} Warmer off.${lastOf(w, now)}`
   const end = w.until === null ? 'until switched off' : `until ${fmtClock(w.until)} (${fmtSpan(Math.max(0, w.until - now))} from now)`
-  return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(w.everyMs)} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}`
+  return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(everyOf(w))}${w.everySet ? '' : ' (default)'} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}`
 }
 
 /** The options row's first line: one short sentence of state. */
@@ -1271,7 +1302,7 @@ const panelStatus = (w: Warm, now: number): string => {
   return parts.join(' · ')
 }
 
-const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | status]'
+const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | every default | status]'
 
 /** `/status-line warm ...`: switch on or off, set the end or the interval, warm once now, or report. */
 const warmCommand = async ($: EngineInterface, args: string): Promise<string> => {
@@ -1312,12 +1343,17 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
       break
     }
     case 'every': {
+      if (/^default$/i.test(value)) {
+        await update($, warm, w => ({ ...w, everyMs: CONFIG.warm.everyMs, everySet: false }))
+        break
+      }
       const span = parseSpan(value, 'm')
       const max = ttlOf(cur) - CONFIG.warm.minEveryMs
       if (!span || span < CONFIG.warm.minEveryMs || span > max) {
         return `Usage: /status-line warm every <minutes>, from ${CONFIG.warm.minEveryMs / 60_000} to ${max / 60_000} with a ${lifeOf(cur)} (default ${CONFIG.warm.everyMs / 60_000}).`
       }
-      await update($, warm, w => ({ ...w, everyMs: span }))
+      // The default's own value is no choice: it follows the default if a later version changes it.
+      await update($, warm, w => ({ ...w, everyMs: span, everySet: span !== CONFIG.warm.everyMs }))
       break
     }
     case 'now': {
@@ -1354,9 +1390,9 @@ export const register: Register = on => {
       name: 'status-line',
       description: 'Session status line: toggle, on | off, layout auto | one | rows, quotas on | off, account-label <name>, live on | off, warm [on | off | now | for 8h | until 07:30 | every 50m], or debug',
     })
-    // A chat that ran 0.9.0 keeps its warmer state across the reload, with that version's default wait
-    // (55 min, too close to the 1 h lapse for a retry): move it to the current default.
-    await update($, warm, w => (w.everyMs === 55 * 60_000 ? { ...w, everyMs: CONFIG.warm.everyMs } : w))
+    // A chat keeps its warmer state across a reload: one on an earlier version's default wait follows the
+    // current default from now on (a warm already overdue by it goes at the next tick); a chosen wait stays.
+    await update($, warm, migrateWarm)
     await Promise.all([refreshModel($), refreshUsage($), loadCompactions($)])
     void refreshQuotas($) // network and CLI calls: never hold up the session
     void refreshAccounts($)
@@ -1520,6 +1556,9 @@ export const register: Register = on => {
   // Count compactions that actually replaced the main conversation: not a
   // subagent's, not a `precompute` (prepared ahead, installs nothing), not a veto.
   on('session.compact', async ($, e, next) => {
+    if (!e.agentId && e.trigger === 'auto' && (await keepingCache($))) {
+      return { skip: 'the status-line cache warmer is keeping the cache warm (/status-line warm off allows it)' }
+    }
     const result = await next(e)
     if (!e.agentId && e.trigger !== 'precompute' && !('skip' in result && result.skip)) {
       const s = await update($, stats, cur => ({ ...cur, compactions: cur.compactions + 1 }))
@@ -1606,7 +1645,7 @@ export const register: Register = on => {
         <Box key="warm-row2" flexDirection="row" flexWrap="wrap" columnGap={1}>
           {label('w-l4', 'Every')}
           {[30, 40, 50].filter(m => m * 60_000 <= ttl - CONFIG.warm.minEveryMs)
-            .map(m => choice(`w-e${m}`, `${m}m`, `every ${m}m`, w.everyMs === m * 60_000))}
+            .map(m => choice(`w-e${m}`, `${m}m`, `every ${m}m`, everyOf(w) === m * 60_000))}
           {label('w-l6', ' more: /status-line warm help')}
           <Button key="w-close" plain role="dismiss" onPress={toggleInfo}><Text dimColor>×</Text></Button>
         </Box>

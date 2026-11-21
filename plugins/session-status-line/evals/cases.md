@@ -69,3 +69,10 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - In (c) one warm is sent at about 50 minutes; *(live)* its cache read is roughly the whole conversation and the countdown restarts at about 1 h.
 - The ⓘ row shows the state in one line and its buttons change the warmer without typing; `until…` puts the command in the prompt.
 **Origin:** owner's follow-up (2026-11-21): the warmer must start only after the first new message once the chat was compacted or the cache expired; Gemini 4 Neon review findings 3-5.
+
+## Cache warmer outlasts idle compaction; a chosen wait stays
+**Task:** In a chat on a subscription account with `idleCompaction` left on, (a) send a message, press 🔥 and leave the chat for 70 minutes; (b) run `/status-line warm every 40m`, reload the plugins, and check `/status-line warm status`; then `warm every default` and check it again.
+**Good looks like:**
+- In (a) one warm is sent at about 50 minutes and no "Compacted while idle" happens: at most one line saying the cache warmer declined the compaction; the band still shows a `cache` countdown afterwards. With the warmer off, the idle compaction runs as before; `/compact` always runs.
+- In (b) the status still reads 40m after the reload, then `50m (default)`; the ⓘ row's lit Every button matches.
+**Origin:** owner report (2026-11-21): a 0.10.1 warm ran at 50 minutes, yet the chat was compacted while idle at 55 (O7); the owner asked that a deliberately chosen wait survive a new default (O8).

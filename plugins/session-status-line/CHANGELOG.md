@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.10.2 (2026-11-21)
+- cache warmer declines Claude Code's idle compaction while it keeps the cache; a chosen warm interval stays through updates, the default one follows the current default (every default) (O7, O8)
+
 ## 0.10.1 (2026-11-21)
 - a chat that ran 0.9.0 moves from its 55 min default wait to 50 min when the mod reloads; lifetime reads '1h cache', not '1h00m cache' (O6)
 

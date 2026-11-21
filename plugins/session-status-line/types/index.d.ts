@@ -79,8 +79,13 @@ export type Quotas = { on: boolean; at: number; items: Quota[]; accounts: Accoun
  */
 export type Warm = {
   on: boolean
-  /** Wait after the last main-loop request (or the last warm) before warming. */
+  /** Wait after the last main-loop request (or the last warm) before warming, when `everySet`. */
   everyMs: number
+  /**
+   * The person chose `everyMs` (a value other than the default). Otherwise the wait is the current default,
+   * so a new version's default reaches a running chat. Absent in state from before 0.10.2.
+   */
+  everySet?: boolean
   /**
    * The cache's lifetime as the last main-loop cache write reported it (1 h or 5 min); absent until one is
    * seen (then 1 h is assumed, a subscription's).
