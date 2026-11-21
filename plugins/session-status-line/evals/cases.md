@@ -91,3 +91,10 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - In (a) switching off says when the chat would compact and how to skip it; after the press nothing is compacted.
 - In (b) the warms fail and are retried only until the cache lapses; then the warmer is off with one toast saying no warm got through, nothing is compacted, and no further requests go out until it is switched on again.
 **Origin:** owner request (2026-11-21): the made-up compaction must be cancellable and, when the connection breaks or anything else goes wrong, skipped rather than retried (O11).
+
+## Short outages inside the warm window are ridden out
+**Task:** (a) With the warmer on, cut the network from 50 to 55 minutes after the last message; (b) with a compaction owed and the warmer off, cut the network from 1 minute before the compaction is due for 3 minutes.
+**Good looks like:**
+- In (a) the warm goes through at about 55-56 minutes; the warmer stays on and the cache countdown restarts at about 1 h.
+- In (b) one notice says the compaction failed and will be tried again; it then runs once, before the cache lapses. Had the network stayed off past the lapse, one notice says it was skipped and nothing more is sent.
+**Origin:** owner question (2026-11-21): a warm due 10 minutes before the lapse with the internet down for 5 of them; the stopping mechanism should ride out errors while the cache is still warm (O12).

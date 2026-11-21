@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.12.1 (2026-11-21)
+- the made-up compaction is retried each minute while the cache lives, like a warm, and dropped with one notice once it has lapsed; a failed warm no longer cancels it (O12)
+
 ## 0.12.0 (2026-11-21)
 - Skip compaction (ⓘ row, warm skip-compact) cancels the owed compaction; it runs once and only after a warm that got through; warms with no answer in 2 min count as failed; a warmer whose warms fail into the lapse stops and owes nothing (O11)
 
