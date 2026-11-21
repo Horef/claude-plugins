@@ -2,6 +2,10 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-21 (evening): session-status-line 0.10.1, old wait migrated
+Owner screenshots after reloading 0.10.0: a new chat showed `Every 50m` lit; a chat that had run 0.9.0 showed "next warm in 54m" and no Every button lit: `$.state` kept 0.9.0's 55 min default across the reload (O6). session.start (which a reload runs again) now moves a 55 min wait to 50; the lifetime reads "1h cache". The judged warmer case from 0.9.0 was updated to the 0.10.0 timing in its own commit (PR #115).
+- Commands: `claude plugin test plugins/session-status-line` 39 pass (1 new); `loop.py eval session-status-line` exit 0.
+
 ## 2026-11-21 (later): session-status-line 0.10.0, cache countdown, options row, review fixes
 Owner feedback on 0.9.0 (after a live `warm now`: the cache served 161k tokens): show the cache's own countdown; a 5 min retry after a 55 min warm lands on the lapse; make the options visual; get Neon's second opinion; and start warming only after the first new message once the chat was compacted or the cache expired.
 - Review: agy `agy-deep` (Gemini 4 Neon high) from `.review/neon-brief.md` (untracked), 12 findings in `.review/neon-report.md`; its API claims checked in the 2.1.330 types (TurnUsage `ephemeral_1h/5m_input_tokens`, `classic.PostModelSwitch.cache_ttl`, `classic.SessionStart.seconds_since_last_response`, session.end `resume`, fork `empty-reply`/`aborted` carry usage). Verdict: fork is the right mechanism. Adopted: findings 1-10 and most of 11-12; kept 🔥 as a direct toggle beside ⓘ (owner asked for a button); mod-wide items recorded as O5. Usage: agy 1.66 % of the Gemini weekly limit.

@@ -269,6 +269,18 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
+test('a chat still on the 0.9.0 default wait (55 min) moves to 50 min when the mod reloads', async ($, on) => {
+  const { clock } = engine(on)
+  await $.session.start({ cwd: '/proj' } as any)
+  await request($)
+  await run($, 'warm on')
+  expect(await run($, 'warm every 55m')).toContain('55m after each request')
+  expect(await run($, 'warm status')).toContain('(1h cache, from the last request')
+  await $.session.start({ cwd: '/proj' } as any) // a reload runs session.start again; $.state stays
+  expect(await run($, 'warm status')).toContain('50m after each request')
+  await clock.advance(MIN)
+})
+
 test('help lists the options', async ($, on) => {
   const { clock } = engine(on)
   await $.session.start({ cwd: '/proj' } as any)
