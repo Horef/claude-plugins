@@ -29,7 +29,7 @@ The budgets shown depend on which CLIs and logins exist on the machine; the exam
 | ⏱ last turn | duration of the last main-loop turn |
 | 🗜 compactions | how many times this chat was compacted (manual or automatic; precomputed and vetoed ones are not counted). Saved per chat in `$.store`, so a resumed chat keeps it; turns orange from 3 |
 | ✎ files | distinct files successfully edited or written this session |
-| 🔥 cache warmer | a button at the end of the session row: dim when off; on, the time to the next warm (orange `cold` when the last warm found the cache gone, `!` when it failed). Click it (or focus the band with ctrl+x tab and press it) to switch the warmer on for 12 hours or off. See "Keeping the cache warm" |
+| cache, 🔥, ⓘ | at the end of the session row: `cache 42m`, how long the prompt cache has left (from the last request or warm; shown once a request has been seen, warmer on or off; orange `lapsed`, `cold` or `!` while the warmer is on and something went wrong); 🔥, the warmer's switch (dim when off, lit with the number of warms sent when on; a press switches it on for 12 hours or off); ⓘ, its options row. See "Keeping the cache warm" |
 | turns · age | completed turns and session length |
 
 A part with no data is hidden, so each budget appears only where its CLI and login exist. Readings are shared across chats (`$.store`) and taken at most every five minutes; a failed reading keeps the last one, marked with a dim `~` before its number after 30 minutes (other accounts: 6 hours); the number keeps its colour, so a stale warning still shows.
@@ -40,14 +40,21 @@ Colour means fill only: the context bar is green under 50% and the limits are pl
 
 Claude's prompt cache holds the conversation for an hour on a subscription (5 minutes otherwise). A chat left idle past that is either compacted or, at the next message, read again in full, which costs much more than reading it from the cache. In a long chat that waits for background work (a run that reports back every two hours) that happens at every wake-up: compaction loses detail each time, a full re-read costs usage each time.
 
-The warmer keeps the cache alive while you wait. While it is on, 55 minutes after the last request of the main conversation (or the last warm) it sends one side request over the conversation (`$.model.fork`: the main thread's last request with one short message after it, "Automated cache keep-alive from the session-status-line mod ... reply with the single word ok"). The answer is dropped: nothing is added to the transcript, the context does not grow, and the model is not woken into a turn. Reading the conversation from the cache renews its lifetime; the warm costs the cache-read price of the conversation plus a few output tokens, and counts toward the session's cost and your limits like any request. Any real request (your message, a background task reporting back) restarts the countdown, so warms happen only in real idle stretches.
+The warmer keeps the cache alive while you wait. While it is on, 50 minutes after the last request of the main conversation that reached the cache (or the last warm), it sends one side request over the conversation (`$.model.fork`: the main thread's last request with one short message after it, "Automated cache keep-alive from the session-status-line mod ... reply with the single word ok"). The answer is dropped: nothing is added to the transcript, the context does not grow, and the model is not woken into a turn. Reading the conversation from the cache renews its lifetime; a warm costs the cache-read price of the conversation (about a tenth of a fresh read) plus a few output tokens, and counts toward the session's cost and your limits like any request. Any real request (your message, a background task reporting back) restarts the countdown, so warms happen only in real idle stretches.
 
+**When it warms, and when it waits.** The warmer only keeps a cache that is still alive; it never revives one:
+- Switched on before any message, after `/clear`, after a compaction or a `/model` switch, or once the cache has lapsed (the computer slept, the warmer was off), it waits for your next message and counts from there.
+- A resumed chat counts from its last response when Claude Code says the cache is likely still warm.
+- The cache's lifetime is read from the main conversation's own requests (their 1 h or 5 min cache writes); until one is seen, 1 h is assumed (`(assumed)` in the status). A 5-minute cache is not warmed: a warm every 3 minutes costs more within the hour than one fresh read.
+- A failed warm is tried again at the next minute tick while the cache lives (overload, server error, rate limit, a dropped connection). An error that will not pass (a login, a bad request) or a warm that finds the cache already gone switches the warmer off and says so. A reply with no words that still read the cache counts as a warm.
+
+**Controls.** Press ⓘ on the band for the options row: one line of state (cache left, end time, next warm, warms sent), then `Warmer On Off · For 2h 4h 8h 12h ∞ until… · Warm now` and `Every 30m 40m 50m`, the current choice bold; `until…` puts `/status-line warm until ` in the prompt for the time; `×` closes it. The same as commands:
 - `/status-line warm`: on for 12 hours (or off, when it is on); `warm on` the same without toggling; `warm off`.
-- `/status-line warm for 8h` / `warm for 90m`; `warm until 07:30` (local time, the next time the clock shows it); `warm forever` (until switched off).
-- `/status-line warm every 50m`: the wait (2 to 59 minutes, default 55; with a 5-minute cache use 3).
-- `/status-line warm now`: warm at once and say how much the cache served; `warm status`: what it is doing.
+- `/status-line warm for 8h` / `for 90m` / `for 1h30m`; `warm until 07:30` (local time, the next time the clock shows it); `warm forever` (until switched off).
+- `/status-line warm every 50m`: the wait (2 minutes up to 2 minutes short of the cache's lifetime; default 50).
+- `/status-line warm now`: one warm at once, whatever the switch says (it does not switch the warmer on), and how much the cache served; `warm status`: the cache and the warmer; `warm help`.
 
-The setting belongs to the chat: a new chat starts with the warmer off. A failed warm is tried again after 5 minutes; when there is nothing to warm yet (no request since the chat started or since `/clear`) it waits for the next request. The warmer does not stop compaction at the context threshold; it only keeps the cache from lapsing.
+The setting belongs to the chat: a new chat, `/clear` or `/resume` starts with the warmer off. It does not stop compaction at the context threshold; it only keeps the cache from lapsing.
 
 ## Several Claude accounts
 
@@ -62,7 +69,7 @@ Optional live read: when a reading is over ten minutes old and the other account
 - `/status-line quotas on|off`: read the outside budgets or not (on by default); `on` reads them now.
 - `/status-line account-label <name>`: how this account appears in the other accounts' status lines (`reset` restores the default); with no name it shows the current one.
 - `/status-line live on|off`: the optional live read of other accounts' limits (on by default).
-- `/status-line warm [on | off | now | forever | for <span> | until HH:MM | every <minutes> | status]`: the cache warmer (above).
+- `/status-line warm [on | off | now | forever | for <span> | until HH:MM | every <minutes> | status | help]`: the cache warmer (above).
 - `/status-line debug`: version, surface, measured band width, the width of each drawn line and the last budget readings.
 
 The choices are remembered across chats. `NO_COLOR=1` drops colours; `SESSION_STATUS_ASCII=1` uses plain ASCII glyphs.
@@ -78,5 +85,5 @@ Colours, thresholds, icons, widths, drop order and the groups are in the `CONFIG
 - Claude Code does not announce a model or effort change between turns, so those update at the next request (model: at most a minute).
 - Chats compacted before this mod was loaded start at 0; `/clear` starts a new conversation and resets the count.
 - The Codex limits are verified against a live response (a free plan: one monthly window); how a paid plan's `secondary_window` looks is taken from Codex's rollout format. The Linux Kiro path and the live read of another account's usage (`utilization` field) are not verified against a real install.
-- The cache warmer assumes the 1-hour cache a subscription gets; it cannot read the lifetime Claude Code chose, so on a 5-minute cache set `warm every 3m`. Whether a warm hit the cache shows in `warm status` (tokens the cache served) and as `cold` on the band.
+- The cache warmer learns the cache's lifetime from the main conversation's cache writes; a request that only read the cache does not say it, so a chat whose first request this session only read assumes 1 h until one writes. That a warm's read renews the 1 h lifetime is the API's documented behaviour, first seen live on 2026-11-21 (`warm now` read 161k tokens); a warm after 50 idle minutes is the check.
 - Tests (`tests/render.test.tsx`, `tests/accounts.test.tsx`, `tests/behaviour.test.tsx`, `tests/warm.test.tsx`) run in Claude Code's function-hooks test runner: `claude plugin test plugins/session-status-line`. They are not run in CI.

@@ -61,3 +61,11 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - *(live)* The message after the wait reads the conversation from the cache (cost of that turn far below a full re-read) and no compaction happened during the wait.
 - Past the end time the warmer is off and says so; clicking the 🔥 switches it on and off.
 **Origin:** owner's request (2026-11-21): chats waiting hours for background runs were compacted or re-read at every wake-up.
+
+## Cache warmer only keeps a live cache
+**Task:** In a chat on a subscription account, (a) run `/compact`, then press 🔥 and leave the chat for an hour; (b) send a message, leave it 70 minutes with the warmer off, then switch it on from the ⓘ row; (c) send a message, switch the warmer on, and check `/status-line warm status` after 50 and 55 minutes.
+**Good looks like:**
+- In (a) and (b) no warm is sent until the next message; the band's `cache` countdown is absent after the compaction and reads `lapsed` in (b).
+- In (c) one warm is sent at about 50 minutes; *(live)* its cache read is roughly the whole conversation and the countdown restarts at about 1 h.
+- The ⓘ row shows the state in one line and its buttons change the warmer without typing; `until…` puts the command in the prompt.
+**Origin:** owner's follow-up (2026-11-21): the warmer must start only after the first new message once the chat was compacted or the cache expired; Gemini 4 Neon review findings 3-5.
