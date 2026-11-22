@@ -1116,6 +1116,50 @@ def main() -> int:
     other = (SKILL_DIR / "templates/other-docs.md").read_text(encoding="utf-8")
     expect("historical (done <date>; results <ids>)" in other, "N11: the other-docs template retires a plan as historical (done <date>; results <ids>)")
 
+    # Neon's follow-up (neon-diff.md, "Follow-up (fixes)"): P1-P4 of the exact-path rewriting
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        live = "Status: current (verified 2999-01-01)\n"
+        files = {
+            "docs/OLD.md": "# Old\nStatus: historical\n",
+            "scripts/run.sh": "# Run.\ncat docs/OLD.md\ncat ./docs/OLD.md\n",
+            "docs/plans/p.md": "# P\n" + live + "See ../OLD.md.\n\n```\n[old](../OLD.md)\n```\n",
+            "docs/x.md": "# X\n" + live + "See ./OLD.md.\n",
+            "docs/live.md": ("# Live\n" + live + "\n```md\nSee [old](docs/OLD.md) and docs/OLD.md\n```\n\n~~~\ndocs/OLD.md\n~~~\n\n"
+                             "Example `[old](docs/OLD.md)` stays; the path `docs/OLD.md` moves.\n"),
+            "tools/git.sh": "# Old revisions.\ngit show HEAD:docs/OLD.md\nscp host:docs/OLD.md .\n",
+            "tools/job.sbatch": "#!/bin/bash\n# reads OLD.md\n",
+            "Makefile": "old:\n\tcat OLD.md\n",
+        }
+        line = lambda f, s: next(i for i, ln in enumerate(files[f].splitlines(), 1) if s in ln)
+        fixture(root, files)
+        dry = docmap(root, "archive")
+        p = docmap(root, "archive", "--apply")
+        read = lambda f: (root / f).read_text(encoding="utf-8")
+        expect("cat docs/archive/OLD.md\ncat ./docs/archive/OLD.md\n" in read("scripts/run.sh") and "See ../archive/OLD.md." in read("docs/plans/p.md")
+               and "See ./archive/OLD.md." in read("docs/x.md"),
+               "P1: ./ and ../ relative paths (and ./docs/X.md from a subfolder) are rewritten, keeping their prefix style", p)
+        lv = read("docs/live.md")
+        expect("```md\nSee [old](docs/OLD.md) and docs/OLD.md\n```" in lv and "~~~\ndocs/OLD.md\n~~~" in lv
+               and "Example `[old](docs/OLD.md)` stays; the path `docs/archive/OLD.md` moves." in lv and "[old](../OLD.md)" in read("docs/plans/p.md"),
+               "P2: Markdown fenced blocks and link syntax in inline code are not rewritten; a plain inline-code path is", p)
+        expect(all(f"docs/live.md:{line('docs/live.md', s)}:" in p.stdout for s in ("See [old]", "Example"))
+               and f"docs/live.md:{line('docs/live.md', '~~~') + 1}:" in p.stdout and f"docs/plans/p.md:{line('docs/plans/p.md', '[old]')}:" in p.stdout,
+               "P2: mentions skipped in code are listed to decide by hand (file:line)", p)
+        expect(read("tools/git.sh") == files["tools/git.sh"] and "tools/git.sh:2:" in p.stdout and "tools/git.sh:3:" in p.stdout,
+               "P3: HEAD:docs/X.md and host:docs/X.md are not rewritten, and are listed", p)
+        expect("tools/job.sbatch:2:" in p.stdout and "Makefile:2:" in p.stdout,
+               "P4: bare names in any text file (.sbatch, Makefile) are listed: one text-file test, no extension list", p)
+        counts = lambda out: [ln.replace("would be ", "") for ln in out.splitlines() if ln.startswith(("rewritten in", "left to decide"))]
+        expect(counts(dry.stdout) == counts(p.stdout), "P1-P4: the dry run and --apply report the same counts", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # --no-rewrite-paths lists relative mentions too
+        root = Path(tmp)
+        fixture(root, {"docs/OLD.md": "# Old\nStatus: historical\n", "docs/plans/p.md": "# P\nStatus: current (verified 2999-01-01)\nSee ../OLD.md.\n"})
+        p = docmap(root, "archive", "--apply", "--no-rewrite-paths")
+        expect("See ../OLD.md." in (root / "docs/plans/p.md").read_text(encoding="utf-8") and "docs/plans/p.md:3:" in p.stdout,
+               "P1: with --no-rewrite-paths a relative path mention is listed, not rewritten", p)
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")
