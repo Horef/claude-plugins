@@ -107,12 +107,31 @@ export type Warm = {
   last?: { at: number; read: number; wrote: number; out?: number; reason?: string }
   /** When the mod declined Claude Code's idle compaction, in the latest quiet stretch (at most 10). */
   declines?: number[]
-  /** A declined idle compaction not yet made up: the mod runs it once the warmer stops, before the cache lapses. */
+  /**
+   * An idle compaction due in this quiet stretch: one Claude Code tried and the mod declined, or the mod's own
+   * (the "Idle compaction" option). It runs before the cache lapses once the warmer no longer keeps the cache.
+   */
   owesCompact?: boolean
+  /** Switched on by the "Every chat" option, not by the person: it stops warming 12 h after the last message. */
+  auto?: boolean
+  /** The person switched the warmer off in this chat: "Every chat" leaves it off. */
+  optedOut?: boolean
+  /** When the warmer last switched itself off (an error, a lapse): "Every chat" waits for the next message. */
+  stoppedAt?: number | null
+}
+
+/** Options that hold for every chat, kept in the mod's store and read again each minute. */
+export type Prefs = {
+  /** Every chat's warmer is on (until 12 h after its last message) unless switched off in that chat. */
+  everyChat: boolean
+  /** The mod compacts a quiet chat before its cache lapses, in place of Claude Code's idle compaction. */
+  idleCompact: boolean
+  /** Claude Code's own `idleCompaction` setting is on (absent: true): it compacts whatever the mod says. */
+  ccIdle?: boolean
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-status-line': { enabled: boolean; layout: Layout; stats: Stats; usage: Usage; tick: number; quotas: Quotas; warm: Warm }
+    'session-status-line': { enabled: boolean; layout: Layout; stats: Stats; usage: Usage; tick: number; quotas: Quotas; warm: Warm; prefs: Prefs }
   }
 }

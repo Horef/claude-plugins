@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.13.0 (2026-11-22)
+- idle compaction owned by the mod (off by default) where Claude Code's sec-default keeps compactions from mods; compactions noticed by the context's drop; Every chat warmer option; both in the ⓘ row (O13, O14)
+
 ## 0.12.1 (2026-11-21)
 - the made-up compaction is retried each minute while the cache lives, like a warm, and dropped with one notice once it has lapsed; a failed warm no longer cancels it (O12)
 

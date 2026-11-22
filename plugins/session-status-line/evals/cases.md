@@ -98,3 +98,12 @@ Each case: a task, the rubric a blind judge applies, and where the case came fro
 - In (a) the warm goes through at about 55-56 minutes; the warmer stays on and the cache countdown restarts at about 1 h.
 - In (b) one notice says the compaction failed and will be tried again; it then runs once, before the cache lapses. Had the network stayed off past the lapse, one notice says it was skipped and nothing more is sent.
 **Origin:** owner question (2026-11-21): a warm due 10 minutes before the lapse with the internet down for 5 of them; the stopping mechanism should ride out errors while the cache is still warm (O12).
+
+## Idle compaction on a Team account
+**Task:** *(live)* On a Team or Enterprise account (Claude Code seats `cc-plugin-sec-default`), with `"idleCompaction": false` in settings.json, open a chat of 200k tokens or more, send a message, switch the warmer on for 2h, open ⓘ and set `Idle compaction On`, then leave the chat alone for three hours.
+**Good looks like:**
+- No "Compacted while idle" line while the warmer runs; the warms keep the cache (each reads most of the chat from it).
+- About 55 minutes after the last warm the mod compacts the chat once, the 🗜 counter goes up by one, and the cache countdown resets to "nothing known cached".
+- With `Idle compaction Off` the same wait ends with no compaction; with `"idleCompaction"` left on, the ⓘ row says Claude Code's own is on.
+- With `Every chat On`, a new chat (or `/clear`) shows 🔥 lit before its first warm; switched off there, it stays off.
+**Origin:** owner report 2026-11-22: idle compaction ran under 0.12.1 because sec-default sends session.compact past every mod (O13), and the request for the two options (O14).
