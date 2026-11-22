@@ -138,7 +138,7 @@ The pane lives inside Claude Code and cannot scroll while the plan-approval ques
 ## Keeping the rules in front of the model
 
 - **In every chat** the mod writes the rules into the conversation as a hidden note at the start of the first turn after it loads. It also adds them to the system prompt, but some hosts (the desktop app among them) supply their own system prompt and drop added sections without a trace, so only the note counts as delivered.
-- **After a summarization** of the chat, the next turn gets the rules again (where needed) and the current plan with each step's status, from the router's own record.
+- **After a summarization** of the chat, the next turn gets the rules again (where needed) and the current plan with each step's status, from the router's own record. The router keeps the id of the chat row that carried the rules and checks at each turn that the chat still holds it, so this works on Team and Enterprise accounts too, where Claude Code's built-in sec-default plugin keeps compactions (`session.compact`) and the system prompt (`prompt.compose`) from the mods a person installs; a `/clear` or a rewind past the row brings the rules back the same way. There the status line learns the model from the turn instead of the system prompt.
 - **Always plan** and router notes use the same hidden note, at the start of each turn.
 - **Check it**: ask the model to call the plan tool with `status: true`. It reports the version, how the rules are delivered, whether they are in the chat, counters, the helper mode, the health checks, the helpers.py status and message, the log file and the number of history entries.
 - The plan, costs, history and settings live in the mod, not in the conversation, so a summary never loses them.

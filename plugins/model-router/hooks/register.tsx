@@ -700,6 +700,36 @@ async function helpersTold($: EngineInterface) {
   await update($, toldHelpers, () => sig)
 }
 
+// --- Rules in the chat ------------------------------------------------------------
+
+/**
+ * The rules ride a row of the chat; when the chat no longer holds that row (a compaction left it behind, a
+ * /clear or a rewind), they and the plan go out with the next turn. `{ deny }` is that answer; a read that
+ * fails for any other reason changes nothing.
+ */
+async function checkRulesRow($: EngineInterface) {
+  const how = await read($, delivery)
+  if (!how.inChat || !how.rulesRow) return
+  const got = await $.session.messages({ after: how.rulesRow }).catch(() => undefined)
+  if (!got || !('deny' in got) || !got.deny) return
+  await update($, delivery, d => ({ ...d, inChat: false, planDue: true, rulesRow: undefined }))
+  await logEvent($, 'rules', { lost: true, why: String(got.deny).slice(0, 120) })
+}
+
+/** Keep "rules sent to <model>" true from the turn itself: the model the chat runs on, while the rules are in it. */
+async function noteRulesModel($: EngineInterface) {
+  const { inChat } = await read($, delivery)
+  const id = inChat ? await $.session.model().catch(() => undefined) : undefined
+  // Only a known family: `/model default` and the like name no model, and prompt.compose's word then stands.
+  const set = await read($, settings)
+  const found = id ? modelOf(id, set) : undefined
+  const model = found && knownModels(set).includes(found) ? found : undefined
+  if (inChat && !model) return
+  if ((await read($, policySent)).model === model) return
+  await update($, policySent, () => ({ model, sentAt: new Date().toISOString() }))
+  await refreshStatus($)
+}
+
 // --- Actions ------------------------------------------------------------------
 
 async function summary($: EngineInterface) {
@@ -4259,6 +4289,10 @@ export const register: Register = on => {
     // Settings another session changed since this one last looked.
     await refreshShared($)
     const extra: string[] = []
+    // Rules the chat no longer holds go out again. A compaction is told by session.compact, but on a Team or
+    // Enterprise account Claude Code's sec-default sends that event past every person's mod: the row that
+    // carried the rules is the check that holds everywhere (a cleared, rewound or compacted row is denied).
+    await checkRulesRow($)
     const how = await read($, delivery)
     const set = await read($, settings)
     const script = (await read($, helperCfg)).script
@@ -4281,9 +4315,10 @@ export const register: Register = on => {
 
     if (extra.length > 0) {
       try {
-        await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: extra.join('\n\n') }] } })
+        const row = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: extra.join('\n\n') }] } })
+        if (row.deny) throw new Error(`append refused: ${row.deny}`)
         diag.appends += 1
-        await update($, delivery, d => ({ ...d, inChat: true, planDue: false }))
+        await update($, delivery, d => ({ ...d, inChat: true, planDue: false, rulesRow: how.inChat ? d.rulesRow : row.uuid }))
         await update($, notes, () => [])
         if (!how.inChat || helperChange) await helpersTold($)
         if (!how.inChat) await logEvent($, 'rules', { delivered: true, via: how.via ?? 'message', helpers: helperMode() })
@@ -4293,6 +4328,9 @@ export const register: Register = on => {
         await fault($, 'append', err)
       }
     }
+    // Which model has the rules, for the status line: prompt.compose says so where it runs; where sec-default
+    // sends it past the mods, the turn says it.
+    await noteRulesModel($)
 
     return next(e)
   })
