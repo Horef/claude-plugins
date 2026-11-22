@@ -40,7 +40,8 @@ Installed by the project-foundations skill (source: its scripts/docmap.py; see D
   python tools/docmap.py archive [--apply] [--no-rewrite-paths] [--dir PATH] [--legacy GLOB]
                                        retired docs (historical, superseded) in live folders and where they would go in
                                        archive_dir (dry run); --apply moves them with git mv, rewrites relative links and
-                                       exact path mentions in live text files (code too; --no-rewrite-paths: links only)
+                                       exact path mentions in live text files (code too; --no-rewrite-paths: links only;
+                                       data and config files, archive_no_rewrite, are listed, never rewritten)
                                        and lists the bare names left to decide; --dir moves a whole folder;
                                        --legacy also takes files matching GLOB that have no Status line
   python tools/docmap.py ids [FAMILY]  every id family (A1, L2, NB-H1) with where it is defined and the files that cite
@@ -104,7 +105,8 @@ DEFAULTS = {
     # retiring docs (`archive`): historical/superseded docs move to archive_dir, same layout as under docs/
     "archive_dir": "docs/archive",
     "archive_no_rewrite": ["*.json", "*.jsonl", "*.yaml", "*.yml", "*.toml", "*.csv", "*.tsv", "*.ipynb", "*.xml",
-                           "*.ini", "*.cfg", "*.lock"],  # archive lists path mentions here, never rewrites them: data and
+                           "*.ini", "*.cfg", "*.lock", "*.ndjson", "*.jsonc", "*.conf", "*.properties", "*.plist", "*.sum",
+                           "*.snap", "*.dvc"],  # archive lists path mentions here, never rewrites them: data and
                                                          # configs may carry content hashes (run ids, model identities)
     "archive_keep": ["docs/writeups/*/review/**", "docs/research/**", "docs/literature/**"],  # records of a live folder:
                                         # never moved, never due for re-verification, left out of the `docs` queue
@@ -2552,6 +2554,11 @@ def rewrite_paths(f: str, text: str, moved: dict[str, str], record_only: bool = 
     return "\n".join(out), hits, skipped
 
 
+def no_rewrite_file(f: str) -> bool:
+    """A data or config file (archive_no_rewrite, matched case-insensitively): archive lists its mentions, never rewrites them."""
+    return matches(f, CFG["archive_no_rewrite"]) or matches(f.lower(), CFG["archive_no_rewrite"])
+
+
 def path_rewrite_candidates(files: list[str], moved: dict[str, str]) -> list[str]:
     """Files whose path mentions `archive` rewrites: text files (`text_file`) that stay live: not moved, not archived,
     not retired, not an append-only log, not the generated map."""
@@ -2649,7 +2656,8 @@ def cmd_archive(args):
     folder = lambda f: "" if Path(f).parent.as_posix() == "." else Path(f).parent.as_posix()
     new_text, md_count, code_hits = {}, defaultdict(int), []   # rewritten content of the files that stay, before any move
     for f in files:
-        if f.endswith(".md") and not moved_to(f, moved) and not under(f, CFG["archive_dir"]):   # the archive stays as written
+        if f.endswith(".md") and not moved_to(f, moved) and not under(f, CFG["archive_dir"]) \
+                and not no_rewrite_file(f):   # the archive and archive_no_rewrite stay as written
             try:
                 text, c = rewrite_links((ROOT / f).read_text(encoding="utf-8"), folder(f), folder(f), moved)
             except (OSError, UnicodeDecodeError):
@@ -2659,19 +2667,22 @@ def cmd_archive(args):
     skipped = []   # path mentions the rewriter leaves (code examples; everything under --no-rewrite-paths)
     data_left = []   # path mentions in data and config files (archive_no_rewrite): listed, never rewritten
     for f in path_rewrite_candidates(files, moved):
-        keep = matches(f, CFG["archive_no_rewrite"])
+        keep = no_rewrite_file(f)
         text, hits, skip = rewrite_paths(f, new_text.get(f) or text_file(f), moved, record_only=not paths or keep)
-        (data_left if keep and paths else skipped).extend((f, n, old, new) for n, old, new in skip)
+        (data_left if keep else skipped).extend((f, n, old, new) for n, old, new in skip)
         if hits:
             new_text[f] = text
             if f.endswith(".md"):
                 md_count[f] += len(hits)
             else:
                 code_hits += [(f, n, old, new) for n, old, new in hits]
-    data_keys = {(m[0], m[1], m[2]) for m in data_left}
-    leftovers = lambda found: sorted(dict.fromkeys([m for m in found if (m[0], m[1], m[2]) not in data_keys] + skipped),
-                                     key=lambda m: (m[0], m[1]))
+    no_rewrite = no_rewrite_file
+    leftovers = lambda found: sorted(dict.fromkeys(m for m in found + skipped if not no_rewrite(m[0])), key=lambda m: (m[0], m[1]))
     mentions, history = archive_mentions(files, moved, new_text)
+    by_key = {}
+    for m in data_left + [m for m in mentions if no_rewrite(m[0])]:   # one entry per file, line and moved path
+        by_key.setdefault((m[0], m[1], m[2]), m)
+    data_left = sorted(by_key.values(), key=lambda m: (m[0], m[1]))
     mentions = leftovers(mentions)
     verb = "" if apply else "would be "
     left_label = "left to decide by hand (not rewritten: " + ("bare names, code examples, ref:path)" if paths else "--no-rewrite-paths)")
