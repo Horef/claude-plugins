@@ -829,6 +829,9 @@ def main() -> int:
         fixture(root, {
             "docs/OLD_PLAN.md": "# Old plan\nStatus: historical (done 2026-11-01; results R1)\n\nSee [the guide](GUIDE.md) and ![fig](figures/a.png).\n",
             "docs/OLD_PLAN.pdf": "pdf\n",
+            "tools/README.md": "# tools/\n\nScripts that read the plans.\n",
+            "tools/run_old.sh": "# Print the old plan.\ncat docs/OLD_PLAN.md\ncat ../docs/OLD_PLAN.md\n",
+            "tools/plan.py": '"""Reads OLD_PLAN.md; never docs/OLD_PLAN.md.bak or olddocs/OLD_PLAN.md."""\nPLAN = "docs/OLD_PLAN.md"\n',
             "docs/DECISIONS.md": FILES["docs/DECISIONS.md"] + "- **Evidence:** `docs/OLD_PLAN.md` (append-only: stays as written).\n",
             "docs/figures/a.png": "png\n",
             "docs/GUIDE.md": "# Guide\n" + live + "\nThe [old plan](OLD_PLAN.md#top) and the [design](plans/design.md); also `docs/OLD_PLAN.md` in prose.\n",
@@ -862,8 +865,16 @@ def main() -> int:
         expect("docs/OLD_PLAN.md -> docs/archive/OLD_PLAN.md" in p.stdout and "+ docs/OLD_PLAN.pdf -> docs/archive/OLD_PLAN.pdf" in p.stdout
                and f"docs/plans/design.md -> docs/archive/plans/design-{stamp}.md" in p.stdout and (root / "docs/OLD_PLAN.md").exists(),
                "archive (dry run) lists docs, companions and a collision suffix, and moves nothing", p)
+        expect("rewritten in code and scripts: would be 3 in 2 file(s)" in p.stdout and "left to decide by hand (bare names): 1 in 1 file(s)" in p.stdout,
+               "archive (dry run) reports the path rewrites in code and the bare names left", p)
         p = docmap(root, "archive", "--apply")
         guide = (root / "docs/GUIDE.md").read_text(encoding="utf-8")
+        sh_text, py_text = (root / "tools/run_old.sh").read_text(encoding="utf-8"), (root / "tools/plan.py").read_text(encoding="utf-8")
+        expect("cat docs/archive/OLD_PLAN.md\ncat ../docs/archive/OLD_PLAN.md\n" in sh_text and 'PLAN = "docs/archive/OLD_PLAN.md"' in py_text
+               and "tools/run_old.sh:3: ../docs/OLD_PLAN.md -> ../docs/archive/OLD_PLAN.md" in p.stdout and "run the tests" in p.stdout,
+               "archive --apply rewrites repo-path and relative-path mentions in scripts and code, listing them file:line", p)
+        expect("Reads OLD_PLAN.md; never docs/OLD_PLAN.md.bak or olddocs/OLD_PLAN.md." in py_text and "tools/plan.py:1: docs/OLD_PLAN.md" in p.stdout,
+               "a bare file name is listed, not rewritten; boundary near-misses (.bak, olddocs/) are untouched", p)
         moved = (root / "docs/archive/OLD_PLAN.md").read_text(encoding="utf-8") if (root / "docs/archive/OLD_PLAN.md").exists() else ""
         expect(not (root / "docs/OLD_PLAN.md").exists() and (root / "docs/archive/OLD_PLAN.pdf").exists()
                and (root / f"docs/archive/plans/design-{stamp}.md").exists()
@@ -873,8 +884,8 @@ def main() -> int:
                and "(../GUIDE.md)" in moved and "(../figures/a.png)" in moved
                and "(../../GUIDE.md)" in (root / f"docs/archive/plans/design-{stamp}.md").read_text(encoding="utf-8"),
                "archive --apply rewrites relative links to moved docs, and the moved docs' own links", p)
-        expect("docs/GUIDE.md:4: docs/OLD_PLAN.md -> docs/archive/OLD_PLAN.md" in p.stdout,
-               "archive --apply lists plain mentions of moved paths left in live files (file:line)", p)
+        expect("`docs/archive/OLD_PLAN.md` in prose" in guide and "docs/GUIDE.md:4:" not in p.stdout,
+               "archive --apply rewrites a repo-path mention in a live Markdown doc instead of listing it", p)
         expect("docs/DECISIONS.md:" not in p.stdout and "1 mention(s) in append-only logs left as history" in p.stdout
                and "`docs/OLD_PLAN.md` (append-only" in (root / "docs/DECISIONS.md").read_text(encoding="utf-8"),
                "archive --apply leaves mentions in append-only logs (DECISIONS) as written and only counts them", p)
@@ -890,6 +901,14 @@ def main() -> int:
                "archive --legacy GLOB takes files without a Status line (dry run)", p)
         p = docmap(root, "archive", "--dir", "docs/research/q")
         expect("docs/research/q/audit.md -> docs/archive/research/q/audit.md" in p.stdout, "archive --dir PATH retires a whole folder (dry run)", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # archive --no-rewrite-paths: links only, path mentions listed
+        root = Path(tmp)
+        fixture(root, {"docs/OLD.md": "# Old\nStatus: historical\n", "tools/README.md": "# tools/\n\nScripts.\n",
+                       "tools/show.sh": "# Show the old doc.\ncat docs/OLD.md\n"})
+        p = docmap(root, "archive", "--apply", "--no-rewrite-paths")
+        expect((root / "tools/show.sh").read_text(encoding="utf-8").endswith("cat docs/OLD.md\n") and "tools/show.sh:2: docs/OLD.md" in p.stdout,
+               "archive --apply --no-rewrite-paths leaves path mentions as they are and lists them", p)
 
     with tempfile.TemporaryDirectory() as tmp:  # O31: lifecycle_strict fails on retired docs only after archive_grace_days
         root = Path(tmp)
