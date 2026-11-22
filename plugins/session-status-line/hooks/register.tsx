@@ -15,7 +15,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Account, Layout, Limit, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
+import type { Account, Layout, Limit, Prefs, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
 const VERSION = '0.12.1' // keep in step with plugin.json; `/status-line debug` reports it
 
@@ -101,7 +101,7 @@ const CONFIG = {
   // `every`, and the rows the options row takes. A 5-minute cache is not warmed: a warm every 3 minutes
   // costs more within the hour than re-reading the chat once.
   warm: {
-    panelRows: 2, // the options row's button rows; its status adds as many lines as it wraps to
+    panelRows: 3, // the options row's button rows; its status adds as many lines as it wraps to
     ttlMs: 60 * 60_000, everyMs: 50 * 60_000, retryMs: 45_000, defaultForMs: 12 * 3_600_000, minEveryMs: 2 * 60_000,
     // Earlier defaults of `everyMs` (0.9.0: 55 min): a chat whose wait is one of them was on the default.
     oldEveryMs: [55 * 60_000, 50 * 60_000],
@@ -112,6 +112,14 @@ const CONFIG = {
     // Once the warmer stops (off, its end time, an error), the compaction it declined is owed: the mod runs
     // it itself this long before the cache lapses, as Claude Code would have, unless a message comes first.
     compactLeadMs: 5 * 60_000,
+    // The mod's own idle compaction (the "Idle compaction" option, off by default): it takes the place of Claude
+    // Code's, whose `idleCompaction` setting the person turns off because on a Team or Enterprise account the
+    // built-in sec-default plugin sends every `session.compact` past the mods, so a decline never runs. Like
+    // Claude Code's, it compacts a quiet chat of at least this many tokens before its 1 h cache lapses.
+    idleMinTokens: 200_000,
+    // A context that falls to this share of what it was, from at least `dropFromTokens`, was compacted (or
+    // rewound): how a compaction is noticed where the session.compact hook never hears it.
+    dropShare: 0.6, dropFromTokens: 20_000, dropQuietMs: 2 * 60_000,
     // A warm or the owed compaction that has not come back by then counts as failed (a dropped connection
     // can leave a request hanging). A failed warm or compaction is retried while the cache lives, never
     // after; a compaction that timed out is not (it may still finish).
@@ -139,6 +147,8 @@ const tick = atom({ plugin: 'session-status-line', key: 'tick' } as const, 0) //
 const quotas = atom({ plugin: 'session-status-line', key: 'quotas' } as const, { on: true, at: 0, items: [], accounts: [] } as Quotas)
 const WARM_OFF: Warm = { on: false, everyMs: CONFIG.warm.everyMs, everySet: false, until: null, lastReqAt: null, lastWarmAt: null, retryAt: null, count: 0 }
 const warm = atom({ plugin: 'session-status-line', key: 'warm' } as const, WARM_OFF)
+const PREFS_OFF: Prefs = { everyChat: false, idleCompact: false }
+const prefs = atom({ plugin: 'session-status-line', key: 'prefs' } as const, PREFS_OFF)
 
 // Read once per load in session.start.
 let noColor = false
@@ -1150,6 +1160,13 @@ const warmDue = (w: Warm, now: number): number | null => {
   return Math.max(renewedAt(w) + Math.min(everyOf(w), ttlOf(w) - CONFIG.warm.minEveryMs), w.retryAt ?? 0)
 }
 
+/** An "Every chat" warmer has rested: 12 h (defaultForMs) since the chat's last message. */
+const autoRested = (w: Warm, now: number) =>
+  !!w.auto && w.lastReqAt !== null && now - w.lastReqAt >= CONFIG.warm.defaultForMs
+
+/** The warmer keeps the cache now: on, before its end time, and (switched on for every chat) not rested. */
+const keeps = (w: Warm, now: number) => w.on && (w.until === null || now < w.until) && !autoRested(w, now)
+
 // Module-local, so a reload starts them over (harmless: a reload drops any fork in flight with its module):
 // one warm at a time; main-loop requests in flight (no warm then: the request renews the cache itself);
 // and an epoch that /clear, /resume, a compaction and a model switch move on, so a warm that was in
@@ -1183,17 +1200,18 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
     if (!once) {
       if (!w.on) return 'Warmer off.'
       if (w.until !== null && now >= w.until) {
-        const after = await update($, warm, cur => ({ ...cur, on: false }))
+        const after = await update($, warm, cur => ({ ...cur, on: false, stoppedAt: now }))
         void $.ui.toast(`Cache warmer stopped: its end time passed (${w.count} warm${w.count === 1 ? '' : 's'} sent).${debtNote(after, now)}`)
         return 'Warmer off: its end time passed.'
       }
       // Warms kept failing (no connection, the service down) until the cache lapsed: stop, owe nothing.
       const ends = cacheEnds(w)
       if (w.retryAt !== null && ends !== null && now >= ends) {
-        await update($, warm, cur => ({ ...cur, on: false, retryAt: null, owesCompact: false }))
+        await update($, warm, cur => ({ ...cur, on: false, retryAt: null, owesCompact: false, stoppedAt: now }))
         void $.ui.toast(`Cache warmer stopped: no warm got through before the cache lapsed (${w.last?.reason ?? 'no answer'}). Nothing will be compacted; your next message reads the chat afresh.`)
         return 'Warmer off: the cache lapsed while warms failed.'
       }
+      if (autoRested(w, now)) return 'Not due: 12 hours since the last message.'
       const due = warmDue(w, now)
       if (due === null || now < due || inFlight > 0) return 'Not due.'
     }
@@ -1221,6 +1239,7 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
       await update($, warm, cur => ({
         ...cur, lastWarmAt: sentAt, retryAt: null, count: cur.count + 1, last,
         on: gone && !once ? false : cur.on, owesCompact: gone ? false : cur.owesCompact,
+        stoppedAt: gone && !once ? at : cur.stoppedAt,
       }))
       if (gone && !once) {
         void $.ui.toast('Cache warmer stopped: the warm found the cache already gone (paid a full write). It renews at your next message.')
@@ -1236,6 +1255,7 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
     await update($, warm, cur => ({
       ...cur, retryAt: retry ? at + CONFIG.warm.retryMs : null, on: retry || once ? cur.on : false,
       owesCompact: retry || once ? cur.owesCompact : false, // a warmer stopped by an error compacts nothing
+      stoppedAt: retry || once ? cur.stoppedAt : at,
       last: { at, read: 0, wrote: 0, reason },
     }))
     if (!retry && !once) void $.ui.toast(`Cache warmer stopped: ${reason}.`)
@@ -1252,13 +1272,18 @@ const maybeWarm = async ($: EngineInterface, once = false): Promise<string> => {
 const keepingCache = async ($: EngineInterface): Promise<boolean> => {
   const w = await read($, warm)
   const now = await $.clock.now()
-  if (!w.on || (w.until !== null && now >= w.until) || warmDue(w, now) === null || inFlight > 0) return false
+  if (!keeps(w, now) || warmDue(w, now) === null || inFlight > 0) return false
   if (now - (w.lastReqAt ?? 0) < CONFIG.warm.idleMs) return false
   return ((await read($, usage)).percent ?? 0) < CONFIG.warm.keepBelowPercent
 }
 
 /** A compaction replaced the main conversation: count it; the cache is forgotten until the next request. */
+let lastCountAt = 0 // when a compaction was last counted, so the context's drop after it is not counted again
+let measureCalmUntil = 0 // a new or resumed chat's first readings: a smaller context there is no compaction
+let lastTokens: number | null = null // the main context's size at the last reading, for noticing a compaction
+
 const countCompaction = async ($: EngineInterface) => {
+  lastCountAt = await $.clock.now()
   const s = await update($, stats, cur => ({ ...cur, compactions: cur.compactions + 1 }))
   await saveCompactions($, s.compactions)
   await forgetCache($) // the summary is cached by the next request, not before
@@ -1270,7 +1295,7 @@ const countCompaction = async ($: EngineInterface) => {
  * cache lapses; null when nothing is owed, the warmer still keeps the cache, or the cache is already gone.
  */
 const compactDue = (w: Warm, now: number): number | null => {
-  if (!w.owesCompact || (w.on && (w.until === null || now < w.until))) return null
+  if (!w.owesCompact || keeps(w, now)) return null
   const ends = cacheEnds(w)
   return ends === null || now >= ends ? null : ends - CONFIG.warm.compactLeadMs
 }
@@ -1287,7 +1312,7 @@ const maybeCompact = async ($: EngineInterface): Promise<void> => {
   const w = await read($, warm)
   const now = await $.clock.now()
   const ends = cacheEnds(w)
-  const keeping = w.on && (w.until === null || now < w.until)
+  const keeping = keeps(w, now)
   // Owed, but the cache has lapsed (every attempt failed, or the computer slept through the window):
   // a compaction now would pay for a fresh read of the whole chat, so it is dropped.
   if (w.owesCompact && !keeping && ends !== null && now >= ends) {
@@ -1327,6 +1352,66 @@ const debtNote = (w: Warm, now: number): string => {
   const due = compactDue(w, now)
   return due === null ? '' : ` The chat compacts at ${fmtClock(Math.max(due, now))} unless you write first; "Skip compaction" in ⓘ (or /status-line warm skip-compact) keeps it as it is.`
 }
+
+// ─── Options for every chat: "Every chat" warmer, the mod's idle compaction ──
+// Kept in the store, so every chat reads them; each chat reads them again each minute, so a change made
+// in one reaches the others within a minute.
+
+let idleMinTokens: number = CONFIG.warm.idleMinTokens // CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS, as Claude Code reads it
+
+/** Read the options and Claude Code's own idle compaction setting; switch this chat's warmer to match. */
+const loadPrefs = async ($: EngineInterface) => {
+  const [everyChat, idleCompact] = await Promise.all([$.store.get('warmEveryChat'), $.store.get('idleCompact')])
+  const cc = await $.settings.read({ key: 'idleCompaction' }).catch(() => undefined)
+  await update($, prefs, p => {
+    const next: Prefs = { everyChat: everyChat === true, idleCompact: idleCompact === true, ccIdle: cc !== false }
+    return p.everyChat === next.everyChat && p.idleCompact === next.idleCompact && p.ccIdle === next.ccIdle ? p : next
+  })
+  await applyAuto($)
+}
+
+/**
+ * "Every chat": switch on a chat's warmer unless the person switched it off here, or it stopped itself
+ * (an error, a lapse) and no message came since; with the option off, switch off what it switched on.
+ */
+const applyAuto = async ($: EngineInterface) => {
+  const p = await read($, prefs)
+  await update($, warm, w => {
+    if (p.everyChat && !w.on && !w.optedOut && (w.stoppedAt == null || (w.lastReqAt ?? 0) > w.stoppedAt)) {
+      return { ...w, on: true, auto: true, until: null, retryAt: null, count: 0, stoppedAt: null }
+    }
+    if (!p.everyChat && w.on && w.auto) return { ...w, on: false, auto: false }
+    return w
+  })
+}
+
+/** Whether the mod's own idle compaction applies to this chat now: the option on and the context large enough. */
+const idleOwed = async ($: EngineInterface) =>
+  (await read($, prefs)).idleCompact && ((await read($, usage)).tokens ?? 0) >= idleMinTokens
+
+/**
+ * Notice a compaction from the context's size, for where the session.compact hook never hears one (sec-default
+ * sends the event past every mod): a context that falls to 60% or less of what it was. A rewind looks the same.
+ */
+const noticeDrop = async ($: EngineInterface, tokens: number | undefined, agentless: boolean) => {
+  if (!agentless || tokens === undefined) return
+  const before = lastTokens
+  lastTokens = tokens
+  const now = await $.clock.now()
+  if (before === null || before < CONFIG.warm.dropFromTokens || tokens > before * CONFIG.warm.dropShare) return
+  if (now < measureCalmUntil || now - lastCountAt < CONFIG.warm.dropQuietMs || compacting) return
+  await countCompaction($)
+}
+
+/** The options' words for status: what "Every chat" and "Idle compaction" do now, and Claude Code's own. */
+const prefsNote = (p: Prefs): string =>
+  (p.everyChat ? ' Every chat: the warmer switches on in each chat (until 12h after its last message).' : '') +
+  (p.idleCompact
+    ? ` Idle compaction on: a quiet chat of ${fmt(idleMinTokens)} tokens or more compacts 5 minutes before its cache lapses, unless the warmer keeps it.`
+    : ' Idle compaction off: the mod never compacts a quiet chat.') +
+  (p.ccIdle !== false
+    ? ' Claude Code\'s own idle compaction is on ("idleCompaction" in settings.json); on a Team or Enterprise account no mod can decline it, so it compacts a quiet chat about 54 minutes after the last message whatever the warmer does. Set "idleCompaction": false to leave it to these options.'
+    : '')
 
 /** "50m", "8h", "1.5h", "90" (minutes unless `unit` says hours) → ms; null when unreadable. */
 const parseSpan = (text: string, unit: 'm' | 'h'): number | null => {
@@ -1386,10 +1471,13 @@ const compactOf = (w: Warm, now: number): string => {
   return declined + (due === null ? '' : ` The chat compacts at ${fmtClock(Math.max(due, now))} unless a message comes first.`)
 }
 
-const warmStatus = (w: Warm, now: number): string => {
-  if (!w.on) return `${cacheStatus(w, now)} Warmer off.${lastOf(w, now)}${compactOf(w, now)}`
-  const end = w.until === null ? 'until switched off' : `until ${fmtClock(w.until)} (${fmtSpan(Math.max(0, w.until - now))} from now)`
-  return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(everyOf(w))}${w.everySet ? '' : ' (default)'} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}${compactOf(w, now)}`
+const warmStatus = (w: Warm, now: number, p?: Prefs): string => {
+  const opts = p ? prefsNote(p) : ''
+  if (!w.on) return `${cacheStatus(w, now)} Warmer off.${lastOf(w, now)}${compactOf(w, now)}${opts}`
+  const end = w.auto
+    ? autoRested(w, now) ? 'for every chat, resting (12h since the last message)' : 'for every chat, until 12h after the last message'
+    : w.until === null ? 'until switched off' : `until ${fmtClock(w.until)} (${fmtSpan(Math.max(0, w.until - now))} from now)`
+  return `${cacheStatus(w, now)} Warmer on ${end}, ${fmtSpan(everyOf(w))}${w.everySet ? '' : ' (default)'} after each request or warm; next warm ${nextOf(w, now)}; ${w.count} sent.${lastOf(w, now)}${compactOf(w, now)}${opts}`
 }
 
 /**
@@ -1413,12 +1501,13 @@ const panelStatus = (w: Warm, now: number, width = Infinity): string[] => {
   const due = compactDue(w, now)
   const compacts = due === null ? [] : [`compacts at ${fmtClock(Math.max(due, now))}`]
   if (!w.on) return wrapStatus([cache, 'warmer off', ...compacts], width)
-  const parts = [cache, `warmer on ${w.until === null ? 'until switched off' : `until ${fmtClock(w.until)}`}`, `next warm ${nextOf(w, now)}`]
+  const end = w.auto ? (autoRested(w, now) ? 'resting, 12h since the last message' : 'for every chat') : w.until === null ? 'until switched off' : `until ${fmtClock(w.until)}`
+  const parts = [cache, `warmer on ${end}`, `next warm ${nextOf(w, now)}`]
   if (w.last) parts.push(w.last.reason ? `last: ${w.last.reason}` : `${w.count} sent, last served ${fmt(w.last.read)}`)
   return wrapStatus(parts, width)
 }
 
-const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | every default | skip-compact | status]'
+const WARM_HELP = '/status-line warm [on | off | now | forever | for 8h | until 07:30 | every 50m | every default | every-chat on|off | idle-compact on|off | skip-compact | status]'
 
 /** `/status-line warm ...`: switch on or off, set the end or the interval, warm once now, or report. */
 const warmCommand = async ($: EngineInterface, args: string): Promise<string> => {
@@ -1427,20 +1516,41 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
   const [verb = '', ...rest] = args.trim().split(/\s+/)
   const value = rest.join(' ')
   // Switching on never invents a request time: with none seen, the warmer waits for the next message.
+  // The person's own choice replaces what "Every chat" set; switching off keeps "Every chat" out of this chat.
   const on = (until: number | null) =>
-    update($, warm, w => ({ ...w, on: true, until, retryAt: null, count: w.on ? w.count : 0 }))
+    update($, warm, w => ({ ...w, on: true, until, retryAt: null, count: w.on ? w.count : 0, auto: false, optedOut: false }))
+  const off = async () =>
+    `Warmer off. ${cacheStatus(cur, now)}${debtNote(await update($, warm, w => ({ ...w, on: false, auto: false, optedOut: true })), now)}`
+  const onOff = /^(on|off)$/i.exec(value)?.[1]?.toLowerCase()
   switch (verb.toLowerCase()) {
     case '':
-      if (cur.on) {
-        return `Warmer off. ${cacheStatus(cur, now)}${debtNote(await update($, warm, w => ({ ...w, on: false })), now)}`
-      }
+      if (cur.on) return off()
       await on(now + CONFIG.warm.defaultForMs)
       break
     case 'on':
       await on(now + CONFIG.warm.defaultForMs)
       break
     case 'off':
-      return `Warmer off. ${cacheStatus(cur, now)}${debtNote(await update($, warm, w => ({ ...w, on: false })), now)}`
+      return off()
+    case 'every-chat': {
+      if (!onOff) return 'Usage: /status-line warm every-chat on | off.'
+      await $.store.set('warmEveryChat', onOff === 'on')
+      // Asked for here, so it holds here too, whatever this chat's own switch said before.
+      if (onOff === 'on') await update($, warm, w => (w.on ? w : { ...w, optedOut: false, stoppedAt: null }))
+      await loadPrefs($)
+      return onOff === 'on'
+        ? `Every chat: on. Each chat's warmer switches on by itself and warms until 12h after its last message; switching it off in a chat keeps it off there. ${warmStatus(await read($, warm), now)}`
+        : 'Every chat: off. Warmers it switched on are off; ones you switched on yourself stay as they are.'
+    }
+    case 'idle-compact': {
+      if (!onOff) return 'Usage: /status-line warm idle-compact on | off.'
+      await $.store.set('idleCompact', onOff === 'on')
+      await loadPrefs($)
+      // This quiet stretch follows the new choice at once: owed if the chat is large enough and still cached.
+      const owe = onOff === 'on' && cacheEnds(cur) !== null && now < cacheEnds(cur)! && (await idleOwed($))
+      await update($, warm, w => ({ ...w, owesCompact: owe || (onOff === 'on' && !!w.owesCompact) }))
+      return `${prefsNote(await read($, prefs)).trim()}${debtNote(await read($, warm), now)}`
+    }
     case 'skip-compact':
       if (!cur.owesCompact) return 'No compaction is waiting.'
       await update($, warm, w => ({ ...w, owesCompact: false }))
@@ -1480,9 +1590,9 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
       return `${said} ${warmStatus(await read($, warm), await $.clock.now())}`
     }
     case 'status':
-      break
+      return warmStatus(await read($, warm), now, await read($, prefs))
     case 'help':
-      return `Cache warmer: ${WARM_HELP}. The 🔥 button switches it on for ${fmtSpan(CONFIG.warm.defaultForMs)} or off; ⓘ opens its options.`
+      return `Cache warmer: ${WARM_HELP}. The 🔥 button switches it on for ${fmtSpan(CONFIG.warm.defaultForMs)} or off; ⓘ opens its options. every-chat: each chat's warmer switches on by itself (until 12h after its last message). idle-compact (off by default): the mod compacts a quiet chat of ${fmt(idleMinTokens)} tokens or more 5 minutes before its cache lapses, in place of Claude Code's idle compaction.`
     default:
       return `Usage: ${WARM_HELP}.`
   }
@@ -1511,7 +1621,12 @@ export const register: Register = on => {
     // A chat keeps its warmer state across a reload: one on an earlier version's default wait follows the
     // current default from now on (a warm already overdue by it goes at the next tick); a chosen wait stays.
     await update($, warm, migrateWarm)
+    const minTokens = Number(await $.env.get('CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS'))
+    idleMinTokens = Number.isFinite(minTokens) && minTokens > 0 ? Math.max(100_000, minTokens) : CONFIG.warm.idleMinTokens
+    measureCalmUntil = (await $.clock.now()) + CONFIG.warm.dropQuietMs
+    lastTokens = null
     await Promise.all([refreshModel($), refreshUsage($), loadCompactions($)])
+    await loadPrefs($).catch(() => {})
     void refreshQuotas($) // network and CLI calls: never hold up the session
     void refreshAccounts($)
     // Once a minute: advance the countdowns and catch model switches made
@@ -1521,8 +1636,8 @@ export const register: Register = on => {
       void refreshModel($)
       void refreshQuotas($)
       void refreshAccounts($)
-      void maybeWarm($).catch(() => {})
-      void maybeCompact($).catch(() => {})
+      // The options first (another chat may have changed them), then a warm or compaction they allow.
+      void loadPrefs($).catch(() => {}).then(() => Promise.all([maybeWarm($).catch(() => {}), maybeCompact($).catch(() => {})]))
     })
     return next(e)
   })
@@ -1626,7 +1741,11 @@ export const register: Register = on => {
       const u = res.usage
       if (u && epoch === myEpoch && (u.cache_read_input_tokens > 0 || u.cache_creation_input_tokens > 0)) {
         const ttlMs = (u.ephemeral_1h_input_tokens ?? 0) > 0 ? 3_600_000 : (u.ephemeral_5m_input_tokens ?? 0) > 0 ? 300_000 : undefined
-        await update($, warm, w => ({ ...w, lastReqAt: Math.max(sentAt, w.lastReqAt ?? 0), retryAt: null, owesCompact: false, ttlMs: ttlMs ?? w.ttlMs }))
+        // A message starts a new quiet stretch: the mod's own idle compaction is owed in it when that option is
+        // on and the chat is large enough; one Claude Code tried before is not (it times from this request too).
+        const owe = await idleOwed($)
+        await update($, warm, w => ({ ...w, lastReqAt: Math.max(sentAt, w.lastReqAt ?? 0), retryAt: null, owesCompact: owe, ttlMs: ttlMs ?? w.ttlMs }))
+        await applyAuto($) // "Every chat" resumes a warmer that stopped itself
       }
       return res
     } finally {
@@ -1638,6 +1757,8 @@ export const register: Register = on => {
   on('classic.SessionStart', async ($, e, next) => {
     if (e.source === 'resume' || e.source === 'fork') {
       const now = await $.clock.now()
+      measureCalmUntil = now + CONFIG.warm.dropQuietMs // another chat's size is no compaction
+      lastTokens = null
       const ago = e.seconds_since_last_response
       await forgetCache($, ago !== undefined && !e.prompt_cache_likely_expired ? { lastReqAt: now - ago * 1000 } : {})
     }
@@ -1703,6 +1824,7 @@ export const register: Register = on => {
       limits: e.rateLimits.length ? e.rateLimits : u.limits,
     }))
     if (e.rateLimits.length) await writeOwnReading($, e.rateLimits)
+    await noticeDrop($, e.context.tokens, true)
     return next(e)
   })
 
@@ -1713,7 +1835,10 @@ export const register: Register = on => {
       // The warmer belongs to the chat: the next one starts with it off and nothing known cached.
       epoch++
       await update($, warm, w => ({ ...WARM_OFF, ttlMs: w.ttlMs, open: w.open }))
+      measureCalmUntil = (await $.clock.now()) + CONFIG.warm.dropQuietMs // a fresh chat is no compaction
+      lastTokens = null
       await refreshUsage($)
+      await applyAuto($) // "Every chat" holds for the new chat too
     }
     const result = await next(e)
     if (e.reason === 'resume') await loadCompactions($) // the resumed chat's own count
@@ -1723,7 +1848,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || !(await read($, enabled))) return next(e)
 
-    const [s, u, mode, q, w] = await Promise.all([read($, stats), read($, usage), read($, layout), read($, quotas), read($, warm)])
+    const [s, u, mode, q, w, p] = await Promise.all([read($, stats), read($, usage), read($, layout), read($, quotas), read($, warm), read($, prefs)])
     await read($, tick) // subscribe so the countdowns redraw each minute
     const now = await $.clock.now()
     const ic = e.surface !== 'terminal' && icons === CONFIG.icons ? { ...icons, ...CONFIG.desktopBar } : icons
@@ -1775,6 +1900,16 @@ export const register: Register = on => {
           )}
           {label('w-l6', ' more: /status-line warm help')}
           <Button key="w-close" plain role="dismiss" onPress={toggleInfo}><Text dimColor>×</Text></Button>
+        </Box>
+        <Box key="warm-row3" flexDirection="row" flexWrap="wrap" columnGap={1}>
+          {label('w-l7', 'Every chat')}
+          {choice('w-auto-off', 'Off', 'every-chat off', !p.everyChat)}
+          {choice('w-auto-on', 'On', 'every-chat on', p.everyChat)}
+          {label('w-l8', ' Idle compaction')}
+          {choice('w-idle-off', 'Off', 'idle-compact off', !p.idleCompact)}
+          {choice('w-idle-on', 'On', 'idle-compact on', p.idleCompact)}
+          {/* Claude Code's own idle compaction overrides both where no mod can decline it (warm status says more). */}
+          {p.ccIdle !== false && label('w-l9', " · Claude Code's own is on: /status-line warm status")}
         </Box>
       </Box>
     )
