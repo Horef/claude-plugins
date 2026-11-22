@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.17.0 (2026-11-22)
+- Lifecycle release (spec in evals/reviews/2026-11-22-lifecycle/spec.md, Neon's review merged): docmap.py archive [--apply] [--dir] [--legacy] retires historical/superseded docs into archive_dir (same layout, same-stem companions, -YYYY-MM on collisions, links rewritten, plain mentions listed, generated archive README); archive_keep records stay and never expire; check: one aggregated retired-docs warning (error under lifecycle_strict after archive_grace_days), Status column in generated folder tables; docs lists live docs only (--all for every doc); id check tests folder slugs on the raw line, groups bare-id warnings per family, ids FAMILY gives file:line, warnings ordered by consequence; find splits words and ranks live docs first; STATUS guards (table cell counts, stale Works dates, In-flight rows past their end); worklog rotates above worklog_max_tokens only on the default branch of the main worktree (--no-rotate); evals assert DOCMAP_VERSION == plugin.json version (5.17.0). Templates (session start, In flight, Done line), modules, docmap-config and upgrade 6b updated. Evals: 26 checks committed first fail on 5.16.0, all pass. (O31, O32, O33, O34, O35)
+
 ## 5.16.0 (2026-11-17)
 - decisions record failed attempts (Tried) and what they depend on (Depends on); docmap.py depends [WORDS] lists live setting-dependent decisions to re-check after a model, platform or library switch; AGENTS template rows for both (owner request, after Yu et al. 2026 SIM) (O30)
 
