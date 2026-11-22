@@ -829,6 +829,7 @@ def main() -> int:
         fixture(root, {
             "docs/OLD_PLAN.md": "# Old plan\nStatus: historical (done 2026-11-01; results R1)\n\nSee [the guide](GUIDE.md) and ![fig](figures/a.png).\n",
             "docs/OLD_PLAN.pdf": "pdf\n",
+            "docs/DECISIONS.md": FILES["docs/DECISIONS.md"] + "- **Evidence:** `docs/OLD_PLAN.md` (append-only: stays as written).\n",
             "docs/figures/a.png": "png\n",
             "docs/GUIDE.md": "# Guide\n" + live + "\nThe [old plan](OLD_PLAN.md#top) and the [design](plans/design.md); also `docs/OLD_PLAN.md` in prose.\n",
             "docs/plans/design.md": "# Design\nStatus: superseded by D2\n\nBack to [the guide](../GUIDE.md).\n",
@@ -874,6 +875,9 @@ def main() -> int:
                "archive --apply rewrites relative links to moved docs, and the moved docs' own links", p)
         expect("docs/GUIDE.md:4: docs/OLD_PLAN.md -> docs/archive/OLD_PLAN.md" in p.stdout,
                "archive --apply lists plain mentions of moved paths left in live files (file:line)", p)
+        expect("docs/DECISIONS.md:" not in p.stdout and "1 mention(s) in append-only logs left as history" in p.stdout
+               and "`docs/OLD_PLAN.md` (append-only" in (root / "docs/DECISIONS.md").read_text(encoding="utf-8"),
+               "archive --apply leaves mentions in append-only logs (DECISIONS) as written and only counts them", p)
         expect((root / "docs/writeups/w/review/round1.md").exists(), "archive_keep records stay in place", p)
         arch = (root / "docs/archive/README.md").read_text(encoding="utf-8") if (root / "docs/archive/README.md").exists() else ""
         expect(f"| `OLD_PLAN.md` | `docs/OLD_PLAN.md` | {today.isoformat()} | historical (done 2026-11-01; results R1) |" in arch,

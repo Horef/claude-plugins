@@ -2398,10 +2398,16 @@ def rewrite_links(text: str, old_dir: str, new_dir: str, moved: dict[str, str]) 
     return re.sub(r"(\])\(([^)\s]+)\)", fix, text), count
 
 
-def archive_mentions(files: list[str], moved: dict[str, str]) -> list[tuple[str, int, str, str]]:
-    """(file, line, old path, new path) for plain or backtick mentions of moved paths (repo path or file name) left in
-    live files: not moved, not archived, not the WORKLOG history, not retired. Markdown links into the moved files or
-    the archive are skipped (the links are rewritten)."""
+def append_only_log(f: str) -> bool:
+    """The append-only logs: the configured indexes (DECISIONS, RESULTS), the run index, the WORKLOG and its months."""
+    runs = CFG["runs"].get("out") if isinstance(CFG.get("runs"), dict) else None
+    return f in {ix["file"] for ix in CFG["indexes"]} or f in (CFG["worklog"], runs) or under(f, CFG["worklog_dir"])
+
+
+def archive_mentions(files: list[str], moved: dict[str, str]) -> tuple[list[tuple[str, int, str, str]], int]:
+    """([(file, line, old path, new path)], n): plain or backtick mentions of moved paths (repo path or file name) left
+    in live files (not moved, not archived, not retired), and the number of mentions in the append-only logs, which
+    stay as written (history). Markdown links into the moved files or the archive are skipped (they are rewritten)."""
     adir = CFG["archive_dir"].rstrip("/")
     names, count = {}, defaultdict(int)
     for f in files:
@@ -2411,13 +2417,12 @@ def archive_mentions(files: list[str], moved: dict[str, str]) -> list[tuple[str,
         if Path(src).suffix and count[Path(src).name] <= 1:   # a file name alone counts only when no other file has it
             names.setdefault(Path(src).name, (src, dst))
     if not names:
-        return []
+        return [], 0
     pat = re.compile(r"(?<![\w./-])(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")(?![\w-])")
     text_ext = {".md", ".py", ".toml", ".txt", ".yml", ".yaml", ".json", ".cfg", ".ini", ".sh", ".tex", ".rst"}
-    out = []
+    out, history = [], 0
     for f in files:
-        if (Path(f).suffix not in text_ext or moved_to(f, moved) or under(f, adir) or f == CFG["worklog"]
-                or under(f, CFG["worklog_dir"]) or f == CFG["map"]):
+        if Path(f).suffix not in text_ext or moved_to(f, moved) or under(f, adir) or f == CFG["map"]:
             continue
         if f.endswith(".md") and (st := doc_status(f)) and st[0] in RETIRED:
             continue
@@ -2433,11 +2438,15 @@ def archive_mentions(files: list[str], moved: dict[str, str]) -> list[tuple[str,
             return "" if moved_to(full, moved) or under(full, adir) else m.group(0)
         if f.endswith(".md"):
             text = re.sub(r"\[([^\]\n]*)\]\(([^)\s]+)\)", drop_link, text)
+        log = append_only_log(f)
         for n, ln in enumerate(text.splitlines(), 1):
             for m in pat.finditer(ln):
+                if log:
+                    history += 1
+                    continue
                 src, dst = names[m.group(1)]
                 out.append((f, n, src, dst))
-    return out
+    return out, history
 
 
 def cmd_archive(args):
@@ -2469,11 +2478,11 @@ def cmd_archive(args):
              for f in files if f.endswith(".md") and not moved_to(f, moved)}
     n_links = sum(c for _, c in links.values())
     if not apply:
-        mentions = archive_mentions(files, moved)
+        mentions, history = archive_mentions(files, moved)
         print(f"{n_files} file(s) in {len(plan)} group(s) would move; {n_links} relative link(s) in "
               f"{sum(1 for _, c in links.values() if c)} live doc(s) would be rewritten; {len(mentions)} plain mention(s) in "
-              f"{len({m[0] for m in mentions})} file(s) to fix by hand afterwards. Run `python {cmd} archive --apply` "
-              f"(add the same --dir/--legacy options) to move them.")
+              f"{len({m[0] for m in mentions})} file(s) to fix by hand afterwards ({history} in append-only logs stay as history). "
+              f"Run `python {cmd} archive --apply` (add the same --dir/--legacy options) to move them.")
         return
     tracked = set(git_out("ls-files").splitlines())
     for src, dst in pairs_all:
@@ -2497,7 +2506,9 @@ def cmd_archive(args):
     if arch := build_archive_readme(files, {dst: (f"`{src}`", today) for src, dst in pairs_all}):
         (ROOT / arch[0]).write_text(arch[1], encoding="utf-8")
     print(f"moved {n_files} file(s); rewrote {n_links} relative link(s); {arch[0] if arch else 'the archive README'} lists them")
-    mentions = archive_mentions(files, moved)
+    mentions, history = archive_mentions(files, moved)
+    if history:
+        print(f"{history} mention(s) in append-only logs left as history (DECISIONS, RESULTS, run index, WORKLOG)")
     if mentions:
         print(f"{len(mentions)} plain mention(s) of moved paths left in {len({m[0] for m in mentions})} live file(s); fix them by hand "
               "(point to the new path, or drop the mention):")
