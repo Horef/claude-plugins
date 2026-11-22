@@ -250,7 +250,7 @@ def resolve_relative(mod: str, target: str | None, level: int, is_pkg: bool) -> 
 def analyse(files: list[str]) -> dict[str, Module]:
     mods: dict[str, Module] = {}
     for f in files:
-        if f.endswith(".py"):
+        if f.endswith(".py") and not under(f, CFG["archive_dir"]):   # archived code is history: not mapped or checked
             m = Module(f)
             if m.name in mods:  # two loose scripts with the same file name
                 m.name = f[:-3].replace("/", ".")
@@ -407,7 +407,7 @@ def code_dirs(files: list[str]) -> list[str]:
             text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
             if BEGIN in text and FOLDER_TABLE_HEAD in text:
                 dirs.add(d)
-    return sorted(d for d in dirs if not matches(d, CFG["readme_exempt"]))
+    return sorted(d for d in dirs if not matches(d, CFG["readme_exempt"]) and not under(d, CFG["archive_dir"]))
 
 
 def short(names, limit=4):
@@ -539,6 +539,8 @@ def build_archive_readme(files, fresh: dict[str, tuple[str, str]] | None = None)
         return None
     path = f"{adir}/README.md"
     p = ROOT / path
+    if not p.exists() and not any(under(f, adir) and f != path for f in files):
+        return None   # an empty archive folder needs no README yet
     old = p.read_text(encoding="utf-8") if p.exists() else (
         "# Archive\n\nRetired docs (Status historical or superseded), kept for the record: moved here by "
         f"`python {self_cmd()} archive --apply` with the layout they had under `docs/`. Nothing here is current; "
@@ -559,7 +561,7 @@ def generated(files):
     mods = analyse(files)
     by_path = {m.path: m for m in mods.values()}
     imp = importers(mods)
-    dirs = [d for d in code_dirs(files) if d != CFG["archive_dir"].rstrip("/")]   # the archive README has its own table
+    dirs = code_dirs(files)   # never under archive_dir: the archive README has its own table
     life = set(lifecycle_docs(files))
     out = {CFG["map"]: build_map(files, by_path, imp, dirs)}
     for d in dirs:
@@ -784,7 +786,7 @@ def id_analysis(files: list[str]):
     cites, lines = defaultdict(set), defaultdict(list)
     for f, t in (texts.items() if ambiguous else []):
         scope = id_scope(f)
-        bare = re.sub(r"https?://\S+", "", re.sub(r"`[^`\n]*`", "", t)).splitlines()   # same line count as t
+        bare = re.sub(r"https?://\S+", "", re.sub(r"(`+)(?!`).*?(?<!`)\1(?!`)", "", t)).splitlines()   # same line count as t
         for n, (raw, ln) in enumerate(zip(t.splitlines(), bare), 1):
             for i in sorted(set(ID_CITE.findall(ln)) & ambiguous.keys(), key=id_key):
                 slugs = [s.rstrip("/").rsplit("/", 1)[-1] for s in ambiguous[i] if s != "./"]
@@ -1050,11 +1052,22 @@ def _status_works_missing(ln: str, files_set: set[str], basenames: set[str], mod
 
 
 def table_cells(row: str) -> list[str]:
-    """Cells of a Markdown table row, split on unescaped pipes (GitHub splits inside code spans too)."""
-    s = row.strip()
-    s = s[1:] if s.startswith("|") else s
-    s = s[:-1] if s.endswith("|") and not s.endswith("\\|") else s
-    return [c.strip() for c in re.split(r"(?<!\\)\|", s)]
+    """Cells of a Markdown table row, split on unescaped pipes: a `|` after an even number of backslashes (GitHub splits
+    inside code spans too)."""
+    cells, cur, slashes = [], [], 0
+    for ch in row.strip():
+        if ch == "|" and slashes % 2 == 0:
+            cells.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+        slashes = slashes + 1 if ch == "\\" else 0
+    cells.append("".join(cur))
+    if cells and not cells[0].strip():
+        cells = cells[1:]       # leading pipe
+    if len(cells) > 1 and not cells[-1].strip():
+        cells = cells[:-1]      # trailing pipe
+    return [c.strip() for c in cells]
 
 
 def iso_dates(text: str) -> list:
@@ -1073,18 +1086,26 @@ MONTH_RE = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|a
 
 
 def row_dates(text: str, today) -> list:
-    """Dates in a STATUS row: ISO, or '29 Oct' / '29 October 2026' (no year: the latest such date not after today)."""
-    import datetime
+    """Dates in a STATUS cell: ISO, '29 Oct' / '29 October 2026', or 'Oct 29' / 'Oct 29, 2026' (no year: the latest such
+    date not after today; 29 Feb then falls in the latest leap year). Lowercase 'may' is the verb, not the month."""
+    import calendar, datetime
     out = iso_dates(text)
-    for m in re.finditer(r"(?<!\d)(\d{1,2})\s+" + MONTH_RE + r"\b\.?(?:\s+(\d{4}))?", text, re.I):
-        mon = next(i for name, i in MONTHS.items() if name.startswith(m.group(2).lower()[:3]))
-        try:
-            d = datetime.date(int(m.group(3) or today.year), mon, int(m.group(1)))
-            if not m.group(3) and d > today:
-                d = d.replace(year=d.year - 1)
-        except ValueError:
-            continue
-        out.append(d)
+    day_first = r"(?<!\d)(?P<d>\d{1,2})\s+(?P<m>" + MONTH_RE[1:-1] + r")\b\.?(?:,?\s+(?P<y>\d{4}))?"
+    month_first = r"\b(?P<m>" + MONTH_RE[1:-1] + r")\b\.?\s+(?P<d>\d{1,2})(?:st|nd|rd|th)?\b(?!:)(?:,?\s+(?P<y>\d{4}))?"
+    for pat in (day_first, month_first):
+        for m in re.finditer(pat, text, re.I):
+            if m.group("m") == "may":
+                continue
+            mon = next(i for name, i in MONTHS.items() if name.startswith(m.group("m").lower()[:3]))
+            day, year = int(m.group("d")), int(m.group("y")) if m.group("y") else None
+            if year is None:
+                year = today.year if (mon, day) <= (today.month, today.day) else today.year - 1
+                while mon == 2 and day == 29 and not calendar.isleap(year):
+                    year -= 1
+            try:
+                out.append(datetime.date(year, mon, day))
+            except ValueError:
+                continue
     return out
 
 
@@ -1094,12 +1115,20 @@ def retired_docs(files: list[str]) -> list[str]:
 
 
 def max_retired_age(retired: list[str], stop: int) -> int:
-    """Days since the oldest of these docs got its Status line (git log of that line, else the file's last commit; 0 for
-    uncommitted changes), stopping early once one is older than `stop`."""
+    """Days since the oldest of these docs got its Status line (git log of that line, else the file's last commit),
+    stopping early once one is older than `stop`. A doc that is untracked, or whose Status line changed since HEAD, was
+    retired today. Needs full history: in a shallow clone (CI's default fetch-depth 1) every doc looks recent."""
     import datetime
     today, oldest = datetime.date.today(), 0
+    dirty = {}
+    for ln in git_out("status", "--porcelain", "--", *retired).splitlines():   # one call for all of them
+        if len(ln) > 3:
+            dirty[ln[3:].strip().strip('"').split(" -> ")[-1]] = ln[:2]
     for f in retired:
-        if git_out("status", "--porcelain", "--", f).strip():
+        if dirty.get(f) == "??":
+            continue
+        if f in dirty and any(STATUS_LINE.match(d[1:].strip()) for d in git_out("diff", "-U0", "HEAD", "--", f).splitlines()
+                              if d[:1] in "+-" and not d.startswith(("+++", "---"))):
             continue
         line = next((ln.strip() for ln in (ROOT / f).read_text(encoding="utf-8", errors="replace").splitlines()[:15]
                      if STATUS_LINE.match(ln.strip())), "")
@@ -1134,12 +1163,13 @@ def cmd_check(_args):
         elif not m.summary and not matches(m.path, CFG["docstring_exempt"]):
             errors.append(f"{m.path}: no module docstring (first line = what the file is for)")
     for f in files:  # other code files: want a header comment
-        if Path(f).suffix in CODE_EXT - {".py"} and not file_summary(f, {}) and not matches(f, CFG["docstring_exempt"]):
+        if Path(f).suffix in CODE_EXT - {".py"} and not file_summary(f, {}) and not matches(f, CFG["docstring_exempt"]) \
+                and not under(f, CFG["archive_dir"]):
             errors.append(f"{f}: no header comment (the file's first line must be a comment: {HEADER_FORMS})")
     md_files = [f for f in files if f.endswith(".md")]
     for f in md_files:  # relative links
         text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
-        if matches(f, CFG["link_exempt"]):
+        if matches(f, CFG["link_exempt"]) or under(f, CFG["archive_dir"]):
             continue
         text = re.sub(r"`[^`\n]*`", "", re.sub(r"```.*?```", "", text, flags=re.S))
         for target in re.findall(r"\]\(([^)\s]+)\)", text):
@@ -1214,7 +1244,8 @@ def cmd_check(_args):
                         warn(3, f"{CFG['status']}:{n}: In-flight '{cells[0][:60]}' was expected to end {ends[0]}; run its health check, "
                                 "report successes and failures, then update or remove the row")
             if section.startswith("works") and not separator and (data_row or not s.startswith("|")) and s:
-                ds = row_dates(s, today)
+                cells_text = " ".join(table_cells(s)[1:]) if s.startswith("|") else s   # verification cells only
+                ds = row_dates(re.sub(r"(`+)(?!`).*?(?<!`)\1(?!`)", "", cells_text), today)
                 if ds and (today - max(ds)).days > CFG["verify_max_days"]:
                     old_works.append(n)
             if section.startswith("works") and not separator:
@@ -1964,7 +1995,8 @@ def cmd_rotate(args):
 
 def worklog_budget() -> int:
     """worklog_max_tokens, or by default min(read_max_tokens, read_total_max_tokens // 2)."""
-    return CFG.get("worklog_max_tokens") or min(CFG["read_max_tokens"], CFG["read_total_max_tokens"] // 2)
+    v = CFG.get("worklog_max_tokens")
+    return v if v is not None else min(CFG["read_max_tokens"], CFG["read_total_max_tokens"] // 2)
 
 
 def rotation_allowed() -> tuple[bool, str]:
@@ -2009,11 +2041,12 @@ def cmd_worklog(args):
     print(f"added '## {date}{sep}{title.strip()}' to {CFG['worklog']}")
     ok, why = (False, "--no-rotate") if no_rotate else rotation_allowed()
     cmd = self_cmd()
+    hints = []   # off the default branch: one line naming every rotation that was held back
     if old_worklog_entries():
         if ok:
             cmd_rotate([])
         else:
-            print(f"not rotated ({why}): {CFG['worklog']} has entries from earlier months; on the default branch run `python {cmd} rotate`")
+            hints.append(("has entries from earlier months", f"`python {cmd} rotate`"))
     budget = worklog_budget()
     head, entries = split_worklog(p.read_text(encoding="utf-8"))
     if tokens(head + "".join(e for _, e in entries)) > budget:
@@ -2028,8 +2061,11 @@ def cmd_worklog(args):
                 print(f"{CFG['worklog']} is over worklog_max_tokens = {budget}: keeping the newest {n} entr{'y' if n == 1 else 'ies'}")
                 cmd_rotate(["--keep", str(n)])
             else:
-                print(f"not rotated ({why}): {CFG['worklog']} is over worklog_max_tokens = {budget}; "
-                      f"on the default branch run `python {cmd} rotate --keep {n}`")
+                hints = [(w, c) for w, c in hints if "earlier months" not in w]   # --keep N moves those too
+                hints.append((f"is over worklog_max_tokens = {budget}", f"`python {cmd} rotate --keep {n}`"))
+    if hints:
+        print(f"not rotated ({why}): {CFG['worklog']} {' and '.join(w for w, _ in hints)}; "
+              f"on the default branch run {' then '.join(c for _, c in hints)}")
     if status:
         s = ROOT / CFG["status"]
         text = s.read_text(encoding="utf-8") if s.exists() else ""
@@ -2315,6 +2351,9 @@ def cmd_ids(args):
     if not fams:
         print("no ids defined (headings `## A1:` / `## A1 - T`, bullets `- A1.`, or the first column of an `id` table)")
 
+COMPANION_EXT = {".pdf", ".png", ".svg", ".jpg", ".jpeg", ".webp", ".html", ".docx", ".pptx"}   # rendered artifacts of a doc
+
+
 def archive_plan(files: list[str], dirs: list[str], legacy: list[str]) -> tuple[list[tuple[str, list[tuple[str, str]]]], dict[str, str]]:
     """([(why, [(src, dst), ...]), ...], {folder: new folder}): one group per retired doc (with its same-stem companions), per --legacy file and
     per --dir folder. Destinations keep the layout under docs/ inside archive_dir; on a collision the name (of the doc
@@ -2332,17 +2371,25 @@ def archive_plan(files: list[str], dirs: list[str], legacy: list[str]) -> tuple[
                 taken.update(dsts)
                 return dsts
         sys.exit("archive: no free destination name")
-    for d in dirs:
-        d = d.strip("/")
-        members = [f for f in files if under(f, d)]
-        if not members or under(d, adir):
-            sys.exit(f"archive --dir: {d!r} holds no files, or is already in {adir}")
+    norm = lambda s: re.sub(r"^(\./)+", "", s.replace("\\", "/")).strip("/")
+    kept_dirs = []
+    for d in sorted({norm(d) for d in dirs}, key=lambda d: d.count("/")):   # outer folders first
+        if not d or under(d, adir) or under(adir, d):
+            sys.exit(f"archive --dir: {d or '.'!r} is {adir}, inside it or one of its parents; name a folder beside it")
+        if any(under(d, k) for k in kept_dirs):
+            print(f"(--dir {d} is inside --dir {next(k for k in kept_dirs if under(d, k))}: moved with it)")
+            continue
+        kept_dirs.append(d)
+    for d in kept_dirs:
+        members = [f for f in files if under(f, d) and not under(f, adir) and f not in used]
+        if not members:
+            sys.exit(f"archive --dir: {d!r} holds no files")
         target = f"{adir}/{rel(d)}"
         base = folders[d] = place(lambda sfx: [target + sfx])[0]
         plan.append((f"folder {d}/", [(f, base + f[len(d):]) for f in members]))
         used.update(members)
     picked = {f: f"{st[0]} {st[1]}".strip() for f in retired_docs(files) if (st := doc_status(f))}
-    for g in legacy:
+    for g in (norm(g) for g in legacy):
         for f in files:
             if matches(f, [g]) and not under(f, adir) and not matches(f, CFG["archive_keep"]) and f not in picked:
                 st = doc_status(f) if f.endswith(".md") else None
@@ -2355,8 +2402,9 @@ def archive_plan(files: list[str], dirs: list[str], legacy: list[str]) -> tuple[
         if f in used:
             continue
         stem, parent = Path(f).stem, Path(f).parent.as_posix()
-        group = [f] + sorted(c for c in by_dir[parent] if c != f and Path(c).stem == stem and c not in used
-                             and not (c.endswith(".md") and c in picked))
+        group = [f] + (sorted(c for c in by_dir[parent] if c != f and Path(c).stem == stem and c not in used
+                              and Path(c).suffix.lower() in COMPANION_EXT and not matches(c, CFG["archive_keep"]))
+                       if f.endswith(".md") else [])   # only a doc brings its rendered copies (PDF, figures)
         dst_dir = Path(f"{adir}/{rel(f)}").parent.as_posix()
         dsts = place(lambda sfx: [f"{dst_dir}/{stem}{sfx}{Path(c).suffix}" for c in group])
         plan.append((why, list(zip(group, dsts))))
@@ -2374,9 +2422,24 @@ def moved_to(path: str, moved: dict[str, str]) -> str | None:
     return None
 
 
+def mask_code(text: str):
+    """(masked text, restore): generated blocks, fenced code blocks and inline code spans swapped for placeholders, so a
+    rewrite leaves examples and generated content alone; restore(masked) puts them back."""
+    keep = []
+
+    def hold(m):
+        keep.append(m.group(0))
+        return f"\0{len(keep) - 1}\0"
+    s = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END), hold, text, flags=re.S)
+    s = re.sub(r"^[ ]{0,3}(`{3,}|~{3,})[^\n]*\n.*?^[ ]{0,3}\1[ \t]*$", hold, s, flags=re.S | re.M)
+    s = re.sub(r"(`+)(?!`).*?(?<!`)\1(?!`)", hold, s)
+    return s, lambda masked: re.sub(r"\0(\d+)\0", lambda m: keep[int(m.group(1))], masked)
+
+
 def rewrite_links(text: str, old_dir: str, new_dir: str, moved: dict[str, str]) -> tuple[str, int]:
     """Relative Markdown links of a file that sat in old_dir and now sits in new_dir, pointed at the moved files'
-    new places; links to files that did not move are re-relativised only when the file itself moved."""
+    new places; links to files that did not move are re-relativised only when the file itself moved. Links inside
+    code (fences, inline spans) and generated blocks are left as written."""
     count = 0
 
     def fix(m):
@@ -2396,7 +2459,8 @@ def rewrite_links(text: str, old_dir: str, new_dir: str, moved: dict[str, str]) 
             return m.group(0)
         count += new is not None
         return f"{m.group(1)}({new_rel}{sep}{frag})"
-    return re.sub(r"(\])\(([^)\s]+)\)", fix, text), count
+    masked, restore = mask_code(text)
+    return restore(re.sub(r"(\])\(([^)\s]+)\)", fix, masked)), count
 
 
 PATH_TOKEN = re.compile(r"(?<![\w./~-])([\w./-]*[\w-]/[\w./-]*)")   # path-like tokens holding a "/" (no URLs: "://" breaks them)
@@ -2476,8 +2540,9 @@ def archive_mentions(files: list[str], moved: dict[str, str], texts: dict[str, s
     `texts` gives the content of files rewritten in memory (the dry run)."""
     adir = CFG["archive_dir"].rstrip("/")
     names, count = {}, defaultdict(int)
-    for f in files:
-        count[Path(f).name] += 1
+    back = {dst: src for src, dst in moved.items()}
+    for f in {back.get(f, f) for f in files} | {s for s in moved if Path(s).suffix}:   # each file once, under its old
+        count[Path(f).name] += 1                                                     # path: dry run == --apply
     for src, dst in moved.items():
         names[src] = (src, dst)
         if Path(src).suffix and count[Path(src).name] <= 1:   # a file name alone counts only when no other file has it
@@ -2545,8 +2610,11 @@ def cmd_archive(args):
     folder = lambda f: "" if Path(f).parent.as_posix() == "." else Path(f).parent.as_posix()
     new_text, md_count, code_hits = {}, defaultdict(int), []   # rewritten content of the files that stay, before any move
     for f in files:
-        if f.endswith(".md") and not moved_to(f, moved):
-            text, c = rewrite_links((ROOT / f).read_text(encoding="utf-8", errors="replace"), folder(f), folder(f), moved)
+        if f.endswith(".md") and not moved_to(f, moved) and not under(f, CFG["archive_dir"]):   # the archive stays as written
+            try:
+                text, c = rewrite_links((ROOT / f).read_text(encoding="utf-8"), folder(f), folder(f), moved)
+            except (OSError, UnicodeDecodeError):
+                continue
             if c:
                 new_text[f], md_count[f] = text, c
     for f in path_rewrite_candidates(files, moved) if paths else []:
@@ -2583,8 +2651,13 @@ def cmd_archive(args):
     for src, dst in pairs_all:   # the moved docs' own relative links follow them
         if dst.endswith(".md"):
             sd, dd = Path(src).parent.as_posix(), Path(dst).parent.as_posix()
-            new, _ = rewrite_links((ROOT / dst).read_text(encoding="utf-8", errors="replace"), "" if sd == "." else sd, dd, moved)
-            (ROOT / dst).write_text(new, encoding="utf-8")
+            try:
+                old = (ROOT / dst).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue   # not UTF-8: left byte for byte as it was
+            new, _ = rewrite_links(old, "" if sd == "." else sd, dd, moved)
+            if new != old:
+                (ROOT / dst).write_text(new, encoding="utf-8")
     today = datetime.date.today().isoformat()
     files = tracked_files()
     if arch := build_archive_readme(files, {dst: (f"`{src}`", today) for src, dst in pairs_all}):
