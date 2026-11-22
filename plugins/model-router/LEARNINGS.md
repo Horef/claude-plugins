@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O6 2026-11-22 [failure] session.compact / prompt.compose hooks: Claude Code 2.1.330 on a Team account: sec-default sends session.compact and prompt.compose past every user-tier mod (next.to(e, 'append'), no condition), so model-router's session.compact hook (marks rules not in chat, plan due) and prompt.compose hook never run there; notices 'model-router: its prompt.compose hook was skipped...' in 19 chats since 2026-11-11. After a compaction the rules may not be re-delivered; needs a fix that does not rely on those events (e.g. notice the compaction from session.measure's context drop, as session-status-line 0.13.0 does) (claude-code, found while fixing session-status-line 2026-11-22)
 
 ## Resolved
 - O5 2026-11-19 [misled] history: a run cut short by quota or a lost connection can only be marked weak, so it pushes the advice up (design-review on deep: 2 of 4 weak from quota, owner removed them by hand 2026-11-19); wants a 'cut short' verdict the advice skips (claude-code, diagnosing a relative's empty helper stats) → 0.24.0
