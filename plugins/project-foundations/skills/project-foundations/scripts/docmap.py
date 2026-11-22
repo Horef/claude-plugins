@@ -1171,7 +1171,8 @@ def cmd_check(_args):
         text = (ROOT / f).read_text(encoding="utf-8", errors="replace")
         if matches(f, CFG["link_exempt"]) or under(f, CFG["archive_dir"]):
             continue
-        text = re.sub(r"`[^`\n]*`", "", re.sub(r"```.*?```", "", text, flags=re.S))
+        text = re.sub(r"^[ ]{0,3}(`{3,}|~{3,})[^\n]*\n.*?^[ ]{0,3}\1[ \t]*$", "", text, flags=re.S | re.M)  # fences
+        text = re.sub(r"(`+)(?!`).*?(?<!`)\1(?!`)", "", text)  # inline code spans of any length (as mask_code)
         for target in re.findall(r"\]\(([^)\s]+)\)", text):
             if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:|^#|^<", target):
                 continue
