@@ -6,6 +6,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 
 ## Open
 - O4 2026-10-30 [wish] §5: an adapter that turns `evals/cases.md` into `claude plugin eval` cases would give Claude Code users the with/without-plugin comparison for free; not built because the layout was read from docs, not tried (claude-code-web, building 0.1.0)
+- O30 2026-11-22 [wish] SKILL.md is over budget (26.1 KB, size-exception) after 2.7.0: move section 8's adoption steps verbatim to a reference (a Restructure: its own pass with the blind 'Adopts the genome, not the expressions' case), as the size-exception note and Neon's GUARD review (evals/reviews/2026-11-22-guard-neon.md) propose (claude-code, owner request 22 Nov, deferred)
 
 ## Resolved
 - O29 2026-11-17 [missing] loop.py usage, judge; §4 step 6: usage blind spots: helpers on other CLIs (Codex, Copilot, Kiro, agy), transcripts Claude Code deletes after 30 days, shell variables set in an earlier command, and genome maintenance counted as use; judged evals are non-deterministic but judge took one run. Owner request 2026-11-17 (claude-code, owner request) → 2.6.0
