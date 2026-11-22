@@ -826,6 +826,21 @@ def main() -> int:
             sh(root, "git", "add", "-A")
             subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, capture_output=True, env={**os.environ, **(env or {})})
 
+    with tempfile.TemporaryDirectory() as tmp:  # O37: bare ids in append-only logs are history, not warnings
+        root = Path(tmp)
+        ok = "Status: current (verified 2999-01-01)\n"
+        fixture(root, {
+            "docs/writeups/x/review.md": ok + "- A1. first\n- A2. second\n",
+            "docs/writeups/y/review.md": ok + "## A1: other\n\n## A2: more\n",
+            "docs/RESULTS.md": "# Results\n\n## 1. A run (2026-11-01)\nAnswers A1 and A2 of a review.\n",
+            "docs/summary.md": ok + "A1 and A2 need an answer.\n",
+        })
+        docmap(root, "update")
+        p = docmap(root, "check")
+        hits = [ln for ln in p.stdout.splitlines() if " cited bare in " in ln]
+        expect(len(hits) == 1 and "cited bare in 1 file (docs/summary.md)" in hits[0],
+               "bare-id citations in the append-only logs (RESULTS) are not warned about; live docs still are", p)
+
     with tempfile.TemporaryDirectory() as tmp:  # O36: archive never rewrites data and config files (content hashes)
         root = Path(tmp)
         fixture(root, {
