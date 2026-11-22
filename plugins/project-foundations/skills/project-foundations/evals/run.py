@@ -289,6 +289,9 @@ def main() -> int:
         p = docmap(root, "check")
         expect(p.returncode == 1 and "broken link -> missing.md" in p.stdout and "x-devonthink" not in p.stdout,
                "check still fails on a real missing relative link", p)
+        (root / "docs/NOTES.md").write_text("Status: current (verified 2999-01-01)\n# Notes\nExample: ```` ```md\\nSee [old](docs/OLD.md)\\n``` ```` and `` `[x](gone2.md)` ``\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("broken link" not in p.stdout, "check ignores links inside multi-backtick code spans (5.17 review files)", p)
 
     with tempfile.TemporaryDirectory() as tmp:  # worktrees: check warns about a linked worktree whose branch is merged (owner, 2026-11-09)
         root = Path(tmp) / "proj"
