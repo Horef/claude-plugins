@@ -2578,7 +2578,7 @@ def path_rewrite_candidates(files: list[str], moved: dict[str, str]) -> list[str
 
 def append_only_log(f: str) -> bool:
     """The append-only logs: the configured indexes (DECISIONS, RESULTS), the run index, the WORKLOG and its months."""
-    runs = CFG["runs"].get("out") if isinstance(CFG.get("runs"), dict) else None
+    runs = CFG["runs"].get("out", "docs/RUNS.md") if isinstance(CFG.get("runs"), dict) else None   # cmd_runs' default
     return f in {ix["file"] for ix in CFG["indexes"]} or f in (CFG["worklog"], runs) or under(f, CFG["worklog_dir"])
 
 
