@@ -9,6 +9,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 - O26 2026-11-15 [wish] docmap: check typed ids more widely: every cited D-/O-/rule-id and run/result id resolves to a definition, and result entries reference an existing run. Owner 2026-11-15 (from atomRDF's schema-typed records) (claude-code, owner request)
 
 ## Resolved
+- O37 2026-11-22 [friction] docmap check: bare-id warnings in the append-only logs (RESULTS, DECISIONS) cannot be fixed, since their entries are never edited; 2 of the 4 warnings left in simple_complex_v1 after the 5.17 upgrade (claude-code, simple_complex_v1) → 5.17.2
 - O36 2026-11-22 [failure] docmap archive --apply (5.17.0): rewrote doc paths inside 30 JSON configs of simple_complex_v1, changing content hashes (run config hashes, the twin cell's morphology hash); a project test caught it. Data and config files must be listed, never rewritten (claude-code, simple_complex_v1) → 5.17.1
 - O35 2026-11-22 [failure] 5.16.0 changed docmap.py (depends) but DOCMAP_VERSION stayed 5.15.0, so projects' upgrade check cannot see it (claude-code, simple_complex_v1) → 5.17.0
 - O34 2026-11-22 [missing] STATUS has no In-flight table with a health-check command; a cluster search was reported half done for a day when all 48 results were failures (agent counted files) (claude-code, simple_complex_v1) → 5.17.0

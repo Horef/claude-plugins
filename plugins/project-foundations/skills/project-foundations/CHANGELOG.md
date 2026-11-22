@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.17.2 (2026-11-22)
+- bare-id warnings skip the append-only logs (RESULTS, DECISIONS, run index, WORKLOG): their entries are history and cannot be fixed (O37)
+
 ## 5.17.1 (2026-11-22)
 - archive lists path mentions in data and config files (archive_no_rewrite: JSON, YAML, TOML, CSV, notebooks...) instead of rewriting them, since they may carry content hashes (O36)
 
