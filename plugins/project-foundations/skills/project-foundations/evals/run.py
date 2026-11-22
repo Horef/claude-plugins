@@ -406,16 +406,17 @@ def main() -> int:
         sh(root, "git", "init", "-q")
         docmap(root, "update")
         p = docmap(root, "check")
-        hits = [ln for ln in p.stdout.splitlines() if " bare; defined in " in ln]
-        notes = [ln for ln in hits if ln.startswith("warning: docs/notes.md ")]
-        expect(len(notes) == 1 and "cites L1-L3 bare; defined in 2 places (docs/literature/gosi/, docs/literature/nmda/)" in notes[0] and "<TAG>-L1" in notes[0],
-               "check groups ids defined in two ledger tables and cited bare into one warning per citing file and family", p)
-        expect(not any(f"warning: {f} " in ln for ln in hits for f in ("docs/named.md", "docs/literature/gosi/notes.md")),
-               "no warning when the line names a defining folder or the citer lives inside one definer's folder", p)
-        expect(not any("docs/syntax.md" in ln for ln in hits), "NB-L1, L2/3, L1.2, `L3` and a URL do not match as L1, L2 or L3", p)
-        expect(not any("H5f" in ln or "docs/h3.md" in ln for ln in hits), "a lone ### H5f: heading defines nothing", p)
-        expect(not any("K1" in ln for ln in hits), "a superseded doc defines nothing", p)
-        expect(any(ln.startswith("warning: docs/summary.md cites A1, A2 bare; defined in 2 places (docs/writeups/x/, docs/writeups/y/)") for ln in hits)
+        hits = [ln for ln in p.stdout.splitlines() if " cited bare in " in ln]
+        notes = [ln for ln in hits if ln.startswith("warning: L ids ")]
+        expect(len(notes) == 1 and "cited bare in 1 file (docs/notes.md)" in notes[0] and "docmap.py ids L" in notes[0],
+               "check groups bare citations of ids defined in two ledger tables into one warning per family, naming the citing file", p)
+        pl = docmap(root, "ids", "L")
+        expect("docs/notes.md:2" in pl.stdout and not any(f in pl.stdout for f in ("docs/named.md", "docs/literature/gosi/notes.md")),
+               "no warning when the line names a defining folder or the citer lives inside one definer's folder (ids L lists file:line)", pl)
+        expect("docs/syntax.md" not in pl.stdout, "NB-L1, L2/3, L1.2, `L3` and a URL do not match as L1, L2 or L3", pl)
+        expect(not any("H5f" in ln or "H ids" in ln for ln in hits), "a lone ### H5f: heading defines nothing", p)
+        expect(not any("K ids" in ln for ln in hits), "a superseded doc defines nothing", p)
+        expect(any(ln.startswith("warning: A ids cited bare in 1 file (docs/summary.md)") for ln in hits)
                and len(hits) == 2, "bullet (- A1.) and heading definitions count, and the archive is not read", p)
         p = docmap(root, "ids")
         lines = p.stdout.splitlines()
@@ -424,7 +425,7 @@ def main() -> int:
                and p.stdout.index("\nA ") < p.stdout.index("\nD "), "ids lists families with their places and bare citers, ambiguous ones first", p)
         (root / "docmap.toml").write_text('id_cite_exempt = ["L\\\\d", "A1"]\nid_scan_exempt = ["docs/archive/*", "docs/writeups/y/*"]\n', encoding="utf-8")
         p = docmap(root, "check")
-        expect("bare; defined in" not in p.stdout, "id_cite_exempt (ids or regexes) and id_scan_exempt silence the id warnings", p)
+        expect("cited bare in" not in p.stdout, "id_cite_exempt (ids or regexes) and id_scan_exempt silence the id warnings", p)
 
     with tempfile.TemporaryDirectory() as tmp:  # O17: only a status that says "superseded by" is a full supersession; skip only the id the line marks
         root = Path(tmp)
