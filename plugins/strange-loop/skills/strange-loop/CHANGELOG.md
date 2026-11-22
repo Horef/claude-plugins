@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 2.7.0 (2026-11-22)
+- GUARD lessons (owner request 2026-11-22; Zhang et al. 2026; Neon's verdicts in evals/reviews/2026-11-22-guard-neon.md): budgets are never met by paraphrasing; a superseded rule is edited or removed in the same commit; a rule that misled in one context is narrowed, not deleted; dropped candidate changes are noted as [+date tried: ...] on their open observation; removal needs a task or case showing nobody needs the rule, a missing win is no evidence
+
 ## 2.6.0 (2026-11-17)
 - judged cases run twice (judge takes repeated --old/--new, one packet per pair; the new version wins a case only if it wins both); usage reads Codex, Copilot, Kiro and agy logs, keeps a ledger that outlives deleted transcripts (refreshed at session start), follows shell variables across commands and leaves out work in the genome itself (--all counts it); SKILL.md over budget under a size-exception (owner request) (O29)
 
