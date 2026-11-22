@@ -865,7 +865,7 @@ def main() -> int:
         expect("docs/OLD_PLAN.md -> docs/archive/OLD_PLAN.md" in p.stdout and "+ docs/OLD_PLAN.pdf -> docs/archive/OLD_PLAN.pdf" in p.stdout
                and f"docs/plans/design.md -> docs/archive/plans/design-{stamp}.md" in p.stdout and (root / "docs/OLD_PLAN.md").exists(),
                "archive (dry run) lists docs, companions and a collision suffix, and moves nothing", p)
-        expect("rewritten in code and scripts: would be 3 in 2 file(s)" in p.stdout and "left to decide by hand (bare names): 1 in 1 file(s)" in p.stdout,
+        expect("rewritten in code and scripts: would be 3 in 2 file(s)" in p.stdout and "left to decide by hand (not rewritten: bare names, code examples, ref:path): 1 in 1 file(s)" in p.stdout,
                "archive (dry run) reports the path rewrites in code and the bare names left", p)
         p = docmap(root, "archive", "--apply")
         guide = (root / "docs/GUIDE.md").read_text(encoding="utf-8")
