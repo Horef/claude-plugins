@@ -826,6 +826,44 @@ def main() -> int:
             sh(root, "git", "add", "-A")
             subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, capture_output=True, env={**os.environ, **(env or {})})
 
+    with tempfile.TemporaryDirectory() as tmp:  # O36: archive never rewrites data and config files (content hashes)
+        root = Path(tmp)
+        fixture(root, {
+            "docs/OLD.md": "# Old\nStatus: historical\n",
+            "configs/run.json": '{"notes": "see docs/OLD.md"}\n',
+            "configs/run.yaml": "notes: docs/OLD.md\n",
+            "tools/README.md": "# tools/\n\nScripts.\n",
+            "tools/show.sh": "# Show the old doc.\ncat docs/OLD.md\n",
+        })
+        docmap(root, "update")
+        p = docmap(root, "archive")
+        expect("not rewritten in data and config files (they may carry content hashes): 2 in 2 file(s)" in p.stdout
+               and "rewritten in code and scripts: would be 1 in 1 file(s)" in p.stdout,
+               "archive (dry run) counts path mentions in data and config files apart, as not rewritten", p)
+        p = docmap(root, "archive", "--apply")
+        expect((root / "configs/run.json").read_text(encoding="utf-8") == '{"notes": "see docs/OLD.md"}\n'
+               and (root / "configs/run.yaml").read_text(encoding="utf-8") == "notes: docs/OLD.md\n"
+               and "configs/run.json:1: docs/OLD.md -> docs/archive/OLD.md" in p.stdout
+               and "cat docs/archive/OLD.md" in (root / "tools/show.sh").read_text(encoding="utf-8"),
+               "archive --apply leaves JSON and YAML byte for byte and lists their mentions; scripts are still rewritten", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O36 (review): every mention in a data or config file goes to the data line
+        root = Path(tmp)
+        fixture(root, {
+            "docs/OLD.md": "# Old\nStatus: historical\n",
+            "configs/run.json": '{\n  "notes": "see docs/OLD.md",\n  "doc": "OLD.md"\n}\n',
+            "tools/README.md": "# tools/\n\nScripts.\n",
+            "tools/show.sh": "# Show the old doc.\ncat docs/OLD.md\n",
+        })
+        docmap(root, "update")
+        p = docmap(root, "archive")
+        expect("not rewritten in data and config files (they may carry content hashes): 2 in 1 file(s)" in p.stdout
+               and "left to decide by hand (not rewritten: bare names, code examples, ref:path): 0 in 0 file(s)" in p.stdout,
+               "archive: a bare name in a JSON file goes to the data and config line, not the leftover list", p)
+        p = docmap(root, "archive", "--no-rewrite-paths")
+        expect("not rewritten in data and config files (they may carry content hashes): 2 in 1 file(s)" in p.stdout,
+               "archive --no-rewrite-paths still reports data and config mentions apart", p)
+
     with tempfile.TemporaryDirectory() as tmp:  # O31, O33: archive moves retired docs; docs lists the live ones
         root = Path(tmp)
         live = "Status: current (verified 2999-01-01)\n"
