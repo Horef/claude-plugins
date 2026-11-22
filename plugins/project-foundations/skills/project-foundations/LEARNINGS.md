@@ -7,6 +7,7 @@ Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen 
 ## Open
 - O25 2026-11-15 [wish] RESULTS template / docmap: provenance of results. Each result entry names the run that produced it (code commit, config or its hash, command, date, output path), and docmap check warns when an entry lacks them. Idea from atomRDF (ontology-typed simulation records), owner 2026-11-15 (claude-code, owner request)
 - O26 2026-11-15 [wish] docmap: check typed ids more widely: every cited D-/O-/rule-id and run/result id resolves to a definition, and result entries reference an existing run. Owner 2026-11-15 (from atomRDF's schema-typed records) (claude-code, owner request)
+- O38 2026-11-22 [friction] Upgrade 6b: a project with a Node port of docmap (scripts/docmap.mjs) has to re-port every release by hand (5.9->5.17.2 took ~1000 lines; genome moved 5.17.1->5.17.2 during the port). A per-version behaviour list or the evals runnable against another implementation would make ports checkable. (claude-code, rights_authority Wonderful repos)
 
 ## Resolved
 - O37 2026-11-22 [friction] docmap check: bare-id warnings in the append-only logs (RESULTS, DECISIONS) cannot be fixed, since their entries are never edited; 2 of the 4 warnings left in simple_complex_v1 after the 5.17 upgrade (claude-code, simple_complex_v1) → 5.17.2
