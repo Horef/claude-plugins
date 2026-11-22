@@ -79,3 +79,13 @@ Checked `git diff c0d16c9..HEAD` (`4182732`). `loop.py eval project-foundations`
 - **P4 (Low) — `archive_mentions` `text_ext` narrower than `path_rewrite_candidates` (`:2553` vs `:2505-2527`):** `scripts/job.sbatch` gets exact paths rewritten, but bare `OLD.md` (and paths under `--no-rewrite-paths`) in `.sbatch`, `.js`, `.ts`, `.R`, `.jl`, `Makefile` are never listed.
   - **Fix:** Share the UTF-8/size/non-NUL check instead of hardcoding `text_ext`.
 - **Verified clean:** Generated blocks (`BEGIN..END`) are untouched; `docs/OLD.md.bak`, `olddocs/OLD.md`, and `https://example.com/docs/OLD.md` are untouched; dry run and `--apply` counts match.
+
+## Final check
+
+Checked `git diff 4182732..962a2b9` (`1467dee`, `b04576d`, `5b9e059`, `5c49379`). `loop.py eval project-foundations` passes (0 failures, incl. all 7 `P1`–`P4` checks); verified on a combined fixture covering relative paths, fences, inline links, `HEAD:path`, and `.sbatch`.
+
+- **P1 (`PATH_TOKEN` + `resolve_mention`):** Fixed — `../X.md`, `./X.md`, and `./docs/X.md` from subdirs rewrite keeping their prefix style, and are listed under `--no-rewrite-paths`.
+- **P2 (Markdown fences & inline-code links):** Fixed — fenced blocks and inline-code link syntax stay untouched and are listed (deduplicated) to decide by hand; plain inline-code paths still rewrite.
+- **P3 (`:` boundary):** Fixed — `HEAD:docs/X.md` and `host:docs/X.md` are left alone and listed.
+- **P4 (Shared `text_file()` test):** Fixed — `path_rewrite_candidates` and `archive_mentions` use the same UTF-8/size/non-NUL check (no extension list); `.sbatch` bare names are now listed.
+- **Leftover label:** Clean — `left to decide by hand (not rewritten: bare names, code examples, ref:path)` matches what is listed and agrees between dry run and `--apply`. No new problems found.
