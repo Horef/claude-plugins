@@ -37,10 +37,11 @@ Installed by the project-foundations skill (source: its scripts/docmap.py; see D
                                        longer than worktree_stale_days
   python tools/docmap.py docs [--all]  the audit queue: live (current, proposal) docs with their Status line, oldest
                                        verification first, then counts of retired docs and kept records; --all: every doc
-  python tools/docmap.py archive [--apply] [--dir PATH] [--legacy GLOB]
+  python tools/docmap.py archive [--apply] [--no-rewrite-paths] [--dir PATH] [--legacy GLOB]
                                        retired docs (historical, superseded) in live folders and where they would go in
-                                       archive_dir (dry run); --apply moves them with git mv, rewrites relative links
-                                       and lists the plain mentions left to fix; --dir moves a whole folder;
+                                       archive_dir (dry run); --apply moves them with git mv, rewrites relative links and
+                                       exact path mentions in live text files (code too; --no-rewrite-paths: links only)
+                                       and lists the bare names left to decide; --dir moves a whole folder;
                                        --legacy also takes files matching GLOB that have no Status line
   python tools/docmap.py ids [FAMILY]  every id family (A1, L2, NB-H1) with where it is defined and the files that cite
                                        an id defined in several folders without saying which; those first.
@@ -2398,16 +2399,81 @@ def rewrite_links(text: str, old_dir: str, new_dir: str, moved: dict[str, str]) 
     return re.sub(r"(\])\(([^)\s]+)\)", fix, text), count
 
 
+PATH_TOKEN = re.compile(r"(?<![\w./~-])([\w./-]*[\w-]/[\w./-]*)")   # path-like tokens holding a "/" (no URLs: "://" breaks them)
+REWRITE_MAX_BYTES = 1_000_000                                       # bigger files are not rewritten (data, logs)
+
+
+def rewrite_paths(f: str, text: str, moved: dict[str, str]) -> tuple[str, list[tuple[int, str, str]]]:
+    """Exact path mentions of moved files in a file that stays: the repo-relative path (`docs/X.md`, or anything under a
+    moved folder `docs/briefs/`) or a relative path that resolves from the file's folder to a moved file (`../X.md`).
+    Tokens end at path boundaries, so `docs/X.md.bak` and `olddocs/X.md` do not match; bare file names are left alone.
+    Returns (new text, [(line, old, new)])."""
+    d = Path(f).parent.as_posix()
+    d = "" if d == "." else d
+    hits = []
+
+    def fix_line(n, ln):
+        def fix(m):
+            tok = m.group(1)
+            core = tok.rstrip(".")                      # "see docs/X.md." ends a sentence
+            tail = tok[len(core):]
+            if not core or core.startswith("/"):
+                return tok
+            slash = "/" if core.endswith("/") else ""
+            new = moved_to(core.rstrip("/"), moved)
+            if new is None:
+                full = os.path.normpath(os.path.join(d, core)).replace(os.sep, "/")
+                if full.startswith("..") or (new := moved_to(full, moved)) is None:
+                    return tok
+                new = os.path.relpath(new, d or ".").replace(os.sep, "/")
+            new += slash if not new.endswith("/") else ""
+            hits.append((n, core, new))
+            return new + tail
+        return PATH_TOKEN.sub(fix, ln)
+    out, in_block = [], False
+    for n, ln in enumerate(text.split("\n"), 1):   # generated blocks are left to `update`
+        if BEGIN in ln or END in ln:
+            in_block = BEGIN in ln
+        out.append(ln if in_block or BEGIN in ln or END in ln else fix_line(n, ln))
+    return "\n".join(out), hits
+
+
+def path_rewrite_candidates(files: list[str], moved: dict[str, str]) -> list[str]:
+    """Files whose path mentions `archive` rewrites: text files that stay live (not moved, not archived, not retired, not
+    an append-only log, not the generated map), under REWRITE_MAX_BYTES and readable as UTF-8 without NUL bytes."""
+    out = []
+    for f in files:
+        if moved_to(f, moved) or under(f, CFG["archive_dir"]) or append_only_log(f) or f == CFG["map"]:
+            continue
+        try:
+            if (ROOT / f).stat().st_size > REWRITE_MAX_BYTES:
+                continue
+            raw = (ROOT / f).read_bytes()
+        except OSError:
+            continue
+        if b"\0" in raw:
+            continue
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if f.endswith(".md") and (st := doc_status(f)) and st[0] in RETIRED:
+            continue
+        out.append(f)
+    return out
+
+
 def append_only_log(f: str) -> bool:
     """The append-only logs: the configured indexes (DECISIONS, RESULTS), the run index, the WORKLOG and its months."""
     runs = CFG["runs"].get("out") if isinstance(CFG.get("runs"), dict) else None
     return f in {ix["file"] for ix in CFG["indexes"]} or f in (CFG["worklog"], runs) or under(f, CFG["worklog_dir"])
 
 
-def archive_mentions(files: list[str], moved: dict[str, str]) -> tuple[list[tuple[str, int, str, str]], int]:
+def archive_mentions(files: list[str], moved: dict[str, str], texts: dict[str, str] | None = None) -> tuple[list[tuple[str, int, str, str]], int]:
     """([(file, line, old path, new path)], n): plain or backtick mentions of moved paths (repo path or file name) left
     in live files (not moved, not archived, not retired), and the number of mentions in the append-only logs, which
-    stay as written (history). Markdown links into the moved files or the archive are skipped (they are rewritten)."""
+    stay as written (history). Markdown links into the moved files or the archive are skipped (they are rewritten).
+    `texts` gives the content of files rewritten in memory (the dry run)."""
     adir = CFG["archive_dir"].rstrip("/")
     names, count = {}, defaultdict(int)
     for f in files:
@@ -2418,7 +2484,7 @@ def archive_mentions(files: list[str], moved: dict[str, str]) -> tuple[list[tupl
             names.setdefault(Path(src).name, (src, dst))
     if not names:
         return [], 0
-    pat = re.compile(r"(?<![\w./-])(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")(?![\w-])")
+    pat = re.compile(r"(?<![\w./-])(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")(?![\w/-]|\.\w)")
     text_ext = {".md", ".py", ".toml", ".txt", ".yml", ".yaml", ".json", ".cfg", ".ini", ".sh", ".tex", ".rst"}
     out, history = [], 0
     for f in files:
@@ -2427,9 +2493,10 @@ def archive_mentions(files: list[str], moved: dict[str, str]) -> tuple[list[tupl
         if f.endswith(".md") and (st := doc_status(f)) and st[0] in RETIRED:
             continue
         try:
-            text = (ROOT / f).read_text(encoding="utf-8")
+            text = texts[f] if texts and f in texts else (ROOT / f).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END), lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
         d = Path(f).parent.as_posix()
 
         def drop_link(m):
@@ -2452,14 +2519,16 @@ def archive_mentions(files: list[str], moved: dict[str, str]) -> tuple[list[tupl
 def cmd_archive(args):
     """Retire docs: list (default) or move (--apply) historical and superseded docs out of the live folders into
     archive_dir, with their same-stem companions; --dir PATH retires a whole folder, --legacy GLOB also takes files
-    matching GLOB that have no Status line. --apply uses git mv, rewrites relative links, updates the archive README
-    and lists the plain mentions left to fix by hand."""
+    matching GLOB that have no Status line. --apply uses git mv, rewrites relative links and every exact path mention
+    of a moved file in the live text files (--no-rewrite-paths: links only), updates the archive README and lists the
+    bare-name mentions left to decide by hand."""
     import datetime
-    apply, dirs, legacy, rest = "--apply" in args, [], [], [a for a in args if a != "--apply"]
+    apply, paths = "--apply" in args, "--no-rewrite-paths" not in args
+    dirs, legacy, rest = [], [], [a for a in args if a not in ("--apply", "--no-rewrite-paths")]
     while rest:
         flag = rest.pop(0)
         if flag not in ("--dir", "--legacy") or not rest:
-            sys.exit("usage: docmap.py archive [--apply] [--dir PATH]... [--legacy GLOB]...")
+            sys.exit("usage: docmap.py archive [--apply] [--no-rewrite-paths] [--dir PATH]... [--legacy GLOB]...")
         (dirs if flag == "--dir" else legacy).append(rest.pop(0))
     cmd, files = self_cmd(), tracked_files()
     plan, folders = archive_plan(files, dirs, legacy)
@@ -2474,15 +2543,31 @@ def cmd_archive(args):
         for src, dst in pairs[1:]:
             print(f"    + {src} -> {dst}")
     folder = lambda f: "" if Path(f).parent.as_posix() == "." else Path(f).parent.as_posix()
-    links = {f: rewrite_links((ROOT / f).read_text(encoding="utf-8", errors="replace"), folder(f), folder(f), moved)
-             for f in files if f.endswith(".md") and not moved_to(f, moved)}
-    n_links = sum(c for _, c in links.values())
+    new_text, md_count, code_hits = {}, defaultdict(int), []   # rewritten content of the files that stay, before any move
+    for f in files:
+        if f.endswith(".md") and not moved_to(f, moved):
+            text, c = rewrite_links((ROOT / f).read_text(encoding="utf-8", errors="replace"), folder(f), folder(f), moved)
+            if c:
+                new_text[f], md_count[f] = text, c
+    for f in path_rewrite_candidates(files, moved) if paths else []:
+        text, hits = rewrite_paths(f, new_text.get(f) or (ROOT / f).read_text(encoding="utf-8"), moved)
+        if hits:
+            new_text[f] = text
+            if f.endswith(".md"):
+                md_count[f] += len(hits)
+            else:
+                code_hits += [(f, n, old, new) for n, old, new in hits]
+    mentions, history = archive_mentions(files, moved, new_text)
+    verb = "" if apply else "would be "
+    counts = [f"rewritten in Markdown (links{' and paths' if paths else ''}): {verb}{sum(md_count.values())} in {len(md_count)} file(s)",
+              f"rewritten in code and scripts: {verb}{len(code_hits)} in {len({h[0] for h in code_hits})} file(s)"
+              + (" (run the tests)" if code_hits else "") + ("" if paths else " (--no-rewrite-paths)"),
+              f"left to decide by hand ({'bare names' if paths else 'paths and bare names'}): {len(mentions)} in {len({m[0] for m in mentions})} file(s)",
+              f"{history} mention(s) in append-only logs left as history (DECISIONS, RESULTS, run index, WORKLOG)"]
     if not apply:
-        mentions, history = archive_mentions(files, moved)
-        print(f"{n_files} file(s) in {len(plan)} group(s) would move; {n_links} relative link(s) in "
-              f"{sum(1 for _, c in links.values() if c)} live doc(s) would be rewritten; {len(mentions)} plain mention(s) in "
-              f"{len({m[0] for m in mentions})} file(s) to fix by hand afterwards ({history} in append-only logs stay as history). "
-              f"Run `python {cmd} archive --apply` (add the same --dir/--legacy options) to move them.")
+        print(f"{n_files} file(s) in {len(plan)} group(s) would move.")
+        print("\n".join(counts))
+        print(f"Run `python {cmd} archive --apply` (with the same options) to move them.")
         return
     tracked = set(git_out("ls-files").splitlines())
     for src, dst in pairs_all:
@@ -2493,9 +2578,8 @@ def cmd_archive(args):
                 sys.exit(f"archive: git mv {src} {dst} failed: {r.stderr.strip()} (files moved so far stay moved; see git status)")
         else:
             os.replace(ROOT / src, ROOT / dst)
-    for f, (text, c) in links.items():
-        if c:
-            (ROOT / f).write_text(text, encoding="utf-8")
+    for f, text in new_text.items():
+        (ROOT / f).write_text(text, encoding="utf-8")
     for src, dst in pairs_all:   # the moved docs' own relative links follow them
         if dst.endswith(".md"):
             sd, dd = Path(src).parent.as_posix(), Path(dst).parent.as_posix()
@@ -2505,15 +2589,17 @@ def cmd_archive(args):
     files = tracked_files()
     if arch := build_archive_readme(files, {dst: (f"`{src}`", today) for src, dst in pairs_all}):
         (ROOT / arch[0]).write_text(arch[1], encoding="utf-8")
-    print(f"moved {n_files} file(s); rewrote {n_links} relative link(s); {arch[0] if arch else 'the archive README'} lists them")
-    mentions, history = archive_mentions(files, moved)
-    if history:
-        print(f"{history} mention(s) in append-only logs left as history (DECISIONS, RESULTS, run index, WORKLOG)")
-    if mentions:
-        print(f"{len(mentions)} plain mention(s) of moved paths left in {len({m[0] for m in mentions})} live file(s); fix them by hand "
-              "(point to the new path, or drop the mention):")
-        for f, n, src, dst in mentions:
-            print(f"  {f}:{n}: {src} -> {dst}")
+    print(f"moved {n_files} file(s); {arch[0] if arch else 'the archive README'} lists them")
+    print(counts[0])
+    print(counts[1] + (":" if code_hits else ""))
+    for f, n, old, new in code_hits:
+        print(f"  {f}:{n}: {old} -> {new}")
+    mentions, _ = archive_mentions(files, moved)
+    print(counts[2].split(":")[0] + f": {len(mentions)} in {len({m[0] for m in mentions})} file(s)"
+          + (" (point to the new path, or drop the mention):" if mentions else ""))
+    for f, n, src, dst in mentions:
+        print(f"  {f}:{n}: {src} -> {dst}")
+    print(counts[3])
     print(f"next: `python {cmd} update`, then `python {cmd} check`; review `git status` and commit")
 
 
