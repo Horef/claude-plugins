@@ -60,3 +60,22 @@ Reviewed `git diff origin/main..HEAD` (`163f01a..c0d16c9`, 13 files) against `sp
 - **ID check line numbers & raw-line slugs:** Exact line numbers across generated blocks, code fences, HTML comments, URLs, and single-backtick spans; raw-line slug test clears backticked-folder false positives.
 - **Worklog rotation guard:** Blocks rotation on linked worktrees (even when checked out on `main`), feature branches, detached HEAD, and `--no-rotate`.
 - **`simple_complex_v1` (read-only):** `docs` drops from 145 to 22 live rows + 2 summary lines (0.11 s); `check` emits 3 grouped id warnings ordered after budgets/STATUS and flags `STATUS.md` lines 12, 15, 16 (1.75 s); `find "twin families"` matches `find twin families` and ranks live logs/plans first (0.11 s); `archive` dry-run plans 13 retired docs + 3 PDF companions (0.72 s).
+
+## Follow-up (fixes)
+
+Checked `git diff c0d16c9..HEAD` (`4182732`). `loop.py eval project-foundations` passes (0 failures; all `N1`–`N11` checks green) and `scratch/check_diff.py` confirms the fixes.
+
+**Original 11 findings:**
+- **Fixed:** #1 (`COMPANION_EXT` + `.md`-only), #2 (`archive_dir` skipped in `analyse`, `code_dirs`, header & link checks), #3 (`--dir`/`--legacy` normalization, ancestor & overlap guards), #5 (verification cells only, code spans stripped, no lowercase `may`, month-first, Feb 29 leap year), #6 (generated blocks skipped; dry run == `--apply`; `simple_complex_v1` `docs/README.md` generated mentions 14 → 0), #7 (batched `git status`, `Status:`-only diff check, 40-doc grace check 0.99 s → 0.54 s, `fetch-depth: 0` note), #8 (empty `archive_dir`), #9 (`table_cells` even-backslash scanner), #10 (double-backtick spans in `id_analysis`), #11 (`worklog_max_tokens = 0`, single `not rotated` line, `other-docs.md`, linked-worktree eval).
+- **Partially fixed / regressed by `rewrite_paths`:** #4 — `rewrite_links` now masks code and skips archived/unchanged files, but `rewrite_paths` runs right after it on live `.md` files without skipping fenced code blocks or inline-code links (see P2 below).
+
+**New problems in exact-path rewriting (`scripts/docmap.py:2466-2565`):**
+- **P1 (High) — `PATH_TOKEN` misses `../X.md`, `./X.md`, and `./docs/X.md` from subdirs (`:2466, :2487-2492`):** `[\w./-]*[\w-]/` requires `[\w-]` right before `/`, so single-slash dot/parent relative paths (`../OLD.md` — the docstring's own example at `:2472` — and `./OLD.md`) never match and are not listed in `archive_mentions` either. Also `./docs/OLD.md` inside `scripts/run.sh` fails `moved_to("./docs/OLD.md")` and joins to `scripts/docs/OLD.md`, staying unrewritten while `docs/OLD.md` on the line above rewrites.
+  - **Fix:** Match leading `./`/`../` in `PATH_TOKEN` (`(?<![\w./~:-])((?:\.\.?/|[\w./-]*[\w-]/)[\w./-]*)`) and try `moved_to(core.removeprefix("./").rstrip("/"), moved)` (preserving any `./` prefix).
+- **P2 (Medium) — `rewrite_paths` rewrites inside Markdown fenced code blocks and inline-code links (`:2497-2502`):** Only `BEGIN..END` is skipped; ```` ```md\nSee [old](docs/OLD.md)\n``` ```` and `` `[old](docs/OLD.md)` `` are rewritten, reintroducing #4 for any code example containing `/`.
+  - **Fix:** When `f.endswith(".md")`, skip fenced blocks (` ``` ` / `~~~`) and inline-code Markdown links (or mask fenced blocks before `fix_line`, keeping inline-backtick paths like `` `docs/OLD.md` `` rewritten).
+- **P3 (Medium) — `:` missing from `PATH_TOKEN` left boundary (`:2466`):** `git show HEAD:docs/OLD.md` (and `host:docs/OLD.md`) is rewritten to `HEAD:docs/archive/OLD.md`, breaking historical git refs.
+  - **Fix:** Add `:` to the lookbehind: `(?<![\w./~:-])`.
+- **P4 (Low) — `archive_mentions` `text_ext` narrower than `path_rewrite_candidates` (`:2553` vs `:2505-2527`):** `scripts/job.sbatch` gets exact paths rewritten, but bare `OLD.md` (and paths under `--no-rewrite-paths`) in `.sbatch`, `.js`, `.ts`, `.R`, `.jl`, `Makefile` are never listed.
+  - **Fix:** Share the UTF-8/size/non-NUL check instead of hardcoding `text_ext`.
+- **Verified clean:** Generated blocks (`BEGIN..END`) are untouched; `docs/OLD.md.bak`, `olddocs/OLD.md`, and `https://example.com/docs/OLD.md` are untouched; dry run and `--apply` counts match.
