@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.29.3 (2026-11-22)
+- rules return after a compaction the router never hears of: the chat row that carried them is checked each turn; status names the model without prompt.compose (sec-default on Team accounts) (O6)
+
 ## 0.29.2 (2026-11-20)
 - Fixes from a Gemini 4 Neon review: a step's details always say what it runs on (a group with nothing run says so); dots count only values that are shown (the experiment's limit, Long/All steps while off); helper advice and proposals use only levels a model is offered at; 'install hc' only when hc is what is missing; checks skipped after a failure say skipped, pending rules are a quiet line, not ✗; an open ▾ list closes with its view; open groups drop their summary; provider names in Order; 'second' in the glossary; cost line in plain words; refused inputs say why.
 

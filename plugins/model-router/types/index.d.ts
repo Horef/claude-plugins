@@ -378,6 +378,8 @@ declare module 'claude-code' {
        * Where the rules reach the model. 'system': the system prompt carries them on
        * every request. Otherwise they ride a typed message: inChat says one is in the
        * conversation now; a summarization clears it, and planDue re-attaches the plan.
+       * rulesRow is the id of the row that carried them: once the chat no longer holds
+       * it (compacted, cleared, rewound), they go out again.
        */
       /** This chat's subagent totals; the main chat's own cost is in `main`. */
       chatTotals: Totals
@@ -385,7 +387,7 @@ declare module 'claude-code' {
       planBase: { mainCost: number; at?: string }
       costView: CostView
       lifetime: Lifetime
-      delivery: { via?: 'system' | 'message'; inChat: boolean; planDue: boolean }
+      delivery: { via?: 'system' | 'message'; inChat: boolean; planDue: boolean; rulesRow?: string }
       /** Every switch of the main chat's effort seen with here-step effort on; remembered across chats. */
       effortLog: EffortSwitch[]
       /** The main chat's last request: the effort it went out with and its context in tokens. */
