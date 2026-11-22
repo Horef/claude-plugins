@@ -2463,63 +2463,99 @@ def rewrite_links(text: str, old_dir: str, new_dir: str, moved: dict[str, str]) 
     return restore(re.sub(r"(\])\(([^)\s]+)\)", fix, masked)), count
 
 
-PATH_TOKEN = re.compile(r"(?<![\w./~-])([\w./-]*[\w-]/[\w./-]*)")   # path-like tokens holding a "/" (no URLs: "://" breaks them)
-REWRITE_MAX_BYTES = 1_000_000                                       # bigger files are not rewritten (data, logs)
+PATH_TOKEN = re.compile(r"(?<![\w./~:-])((?:\.\.?/|[\w./-]*[\w-]/)[\w./-]*)")   # path-like tokens holding a "/"; not after
+                                                                                # ":" (URLs, HEAD:path, host:path)
+REWRITE_MAX_BYTES = 1_000_000                                       # bigger files are neither rewritten nor scanned
+FENCE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
+INLINE_CODE = re.compile(r"(`+)(?!`).*?(?<!`)\1(?!`)")
 
 
-def rewrite_paths(f: str, text: str, moved: dict[str, str]) -> tuple[str, list[tuple[int, str, str]]]:
-    """Exact path mentions of moved files in a file that stays: the repo-relative path (`docs/X.md`, or anything under a
-    moved folder `docs/briefs/`) or a relative path that resolves from the file's folder to a moved file (`../X.md`).
-    Tokens end at path boundaries, so `docs/X.md.bak` and `olddocs/X.md` do not match; bare file names are left alone.
-    Returns (new text, [(line, old, new)])."""
+def text_file(f: str) -> str | None:
+    """The file's text when it is a text file archive may touch: UTF-8, no NUL byte, at most REWRITE_MAX_BYTES; else None."""
+    try:
+        if (ROOT / f).stat().st_size > REWRITE_MAX_BYTES:
+            return None
+        raw = (ROOT / f).read_bytes()
+        return None if b"\0" in raw else raw.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def resolve_mention(d: str, core: str, moved: dict[str, str]) -> tuple[str, str] | None:
+    """(old repo path, rewritten token) when a path token names a moved file: as a repo-relative path (a leading ./ is
+    allowed and kept) or relative to the citing file's folder d (./ and ../ kept in the new token)."""
+    slash = "/" if core.endswith("/") else ""
+    bare = core.rstrip("/")
+    repo = re.sub(r"^(\./)+", "", bare)
+    if not repo.startswith("../") and (new := moved_to(repo, moved)) is not None:
+        return repo, (bare[: len(bare) - len(repo)] + new + slash)
+    full = os.path.normpath(os.path.join(d, bare)).replace(os.sep, "/")
+    if full.startswith("..") or (new := moved_to(full, moved)) is None:
+        return None
+    rel = os.path.relpath(new, d or ".").replace(os.sep, "/")
+    if bare.startswith("./") and not rel.startswith("."):
+        rel = "./" + rel
+    return full, rel + slash
+
+
+def rewrite_paths(f: str, text: str, moved: dict[str, str], record_only: bool = False):
+    """Exact path mentions of moved files in a file that stays: the repo-relative path (`docs/X.md`, `./docs/X.md`, or
+    anything under a moved folder `docs/briefs/`) or a relative path that resolves from the file's folder to a moved
+    file (`../X.md`, `./X.md`), rewritten in the same prefix style. Tokens end at path boundaries, so `docs/X.md.bak`,
+    `olddocs/X.md` and `HEAD:docs/X.md` do not match; bare file names are left alone. Generated blocks are skipped; in
+    Markdown, fenced code blocks and inline code holding link syntax are not rewritten but reported as skipped (plain
+    inline-code paths are rewritten). record_only: rewrite nothing, report every mention as skipped.
+    Returns (new text, [(line, old token, new token)], [(line, old repo path, new repo path)] skipped)."""
     d = Path(f).parent.as_posix()
     d = "" if d == "." else d
-    hits = []
+    md = f.endswith(".md")
+    hits, skipped = [], []
 
-    def fix_line(n, ln):
+    def fix_line(n, ln, protect_all):
+        spans = [] if protect_all or not md else [m.span() for m in INLINE_CODE.finditer(ln) if "](" in m.group(0)]
+
         def fix(m):
             tok = m.group(1)
             core = tok.rstrip(".")                      # "see docs/X.md." ends a sentence
-            tail = tok[len(core):]
-            if not core or core.startswith("/"):
+            if not core or (r := resolve_mention(d, core, moved)) is None:
                 return tok
-            slash = "/" if core.endswith("/") else ""
-            new = moved_to(core.rstrip("/"), moved)
-            if new is None:
-                full = os.path.normpath(os.path.join(d, core)).replace(os.sep, "/")
-                if full.startswith("..") or (new := moved_to(full, moved)) is None:
-                    return tok
-                new = os.path.relpath(new, d or ".").replace(os.sep, "/")
-            new += slash if not new.endswith("/") else ""
-            hits.append((n, core, new))
-            return new + tail
+            old_repo, new_tok = r
+            if protect_all or any(s <= m.start() < e for s, e in spans):
+                skipped.append((n, old_repo, moved_to(old_repo, moved)))
+                return tok
+            hits.append((n, core, new_tok))
+            return new_tok + tok[len(core):]
         return PATH_TOKEN.sub(fix, ln)
-    out, in_block = [], False
-    for n, ln in enumerate(text.split("\n"), 1):   # generated blocks are left to `update`
-        if BEGIN in ln or END in ln:
+    out, in_block, fence = [], False, None
+    for n, ln in enumerate(text.split("\n"), 1):
+        if BEGIN in ln or END in ln:   # generated blocks are left to `update`
             in_block = BEGIN in ln
-        out.append(ln if in_block or BEGIN in ln or END in ln else fix_line(n, ln))
-    return "\n".join(out), hits
+            out.append(ln)
+            continue
+        if in_block:
+            out.append(ln)
+            continue
+        in_code = False
+        if md:
+            m = FENCE.match(ln)
+            if fence is None and m:
+                fence, in_code = m.group(1), True
+            elif fence is not None:
+                in_code = True
+                if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not ln.strip()[len(m.group(1)):].strip():
+                    fence = None
+        out.append(fix_line(n, ln, record_only or in_code))
+    return "\n".join(out), hits, skipped
 
 
 def path_rewrite_candidates(files: list[str], moved: dict[str, str]) -> list[str]:
-    """Files whose path mentions `archive` rewrites: text files that stay live (not moved, not archived, not retired, not
-    an append-only log, not the generated map), under REWRITE_MAX_BYTES and readable as UTF-8 without NUL bytes."""
+    """Files whose path mentions `archive` rewrites: text files (`text_file`) that stay live: not moved, not archived,
+    not retired, not an append-only log, not the generated map."""
     out = []
     for f in files:
         if moved_to(f, moved) or under(f, CFG["archive_dir"]) or append_only_log(f) or f == CFG["map"]:
             continue
-        try:
-            if (ROOT / f).stat().st_size > REWRITE_MAX_BYTES:
-                continue
-            raw = (ROOT / f).read_bytes()
-        except OSError:
-            continue
-        if b"\0" in raw:
-            continue
-        try:
-            raw.decode("utf-8")
-        except UnicodeDecodeError:
+        if text_file(f) is None:
             continue
         if f.endswith(".md") and (st := doc_status(f)) and st[0] in RETIRED:
             continue
@@ -2550,16 +2586,14 @@ def archive_mentions(files: list[str], moved: dict[str, str], texts: dict[str, s
     if not names:
         return [], 0
     pat = re.compile(r"(?<![\w./-])(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")(?![\w/-]|\.\w)")
-    text_ext = {".md", ".py", ".toml", ".txt", ".yml", ".yaml", ".json", ".cfg", ".ini", ".sh", ".tex", ".rst"}
     out, history = [], 0
     for f in files:
-        if Path(f).suffix not in text_ext or moved_to(f, moved) or under(f, adir) or f == CFG["map"]:
+        if moved_to(f, moved) or under(f, adir) or f == CFG["map"]:
             continue
         if f.endswith(".md") and (st := doc_status(f)) and st[0] in RETIRED:
             continue
-        try:
-            text = texts[f] if texts and f in texts else (ROOT / f).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        text = texts[f] if texts and f in texts else text_file(f)   # the same text-file test as the rewriter
+        if text is None:
             continue
         text = re.sub(re.escape(BEGIN) + r".*?" + re.escape(END), lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
         d = Path(f).parent.as_posix()
@@ -2568,8 +2602,9 @@ def archive_mentions(files: list[str], moved: dict[str, str], texts: dict[str, s
             path = m.group(2).partition("#")[0]
             full = os.path.normpath(os.path.join("" if d == "." else d, path)).replace(os.sep, "/")
             return "" if moved_to(full, moved) or under(full, adir) else m.group(0)
-        if f.endswith(".md"):
-            text = re.sub(r"\[([^\]\n]*)\]\(([^)\s]+)\)", drop_link, text)
+        if f.endswith(".md"):   # real links are rewritten; links inside code stay, so they are listed
+            masked, restore = mask_code(text)
+            text = restore(re.sub(r"\[([^\]\n]*)\]\(([^)\s]+)\)", drop_link, masked))
         log = append_only_log(f)
         for n, ln in enumerate(text.splitlines(), 1):
             for m in pat.finditer(ln):
@@ -2617,15 +2652,19 @@ def cmd_archive(args):
                 continue
             if c:
                 new_text[f], md_count[f] = text, c
-    for f in path_rewrite_candidates(files, moved) if paths else []:
-        text, hits = rewrite_paths(f, new_text.get(f) or (ROOT / f).read_text(encoding="utf-8"), moved)
+    skipped = []   # path mentions the rewriter leaves (code examples; everything under --no-rewrite-paths)
+    for f in path_rewrite_candidates(files, moved):
+        text, hits, skip = rewrite_paths(f, new_text.get(f) or text_file(f), moved, record_only=not paths)
+        skipped += [(f, n, old, new) for n, old, new in skip]
         if hits:
             new_text[f] = text
             if f.endswith(".md"):
                 md_count[f] += len(hits)
             else:
                 code_hits += [(f, n, old, new) for n, old, new in hits]
+    leftovers = lambda found: sorted(dict.fromkeys(found + skipped), key=lambda m: (m[0], m[1]))
     mentions, history = archive_mentions(files, moved, new_text)
+    mentions = leftovers(mentions)
     verb = "" if apply else "would be "
     counts = [f"rewritten in Markdown (links{' and paths' if paths else ''}): {verb}{sum(md_count.values())} in {len(md_count)} file(s)",
               f"rewritten in code and scripts: {verb}{len(code_hits)} in {len({h[0] for h in code_hits})} file(s)"
@@ -2664,12 +2703,13 @@ def cmd_archive(args):
         (ROOT / arch[0]).write_text(arch[1], encoding="utf-8")
     print(f"moved {n_files} file(s); {arch[0] if arch else 'the archive README'} lists them")
     print(counts[0])
-    print(counts[1] + (":" if code_hits else ""))
+    print(counts[1])   # the same count lines as the dry run; the lists follow them
     for f, n, old, new in code_hits:
         print(f"  {f}:{n}: {old} -> {new}")
-    mentions, _ = archive_mentions(files, moved)
-    print(counts[2].split(":")[0] + f": {len(mentions)} in {len({m[0] for m in mentions})} file(s)"
-          + (" (point to the new path, or drop the mention):" if mentions else ""))
+    mentions = leftovers(archive_mentions(files, moved)[0])
+    print(counts[2].split(":")[0] + f": {len(mentions)} in {len({m[0] for m in mentions})} file(s)")
+    if mentions:
+        print("  (point each to the new path, or drop it)")
     for f, n, src, dst in mentions:
         print(f"  {f}:{n}: {src} -> {dst}")
     print(counts[3])
