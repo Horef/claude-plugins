@@ -9,8 +9,9 @@ Goal, scope and open questions: `docs/BRIEF.md`. Scaffolding: the project-founda
 ## Start of every session
 1. `git status` (and `git pull --rebase` if there is a remote). Do not commit, discard or overwrite changes you did not make; ask.
 2. Read `AGENTS.local.md` (git-ignored): this machine's interpreter, paths, limits and quirks. If it is missing, create it from `AGENTS.local.example.md` with `python tools/docmap.py local` and the user's answers.
-3. Read `docs/STATUS.md`; skim the latest entry in `docs/WORKLOG.md`.
-4. Before changing behavior covered by a decision, find it with `python tools/docmap.py find <topic>` and read it with `python tools/docmap.py get D<n>`. Never read `docs/DECISIONS.md` whole: it only grows. [experiments] Likewise `docs/RESULTS.md`.
+3. Read `docs/STATUS.md`; skim the latest entry in `docs/WORKLOG.md`. Everything else (briefs, reviews, plans, notes) only when the work touches it.
+4. [compute] Check every row of STATUS's In-flight table with its command before other work; report successes and failures, not file counts.
+5. Before changing behavior covered by a decision, find it with `python tools/docmap.py find <topic>` and read it with `python tools/docmap.py get D<n>`. Never read `docs/DECISIONS.md` whole: it only grows. [experiments] Likewise `docs/RESULTS.md`.
 
 ## Finding your way
 1. [code-map] `docs/MAP.md` (generated): every folder and code file with a one-line summary.
@@ -44,20 +45,22 @@ Update in the same commit as the change that requires it. A line tagged `[module
 | change what a file or folder is for | [code-map] that first line / paragraph |
 | add, move, rename or delete files | run `python tools/docmap.py update` |
 | learn a fact about this machine (path, interpreter, limit, quirk) | `AGENTS.local.md` only; if every machine needs that key, add it to `AGENTS.local.example.md` |
-| finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results (`python tools/docmap.py worklog "TITLE" body.md --status` inserts it dated, rotates old months and sets STATUS's date) |
+| finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results (`python tools/docmap.py worklog "TITLE" body.md --status` inserts it dated, sets STATUS's date and, on the default branch, rotates old entries) |
+| start a long job (cluster, overnight) | [compute] a row in STATUS's In-flight table: what, started (date, job id), a health-check command whose output counts successes and failures, expected end (YYYY-MM-DD); remove the row when the job is read |
 | choose between alternatives, or fill a gap | the next D entry in `docs/DECISIONS.md`; to reverse one, a new entry that supersedes it; an attempt that failed goes in the **Tried** line of the decision it served |
 | switch a model, platform or key library | `python tools/docmap.py depends WORDS` lists the decisions that depend on it: re-check each |
 | add or change a module boundary | [architecture] `docs/ARCHITECTURE.md` and `[tool.docmap.forbid]` |
 | change user-visible behavior, CLI or config | [releases] `README.md` and `CHANGELOG.md` |
 | run an experiment | [experiments] `python tools/docmap.py runs`; a numbered section in `docs/RESULTS.md` citing the run id |
 | start a new line of work (a feature, an investigation, a research question, a write-up; multi-session work) | [workstreams] give it one home (a plan in `docs/plans/<slug>.md` with a Status line, or its own folder such as `docs/research/<slug>/`) and a row in STATUS's Workstreams table; results, decisions and runs still go to RESULTS, DECISIONS and RUNS |
+| finish a line of work | [workstreams] its plan's Status becomes `historical (done <today>; results <ids>)`; its STATUS row leaves the Workstreams table for one "Done" line pointing to its folder or write-up |
 | write or substantially revise a doc in `docs/` | its Status line: `current (verified <today>)`, `proposal (<today>)`, `superseded by <id>` or `historical`; a decided proposal is superseded by its D entry |
 | change a default, preset or key number | [facts] its source (config/code); `docmap.py update` regenerates `docs/FACTS.md`. Docs cite FACTS.md rather than copying the value |
 | supersede a decision | fully: the old entry's status (heading `status:` field or `Status:` line) says `superseded by D<n>`; partly: keep it accepted and add `partly superseded by D<n>: <which part>` (`check` reads that as partial and does not list its citations). Fix the live docs that `check` then lists |
 | find that this scaffolding itself (a template rule, the docs layout, a `docmap.py` check or command) misleads you, is missing something or costs too much | nothing here: send it to the skill that installed it, `python3 "$(cat ~/.config/strange-loop/genome)/plugins/strange-loop/skills/strange-loop/scripts/loop.py" note project-foundations <kind> "<what happened, what would have helped>" --context <this project>` (if that fails and the person takes part in improving their skills, an `Observations for project-foundations` block in your reply); lessons about other skills go to that skill the same way |
-| reach a milestone (a result merged, a phase closed) | [lifecycle] a docs audit: `python tools/docmap.py docs`, re-read the oldest or affected docs against code, DECISIONS and RESULTS, fix them and re-date their Status lines |
+| reach a milestone (a result merged, a phase closed) | [lifecycle] a docs audit: `python tools/docmap.py docs` (live docs, oldest first), re-read the oldest or affected docs against code, DECISIONS and RESULTS, fix them and re-date their Status lines; then `python tools/docmap.py archive` (dry run) and `archive --apply` move retired docs to `docs/archive/` (it rewrites links and exact paths, code included: run the tests; decide the bare names it lists) |
 
-- Before every commit: `python tools/docmap.py update`, then `python tools/docmap.py check` (CI runs it too). When `check` warns about old WORKLOG months, run `python tools/docmap.py rotate` (`rotate --keep N` also moves older entries of the current month).
+- Before every commit: `python tools/docmap.py update`, then `python tools/docmap.py check` (CI runs it too). When `check` warns about old WORKLOG months, run `python tools/docmap.py rotate` on the default branch (`rotate --keep N` also moves older entries of the current month).
 - Never describe planned or partial work as done; say how it was verified.
 - Keep this file short; add a rule only when an agent got something wrong.
 

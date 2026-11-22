@@ -7,6 +7,7 @@ keeps the map within its token budget. Run: python evals/run.py (from the skill 
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -288,6 +289,9 @@ def main() -> int:
         p = docmap(root, "check")
         expect(p.returncode == 1 and "broken link -> missing.md" in p.stdout and "x-devonthink" not in p.stdout,
                "check still fails on a real missing relative link", p)
+        (root / "docs/NOTES.md").write_text("Status: current (verified 2999-01-01)\n# Notes\nExample: ```` ```md\\nSee [old](docs/OLD.md)\\n``` ```` and `` `[x](gone2.md)` ``\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("broken link" not in p.stdout, "check ignores links inside multi-backtick code spans (5.17 review files)", p)
 
     with tempfile.TemporaryDirectory() as tmp:  # worktrees: check warns about a linked worktree whose branch is merged (owner, 2026-11-09)
         root = Path(tmp) / "proj"
@@ -406,16 +410,17 @@ def main() -> int:
         sh(root, "git", "init", "-q")
         docmap(root, "update")
         p = docmap(root, "check")
-        hits = [ln for ln in p.stdout.splitlines() if " bare; defined in " in ln]
-        notes = [ln for ln in hits if ln.startswith("warning: docs/notes.md ")]
-        expect(len(notes) == 1 and "cites L1-L3 bare; defined in 2 places (docs/literature/gosi/, docs/literature/nmda/)" in notes[0] and "<TAG>-L1" in notes[0],
-               "check groups ids defined in two ledger tables and cited bare into one warning per citing file and family", p)
-        expect(not any(f"warning: {f} " in ln for ln in hits for f in ("docs/named.md", "docs/literature/gosi/notes.md")),
-               "no warning when the line names a defining folder or the citer lives inside one definer's folder", p)
-        expect(not any("docs/syntax.md" in ln for ln in hits), "NB-L1, L2/3, L1.2, `L3` and a URL do not match as L1, L2 or L3", p)
-        expect(not any("H5f" in ln or "docs/h3.md" in ln for ln in hits), "a lone ### H5f: heading defines nothing", p)
-        expect(not any("K1" in ln for ln in hits), "a superseded doc defines nothing", p)
-        expect(any(ln.startswith("warning: docs/summary.md cites A1, A2 bare; defined in 2 places (docs/writeups/x/, docs/writeups/y/)") for ln in hits)
+        hits = [ln for ln in p.stdout.splitlines() if " cited bare in " in ln]
+        notes = [ln for ln in hits if ln.startswith("warning: L ids ")]
+        expect(len(notes) == 1 and "cited bare in 1 file (docs/notes.md)" in notes[0] and "docmap.py ids L" in notes[0],
+               "check groups bare citations of ids defined in two ledger tables into one warning per family, naming the citing file", p)
+        pl = docmap(root, "ids", "L")
+        expect("docs/notes.md:2" in pl.stdout and not any(f in pl.stdout for f in ("docs/named.md", "docs/literature/gosi/notes.md")),
+               "no warning when the line names a defining folder or the citer lives inside one definer's folder (ids L lists file:line)", pl)
+        expect("docs/syntax.md" not in pl.stdout, "NB-L1, L2/3, L1.2, `L3` and a URL do not match as L1, L2 or L3", pl)
+        expect(not any("H5f" in ln or "H ids" in ln for ln in hits), "a lone ### H5f: heading defines nothing", p)
+        expect(not any("K ids" in ln for ln in hits), "a superseded doc defines nothing", p)
+        expect(any(ln.startswith("warning: A ids cited bare in 1 file (docs/summary.md)") for ln in hits)
                and len(hits) == 2, "bullet (- A1.) and heading definitions count, and the archive is not read", p)
         p = docmap(root, "ids")
         lines = p.stdout.splitlines()
@@ -424,7 +429,7 @@ def main() -> int:
                and p.stdout.index("\nA ") < p.stdout.index("\nD "), "ids lists families with their places and bare citers, ambiguous ones first", p)
         (root / "docmap.toml").write_text('id_cite_exempt = ["L\\\\d", "A1"]\nid_scan_exempt = ["docs/archive/*", "docs/writeups/y/*"]\n', encoding="utf-8")
         p = docmap(root, "check")
-        expect("bare; defined in" not in p.stdout, "id_cite_exempt (ids or regexes) and id_scan_exempt silence the id warnings", p)
+        expect("cited bare in" not in p.stdout, "id_cite_exempt (ids or regexes) and id_scan_exempt silence the id warnings", p)
 
     with tempfile.TemporaryDirectory() as tmp:  # O17: only a status that says "superseded by" is a full supersession; skip only the id the line marks
         root = Path(tmp)
@@ -804,6 +809,363 @@ def main() -> int:
                "depends reads a Status line: superseded is left out, partly superseded stays (O30)", p)
         tpl = (SKILL_DIR / "templates/decisions.md").read_text(encoding="utf-8")
         expect("**Tried:**" in tpl and "**Depends on:**" in tpl, "the decisions template has Tried and Depends on lines (O30)")
+
+    # 5.17 (spec in evals/reviews/2026-11-22-lifecycle/spec.md): retiring docs, the audit queue, a quieter id check,
+    # find, STATUS guards, in-flight work, worklog rotation guard, version equality (O31-O35)
+    import datetime
+    today = datetime.date.today()
+    stamp = today.strftime("%Y-%m")
+
+    def fixture(root: Path, extra: dict[str, str], commit: bool = True, env: dict | None = None):
+        for rel, text in {**FILES, **extra}.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text, encoding="utf-8")
+        for a in (("init", "-q"), ("symbolic-ref", "HEAD", "refs/heads/main"), ("config", "user.email", "t@t"), ("config", "user.name", "t")):
+            sh(root, "git", *a)
+        if commit:
+            sh(root, "git", "add", "-A")
+            subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, capture_output=True, env={**os.environ, **(env or {})})
+
+    with tempfile.TemporaryDirectory() as tmp:  # O31, O33: archive moves retired docs; docs lists the live ones
+        root = Path(tmp)
+        live = "Status: current (verified 2999-01-01)\n"
+        fixture(root, {
+            "docs/OLD_PLAN.md": "# Old plan\nStatus: historical (done 2026-11-01; results R1)\n\nSee [the guide](GUIDE.md) and ![fig](figures/a.png).\n",
+            "docs/OLD_PLAN.pdf": "pdf\n",
+            "tools/README.md": "# tools/\n\nScripts that read the plans.\n",
+            "tools/run_old.sh": "# Print the old plan.\ncat docs/OLD_PLAN.md\ncat ../docs/OLD_PLAN.md\n",
+            "tools/plan.py": '"""Reads OLD_PLAN.md; never docs/OLD_PLAN.md.bak or olddocs/OLD_PLAN.md."""\nPLAN = "docs/OLD_PLAN.md"\n',
+            "docs/DECISIONS.md": FILES["docs/DECISIONS.md"] + "- **Evidence:** `docs/OLD_PLAN.md` (append-only: stays as written).\n",
+            "docs/figures/a.png": "png\n",
+            "docs/GUIDE.md": "# Guide\n" + live + "\nThe [old plan](OLD_PLAN.md#top) and the [design](plans/design.md); also `docs/OLD_PLAN.md` in prose.\n",
+            "docs/plans/design.md": "# Design\nStatus: superseded by D2\n\nBack to [the guide](../GUIDE.md).\n",
+            "docs/archive/plans/design.md": "# Earlier design\nStatus: historical\n",
+            "docs/writeups/w/review/round1.md": "# Round 1\nStatus: historical\n",
+            "docs/research/q/audit.md": "# Audit\nStatus: current (verified 2000-01-01)\n",
+            "docs/briefs/old_brief.md": "# A brief without a Status line\n",
+            "docs/LIVE.md": "# Live\nStatus: current (verified 2000-01-01)\n",
+            "docs/calc/README.md": "# calc\n" + live + "\nHelper calculations.\n",
+            "docs/calc/helper.py": '"""Helper."""\n',
+            "docs/calc/notes.md": "# Notes\n" + live,
+        })
+        docmap(root, "update")
+        p = docmap(root, "check")
+        retired = [ln for ln in p.stdout.splitlines() if "retired docs in live folders" in ln]
+        expect(len(retired) == 1 and retired[0].startswith("warning: 2 retired docs in live folders") and "archive" in retired[0],
+               "check: one aggregated warning for retired docs in live folders, not one per file", p)
+        expect("docs/LIVE.md: last verified" in p.stdout and "docs/research/q/audit.md" not in p.stdout,
+               "archive_keep records never fall due (verify_max_days), live docs still do", p)
+        table = (root / "docs/calc/README.md").read_text(encoding="utf-8")
+        expect("| Entry | What it is | Imported by | Status |" in table and re.search(r"^\| `notes\.md` \|.*\| current \|$", table, re.M),
+               "a generated folder table gets a Status column when the folder holds lifecycle docs")
+        p = docmap(root, "docs")
+        expect("docs/LIVE.md" in p.stdout and "docs/GUIDE.md" in p.stdout and "docs/OLD_PLAN.md" not in p.stdout
+               and "round1.md" not in p.stdout and "audit.md" not in p.stdout and "2 retired (historical/superseded)" in p.stdout
+               and "2 kept records (archive_keep)" in p.stdout, "docs lists live docs only, then counts of retired docs and kept records", p)
+        p = docmap(root, "docs", "--all")
+        expect("round1.md" in p.stdout and "docs/OLD_PLAN.md" in p.stdout, "docs --all lists every lifecycle doc", p)
+        p = docmap(root, "archive")
+        expect("docs/OLD_PLAN.md -> docs/archive/OLD_PLAN.md" in p.stdout and "+ docs/OLD_PLAN.pdf -> docs/archive/OLD_PLAN.pdf" in p.stdout
+               and f"docs/plans/design.md -> docs/archive/plans/design-{stamp}.md" in p.stdout and (root / "docs/OLD_PLAN.md").exists(),
+               "archive (dry run) lists docs, companions and a collision suffix, and moves nothing", p)
+        expect("rewritten in code and scripts: would be 3 in 2 file(s)" in p.stdout and "left to decide by hand (not rewritten: bare names, code examples, ref:path): 1 in 1 file(s)" in p.stdout,
+               "archive (dry run) reports the path rewrites in code and the bare names left", p)
+        p = docmap(root, "archive", "--apply")
+        guide = (root / "docs/GUIDE.md").read_text(encoding="utf-8")
+        sh_text, py_text = (root / "tools/run_old.sh").read_text(encoding="utf-8"), (root / "tools/plan.py").read_text(encoding="utf-8")
+        expect("cat docs/archive/OLD_PLAN.md\ncat ../docs/archive/OLD_PLAN.md\n" in sh_text and 'PLAN = "docs/archive/OLD_PLAN.md"' in py_text
+               and "tools/run_old.sh:3: ../docs/OLD_PLAN.md -> ../docs/archive/OLD_PLAN.md" in p.stdout and "run the tests" in p.stdout,
+               "archive --apply rewrites repo-path and relative-path mentions in scripts and code, listing them file:line", p)
+        expect("Reads OLD_PLAN.md; never docs/OLD_PLAN.md.bak or olddocs/OLD_PLAN.md." in py_text and "tools/plan.py:1: docs/OLD_PLAN.md" in p.stdout,
+               "a bare file name is listed, not rewritten; boundary near-misses (.bak, olddocs/) are untouched", p)
+        moved = (root / "docs/archive/OLD_PLAN.md").read_text(encoding="utf-8") if (root / "docs/archive/OLD_PLAN.md").exists() else ""
+        expect(not (root / "docs/OLD_PLAN.md").exists() and (root / "docs/archive/OLD_PLAN.pdf").exists()
+               and (root / f"docs/archive/plans/design-{stamp}.md").exists()
+               and "Earlier design" in (root / "docs/archive/plans/design.md").read_text(encoding="utf-8"),
+               "archive --apply moves docs with their companions and never overwrites (-YYYY-MM on a collision)", p)
+        expect("(archive/OLD_PLAN.md#top)" in guide and f"(archive/plans/design-{stamp}.md)" in guide
+               and "(../GUIDE.md)" in moved and "(../figures/a.png)" in moved
+               and "(../../GUIDE.md)" in (root / f"docs/archive/plans/design-{stamp}.md").read_text(encoding="utf-8"),
+               "archive --apply rewrites relative links to moved docs, and the moved docs' own links", p)
+        expect("`docs/archive/OLD_PLAN.md` in prose" in guide and "docs/GUIDE.md:4:" not in p.stdout,
+               "archive --apply rewrites a repo-path mention in a live Markdown doc instead of listing it", p)
+        expect("docs/DECISIONS.md:" not in p.stdout and "1 mention(s) in append-only logs left as history" in p.stdout
+               and "`docs/OLD_PLAN.md` (append-only" in (root / "docs/DECISIONS.md").read_text(encoding="utf-8"),
+               "archive --apply leaves mentions in append-only logs (DECISIONS) as written and only counts them", p)
+        expect((root / "docs/writeups/w/review/round1.md").exists(), "archive_keep records stay in place", p)
+        arch = (root / "docs/archive/README.md").read_text(encoding="utf-8") if (root / "docs/archive/README.md").exists() else ""
+        expect(f"| `OLD_PLAN.md` | `docs/OLD_PLAN.md` | {today.isoformat()} | historical (done 2026-11-01; results R1) |" in arch,
+               "the archive README gets a row: file, original path, date moved, Status line", p)
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect(p.returncode == 0 and "retired docs" not in p.stdout, "after archive --apply and update, check is green", p)
+        p = docmap(root, "archive", "--legacy", "docs/briefs/*")
+        expect("docs/briefs/old_brief.md -> docs/archive/briefs/old_brief.md" in p.stdout and "no Status line" in p.stdout,
+               "archive --legacy GLOB takes files without a Status line (dry run)", p)
+        p = docmap(root, "archive", "--dir", "docs/research/q")
+        expect("docs/research/q/audit.md -> docs/archive/research/q/audit.md" in p.stdout, "archive --dir PATH retires a whole folder (dry run)", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # archive --no-rewrite-paths: links only, path mentions listed
+        root = Path(tmp)
+        fixture(root, {"docs/OLD.md": "# Old\nStatus: historical\n", "tools/README.md": "# tools/\n\nScripts.\n",
+                       "tools/show.sh": "# Show the old doc.\ncat docs/OLD.md\n"})
+        p = docmap(root, "archive", "--apply", "--no-rewrite-paths")
+        expect((root / "tools/show.sh").read_text(encoding="utf-8").endswith("cat docs/OLD.md\n") and "tools/show.sh:2: docs/OLD.md" in p.stdout,
+               "archive --apply --no-rewrite-paths leaves path mentions as they are and lists them", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O31: lifecycle_strict fails on retired docs only after archive_grace_days
+        root = Path(tmp)
+        old = {"GIT_AUTHOR_DATE": "2026-01-01T12:00:00", "GIT_COMMITTER_DATE": "2026-01-01T12:00:00"}
+        fixture(root, {"docmap.toml": "lifecycle_strict = true\n", "docs/OLD.md": "# Old\nStatus: historical\n"}, env=old)
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect(p.returncode == 1 and "error: 1 retired docs in live folders" in p.stdout and "archive_grace_days" in p.stdout,
+               "lifecycle_strict: a doc retired longer than archive_grace_days ago is an error", p)
+        (root / "docmap.toml").write_text("lifecycle_strict = true\narchive_grace_days = 100000\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("warning: 1 retired docs in live folders" in p.stdout, "within archive_grace_days it stays a warning", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O32: slug in backticks; O34 STATUS tables, In flight, Works dates; warning order
+        root = Path(tmp)
+        live = "Status: current (verified 2999-01-01)\n"
+        status = ("# Status\nUpdated 2026-10-30.\n\n## Workstreams\n| Workstream | Where | State | Next |\n|---|---|---|---|\n"
+                  "| A | `a/` | ok | none |\n| B | `b/` | a | b | extra |\n\n"
+                  "## In flight\n| What | Started | Health check | Expected end |\n|---|---|---|---|\n"
+                  "| search r1 | 2026-11-01, job 1 | `python check.py` (ok/failed counts) | 2000-01-02 |\n"
+                  "| search r2 | 2026-11-01, job 2 | `python check.py` | 2999-01-01 |\n| search r3 | today | `x` | about a day |\n\n"
+                  "## Works (verified)\n| Capability | How verified |\n|---|---|\n| old | `pytest` passed, 2000-01-01 |\n"
+                  "| new | `pytest` passed, 2999-01-01 |\n")
+        line = lambda prefix: next(i for i, ln in enumerate(status.splitlines(), 1) if ln.startswith(prefix))
+        fixture(root, {
+            "AGENTS.md": "# Demo\n\n" + "word " * 9000,
+            "docs/STATUS.md": status,
+            "docs/writeups/x/ledger.md": live + "- Q1. one\n- Q2. two\n", "docs/writeups/y/ledger.md": live + "- Q1. other\n- Q2. more\n",
+            "docs/notes.md": live + "See `docs/writeups/x/` for Q1.\nQ2 matters.\n",
+        }, commit=False)
+        docmap(root, "update")
+        p = docmap(root, "check")
+        out = p.stdout
+        expect(f"docs/STATUS.md:{line('| Workstream')}: table under 'workstreams' has rows whose cell count differs from its header's 4 (lines {line('| B ')})" in out,
+               "check warns once per STATUS table whose rows have a different cell count than the header, with line numbers", p)
+        expect(f"docs/STATUS.md:{line('| search r1')}: In-flight 'search r1' was expected to end 2000-01-02" in out
+               and "search r2" not in out and "search r3" not in out,
+               "check warns on an In-flight row whose ISO expected end has passed; future and prose dates are ignored", p)
+        expect(f"1 Works row(s) last verified more than verify_max_days = 60 days ago (lines {line('| old ')})" in out,
+               "check warns about a Works row whose verification date is older than verify_max_days", p)
+        pq = docmap(root, "ids", "Q")
+        expect("docs/notes.md:3" in pq.stdout and "docs/notes.md:2" not in pq.stdout,
+               "a line naming the defining folder in backticks (`docs/writeups/x/`) is not a bare citation; ids FAMILY gives file:line", pq)
+        warns = [ln for ln in out.splitlines() if ln.startswith("warning: ")]
+        idx = lambda s: next((i for i, ln in enumerate(warns) if s in ln), -1)
+        expect(-1 < idx("AGENTS.md: about") < idx("table under 'workstreams'") < idx("Q ids cited bare"),
+               "check orders warnings by consequence: reading budgets, then STATUS, then ids", p)
+        (root / "docs/STATUS.md").write_text("# Status\nUpdated 2026-10-30.\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("In-flight" not in p.stdout and "table under" not in p.stdout, "no In-flight section, no In-flight warning", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O31 (F-g): find splits words inside arguments and ranks live docs first
+        root = Path(tmp)
+        fixture(root, {
+            "docs/live.md": "# Live\nStatus: current (verified 2999-01-01)\n\n## Twin families\nThe twin families of the cell.\n",
+            "docs/old.md": "# Old\nStatus: historical\n\n## Twin families twin families\ntwin families twin families twin families\n",
+            "docs/archive/older.md": "# Older\nStatus: historical\n\n## Twin families\ntwin families twin families twin families twin families\n",
+        }, commit=False)
+        p1, p2 = docmap(root, "find", "twin families"), docmap(root, "find", "twin", "families")
+        lines = [ln for ln in p1.stdout.splitlines() if ln.startswith("docs/")]
+        expect(p1.stdout == p2.stdout and "3 entries" in p1.stdout, "find splits whitespace inside one argument", p1)
+        expect(len(lines) == 3 and lines[0].startswith("docs/live.md") and "[historical]" in lines[1] and "[archive]" in lines[2],
+               "find ranks live docs first, then retired docs, then the archive (labelled)", p1)
+
+    with tempfile.TemporaryDirectory() as tmp:  # G1: worklog rotates above worklog_max_tokens, only on the default branch
+        root = Path(tmp)
+        entries = "".join(f"## {today.isoformat()} - step {i}\n\n" + "word " * 100 + "\n\n" for i in range(5))
+        fixture(root, {"docmap.toml": "worklog_max_tokens = 300\n", "docs/WORKLOG.md": "# Work log\n\n" + entries})
+        body = root.parent / f"{root.name}-body.md"
+        body.write_text("Changed: x.\n", encoding="utf-8")
+        month = root / "docs/worklog" / f"{stamp}.md"
+        sh(root, "git", "checkout", "-q", "-b", "feature")
+        p = docmap(root, "worklog", "On a branch", str(body))
+        expect("not rotated (branch feature" in p.stdout and "rotate --keep" in p.stdout and not month.exists(),
+               "worklog on a feature branch prints the rotate command instead of rotating", p)
+        sh(root, "git", "checkout", "-q", "-f", "main")
+        p = docmap(root, "worklog", "No rotate", str(body), "--no-rotate")
+        expect("not rotated (--no-rotate)" in p.stdout and not month.exists(), "worklog --no-rotate never rotates", p)
+        p = docmap(root, "worklog", "On main", str(body))
+        wl = (root / "docs/WORKLOG.md").read_text(encoding="utf-8")
+        expect(month.exists() and "On main" in wl and len(wl) // 4 <= 400 and "worklog_max_tokens" in p.stdout,
+               "worklog on the default branch rotates the oldest entries above worklog_max_tokens", p)
+        body.unlink()
+
+    # Neon's review of 5.17.0 (evals/reviews/2026-11-22-lifecycle/neon-diff.md), findings 1-11
+    with tempfile.TemporaryDirectory() as tmp:  # N1: companions only for a retired .md, only rendered artifacts
+        root = Path(tmp)
+        fixture(root, {"docs/calc/model.md": "# Model\nStatus: historical\n", "docs/calc/model.py": '"""Model."""\n',
+                       "docs/calc/model.json": "{}\n", "docs/calc/model.pdf": "pdf\n", "docs/calc/model.svg": "<svg/>\n",
+                       "docs/live_doc.md": "# Live\nStatus: current (verified 2999-01-01)\n", "docs/live_doc.txt": "notes\n"})
+        p = docmap(root, "archive", "--legacy", "docs/*.txt")
+        expect("+ docs/calc/model.pdf" in p.stdout and "+ docs/calc/model.svg" in p.stdout and "model.py" not in p.stdout
+               and "model.json" not in p.stdout and "docs/live_doc.md" not in p.stdout and "docs/live_doc.txt ->" in p.stdout,
+               "N1: companions are rendered artifacts of a retired .md only: never code, data or a live doc", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # N2: the archive_dir (configured) is outside the map, header and link checks
+        root = Path(tmp)
+        fixture(root, {"docmap.toml": 'archive_dir = "docs/retired"\n', "docs/retired/old_work/helper.py": "x = 1\n",
+                       "docs/retired/old_work/run.sh": "echo hi\n", "docs/retired/old_work/notes.md": "# Old\n[gone](missing.md)\n"})
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect(not any("docs/retired" in ln for ln in p.stdout.splitlines() if ln.startswith("error:"))
+               and "docs/retired" not in (root / "docs/MAP.md").read_text(encoding="utf-8"),
+               "N2: code, READMEs, headers and links inside a configured archive_dir are not checked or mapped", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # N3: --dir/--legacy path normalisation and guards
+        root = Path(tmp)
+        fixture(root, {"docs/old_work/a.md": "# A\n", "docs/old_work/b/c.md": "# C\n", "docs/archive/existing.md": "# E\n",
+                       "docs/briefs/x.md": "# X\n"})
+        p1, p2 = docmap(root, "archive", "--dir", "./docs/old_work"), docmap(root, "archive", "--dir", "docs\\old_work")
+        expect(p1.returncode == 0 and p2.returncode == 0 and "docs/old_work/a.md -> docs/archive/old_work/a.md" in p1.stdout + p2.stdout,
+               "N3: --dir accepts ./ and backslash paths", p2)
+        p3, p4 = docmap(root, "archive", "--dir", "docs"), docmap(root, "archive", "--dir", "docs/archive")
+        expect(p3.returncode != 0 and p4.returncode != 0 and "archive/archive" not in p3.stdout + p4.stdout,
+               "N3: --dir rejects the archive_dir and its ancestors", p3)
+        p = docmap(root, "archive", "--dir", "docs/old_work", "--dir", "docs/old_work/b")
+        expect(p.returncode == 0 and p.stdout.count("docs/old_work/b/c.md ->") == 1, "N3: overlapping --dir options move each file once", p)
+        p = docmap(root, "archive", "--legacy", "docs\\briefs\\*")
+        expect("docs/briefs/x.md -> docs/archive/briefs/x.md" in p.stdout, "N3: --legacy accepts a backslash glob", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # N4, N6: masked code, archive untouched, dry run == apply, generated blocks skipped
+        root = Path(tmp)
+        fixture(root, {
+            "docs/OLD.md": "# Old\nStatus: historical\n",
+            "docs/BIN.md": "# Bin\nStatus: historical\nno links\n",
+            "docs/plans/design.md": "# Design\nStatus: superseded by D2\n",
+            "docs/archive/plans/design.md": "# Earlier\nStatus: historical\n",
+            "docs/archive/prior.md": "# Prior\n[old](../OLD.md)\n",
+            "docs/live.md": ("# Live\nStatus: current (verified 2999-01-01)\n\nInline `[old](OLD.md)` stays.\n\n```\n[old](OLD.md)\n```\n\n"
+                             "Real [old](OLD.md) moves. Bare design.md is ambiguous.\n\n"
+                             "<!-- docmap:begin (generated by tools/docmap.py; do not edit) -->\n| docs/OLD.md | OLD.md |\n<!-- docmap:end -->\n"),
+        })
+        (root / "docs/BIN.md").write_bytes(b"# Bin\nStatus: historical\n\xff\n")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "bytes")
+        dry = docmap(root, "archive")
+        p = docmap(root, "archive", "--apply")
+        live = (root / "docs/live.md").read_text(encoding="utf-8")
+        expect("Inline `[old](OLD.md)` stays." in live and "```\n[old](OLD.md)\n```" in live and "Real [old](archive/OLD.md) moves." in live,
+               "N4: Markdown link rewriting skips inline code and fenced blocks", p)
+        expect((root / "docs/archive/prior.md").read_text(encoding="utf-8") == "# Prior\n[old](../OLD.md)\n"
+               and (root / "docs/archive/BIN.md").read_bytes() == b"# Bin\nStatus: historical\n\xff\n",
+               "N4: already archived files and moved docs without link changes are not rewritten", p)
+        expect("| docs/OLD.md | OLD.md |" in live and "docs/live.md:12" not in p.stdout,
+               "N6: generated blocks are neither rewritten nor listed", p)
+        counts = lambda out: [ln.replace("would be ", "") for ln in out.splitlines() if ln.startswith(("rewritten in", "left to decide"))]
+        expect(counts(dry.stdout) == counts(p.stdout) and len(counts(p.stdout)) == 3,
+               "N6: the dry run and --apply report the same counts (with a collision suffix)", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # N5: Works dates from the verification cells only
+        root = Path(tmp)
+        status = ("# Status\nUpdated 2026-10-30.\n\n## Works (verified)\n| Capability | How verified |\n|---|---|\n"
+                  "| Modal may | up to 5 may fail on GPU, 2999-01-01 |\n"
+                  "| schema | `load schema_2000-01-01.sql` passes, 2999-01-01 |\n"
+                  "| feature 2000-01-01 | passed 2999-01-01 |\n"
+                  "| month first | passed Oct 1, 2020 |\n"
+                  "| leap | passed 29 Feb |\n")
+        line = lambda prefix: next(i for i, ln in enumerate(status.splitlines(), 1) if ln.startswith(prefix))
+        fixture(root, {"docs/STATUS.md": status}, commit=False)
+        p = docmap(root, "check")
+        expect(f"2 Works row(s) last verified more than verify_max_days = 60 days ago (lines {line('| month first')}, {line('| leap')})" in p.stdout,
+               "N5: Works dates come from the verification cell without code spans; no lowercase 'may'; 'Mon DD, YYYY'; 29 Feb is safe", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # N7: grace dating: only a changed Status line resets the age
+        root = Path(tmp)
+        old = {"GIT_AUTHOR_DATE": "2026-01-01T12:00:00", "GIT_COMMITTER_DATE": "2026-01-01T12:00:00"}
+        fixture(root, {"docmap.toml": "lifecycle_strict = true\n", "docs/OLD.md": "# Old\nStatus: historical\n"}, env=old)
+        docmap(root, "update")
+        (root / "docs/OLD.md").write_text("# Old\nStatus: historical\n\nA body edit.\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("error: 1 retired docs in live folders" in p.stdout, "N7: an uncommitted body edit does not reset a retired doc's age", p)
+        (root / "docs/OLD.md").write_text("# Old\nStatus: historical (done 2026-11-22)\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("warning: 1 retired docs in live folders" in p.stdout, "N7: an uncommitted Status-line change counts as retired today", p)
+        cfg = (SKILL_DIR / "references/docmap-config.md").read_text(encoding="utf-8")
+        expect("fetch-depth: 0" in cfg, "N7: docmap-config.md says grace dating needs full history (fetch-depth: 0)")
+
+    with tempfile.TemporaryDirectory() as tmp:  # N8, N9, N10
+        root = Path(tmp)
+        live = "Status: current (verified 2999-01-01)\n"
+        fixture(root, {
+            "docs/STATUS.md": "# Status\nUpdated 2026-10-30.\n\n## Workstreams\n| A | B | C |\n|---|---|---|\n| x | ends \\\\| y |\n",
+            "docs/writeups/x/ledger.md": live + "- Q1. one\n- Q2. two\n", "docs/writeups/y/ledger.md": live + "- Q1. other\n- Q2. more\n",
+            "docs/notes.md": live + "``Q1`` is code.\n",
+        }, commit=False)
+        (root / "docs/archive").mkdir(parents=True)
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect(not (root / "docs/archive/README.md").exists() and "docs/archive/README.md" not in p.stdout,
+               "N8: an empty archive_dir gets no README and check stays quiet", p)
+        expect("table under" not in p.stdout, "N9: an escaped backslash before | ends the cell (cell count right)", p)
+        expect("Q ids cited bare" not in p.stdout, "N10: a double-backtick code span is not a bare id citation", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # N11: one 'not rotated' line; linked worktree guard; template Status
+        root = Path(tmp) / "repo"
+        root.mkdir()
+        entries = "".join(f"## {today.isoformat()} - step {i}\n\n" + "word " * 100 + "\n\n" for i in range(5))
+        fixture(root, {"docmap.toml": "worklog_max_tokens = 300\n", "docs/WORKLOG.md": "# Work log\n\n" + entries + "## 2000-01-01 - old\n\nold.\n"})
+        body = Path(tmp) / "body.md"
+        body.write_text("Changed: x.\n", encoding="utf-8")
+        sh(root, "git", "worktree", "add", "-q", str(Path(tmp) / "wt"), "-b", "wt")
+        p = docmap(Path(tmp) / "wt", "worklog", "In a worktree", str(body))
+        expect(p.stdout.count("not rotated") == 1 and "a linked worktree" in p.stdout and not (Path(tmp) / "wt/docs/worklog").exists(),
+               "N11: worklog in a linked worktree does not rotate and prints one 'not rotated' line", p)
+    other = (SKILL_DIR / "templates/other-docs.md").read_text(encoding="utf-8")
+    expect("historical (done <date>; results <ids>)" in other, "N11: the other-docs template retires a plan as historical (done <date>; results <ids>)")
+
+    # Neon's follow-up (neon-diff.md, "Follow-up (fixes)"): P1-P4 of the exact-path rewriting
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        live = "Status: current (verified 2999-01-01)\n"
+        files = {
+            "docs/OLD.md": "# Old\nStatus: historical\n",
+            "scripts/run.sh": "# Run.\ncat docs/OLD.md\ncat ./docs/OLD.md\n",
+            "docs/plans/p.md": "# P\n" + live + "See ../OLD.md.\n\n```\n[old](../OLD.md)\n```\n",
+            "docs/x.md": "# X\n" + live + "See ./OLD.md.\n",
+            "docs/live.md": ("# Live\n" + live + "\n```md\nSee [old](docs/OLD.md) and docs/OLD.md\n```\n\n~~~\ndocs/OLD.md\n~~~\n\n"
+                             "Example `[old](docs/OLD.md)` stays; the path `docs/OLD.md` moves.\n"),
+            "tools/git.sh": "# Old revisions.\ngit show HEAD:docs/OLD.md\nscp host:docs/OLD.md .\n",
+            "tools/job.sbatch": "#!/bin/bash\n# reads OLD.md\n",
+            "Makefile": "old:\n\tcat OLD.md\n",
+        }
+        line = lambda f, s: next(i for i, ln in enumerate(files[f].splitlines(), 1) if s in ln)
+        fixture(root, files)
+        dry = docmap(root, "archive")
+        p = docmap(root, "archive", "--apply")
+        read = lambda f: (root / f).read_text(encoding="utf-8")
+        expect("cat docs/archive/OLD.md\ncat ./docs/archive/OLD.md\n" in read("scripts/run.sh") and "See ../archive/OLD.md." in read("docs/plans/p.md")
+               and "See ./archive/OLD.md." in read("docs/x.md"),
+               "P1: ./ and ../ relative paths (and ./docs/X.md from a subfolder) are rewritten, keeping their prefix style", p)
+        lv = read("docs/live.md")
+        expect("```md\nSee [old](docs/OLD.md) and docs/OLD.md\n```" in lv and "~~~\ndocs/OLD.md\n~~~" in lv
+               and "Example `[old](docs/OLD.md)` stays; the path `docs/archive/OLD.md` moves." in lv and "[old](../OLD.md)" in read("docs/plans/p.md"),
+               "P2: Markdown fenced blocks and link syntax in inline code are not rewritten; a plain inline-code path is", p)
+        expect(all(f"docs/live.md:{line('docs/live.md', s)}:" in p.stdout for s in ("See [old]", "Example"))
+               and f"docs/live.md:{line('docs/live.md', '~~~') + 1}:" in p.stdout and f"docs/plans/p.md:{line('docs/plans/p.md', '[old]')}:" in p.stdout,
+               "P2: mentions skipped in code are listed to decide by hand (file:line)", p)
+        expect(read("tools/git.sh") == files["tools/git.sh"] and "tools/git.sh:2:" in p.stdout and "tools/git.sh:3:" in p.stdout,
+               "P3: HEAD:docs/X.md and host:docs/X.md are not rewritten, and are listed", p)
+        expect("tools/job.sbatch:2:" in p.stdout and "Makefile:2:" in p.stdout,
+               "P4: bare names in any text file (.sbatch, Makefile) are listed: one text-file test, no extension list", p)
+        counts = lambda out: [ln.replace("would be ", "") for ln in out.splitlines() if ln.startswith(("rewritten in", "left to decide"))]
+        expect(counts(dry.stdout) == counts(p.stdout), "P1-P4: the dry run and --apply report the same counts", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # --no-rewrite-paths lists relative mentions too
+        root = Path(tmp)
+        fixture(root, {"docs/OLD.md": "# Old\nStatus: historical\n", "docs/plans/p.md": "# P\nStatus: current (verified 2999-01-01)\nSee ../OLD.md.\n"})
+        p = docmap(root, "archive", "--apply", "--no-rewrite-paths")
+        expect("See ../OLD.md." in (root / "docs/plans/p.md").read_text(encoding="utf-8") and "docs/plans/p.md:3:" in p.stdout,
+               "P1: with --no-rewrite-paths a relative path mention is listed, not rewritten", p)
+
+    dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
+    pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
+    expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")
 
     print(f"project-foundations evals: {len(failures)} failure(s)")
     return 1 if failures else 0
