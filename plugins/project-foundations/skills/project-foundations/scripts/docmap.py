@@ -2621,7 +2621,7 @@ def cmd_archive(args):
     archive_dir, with their same-stem companions; --dir PATH retires a whole folder, --legacy GLOB also takes files
     matching GLOB that have no Status line. --apply uses git mv, rewrites relative links and every exact path mention
     of a moved file in the live text files (--no-rewrite-paths: links only), updates the archive README and lists the
-    bare-name mentions left to decide by hand."""
+    mentions left to decide by hand (bare names, code examples, ref:path)."""
     import datetime
     apply, paths = "--apply" in args, "--no-rewrite-paths" not in args
     dirs, legacy, rest = [], [], [a for a in args if a not in ("--apply", "--no-rewrite-paths")]
@@ -2666,10 +2666,11 @@ def cmd_archive(args):
     mentions, history = archive_mentions(files, moved, new_text)
     mentions = leftovers(mentions)
     verb = "" if apply else "would be "
+    left_label = "left to decide by hand (not rewritten: " + ("bare names, code examples, ref:path)" if paths else "--no-rewrite-paths)")
     counts = [f"rewritten in Markdown (links{' and paths' if paths else ''}): {verb}{sum(md_count.values())} in {len(md_count)} file(s)",
               f"rewritten in code and scripts: {verb}{len(code_hits)} in {len({h[0] for h in code_hits})} file(s)"
               + (" (run the tests)" if code_hits else "") + ("" if paths else " (--no-rewrite-paths)"),
-              f"left to decide by hand ({'bare names' if paths else 'paths and bare names'}): {len(mentions)} in {len({m[0] for m in mentions})} file(s)",
+              f"{left_label}: {len(mentions)} in {len({m[0] for m in mentions})} file(s)",
               f"{history} mention(s) in append-only logs left as history (DECISIONS, RESULTS, run index, WORKLOG)"]
     if not apply:
         print(f"{n_files} file(s) in {len(plan)} group(s) would move.")
@@ -2707,7 +2708,7 @@ def cmd_archive(args):
     for f, n, old, new in code_hits:
         print(f"  {f}:{n}: {old} -> {new}")
     mentions = leftovers(archive_mentions(files, moved)[0])
-    print(counts[2].split(":")[0] + f": {len(mentions)} in {len({m[0] for m in mentions})} file(s)")
+    print(f"{left_label}: {len(mentions)} in {len({m[0] for m in mentions})} file(s)")
     if mentions:
         print("  (point each to the new path, or drop it)")
     for f, n, src, dst in mentions:
