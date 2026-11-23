@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.14.0 (2026-11-23)
+- First-use help and an update check: /status-line help (a short tour), a one-time welcome toast on a fresh store, a quiet daily check for a newer release (one toast per version, /status-line update fills the prompt with an update request, update dismiss, update-check on|off, off for checkouts and with CLAUDE_PLUGINS_NO_UPDATE_CHECK=1); the installed version is read from plugin.json instead of a stale constant; README Start here
+
 ## 0.13.0 (2026-11-22)
 - idle compaction owned by the mod (off by default) where Claude Code's sec-default keeps compactions from mods; compactions noticed by the context's drop; Every chat warmer option; both in the ⓘ row (O13, O14)
 
