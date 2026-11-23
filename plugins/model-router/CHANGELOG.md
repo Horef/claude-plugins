@@ -4,6 +4,7 @@ Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (gi
 
 ## 0.29.4 (2026-11-22)
 - auto mode leaves runs with no verdict out of its share and can try the rung below a learned one (autoExplore, off by default) (O7)
+- review fixes: overkill counts as passing for auto mode; parallel calls of a kind never both try; tries are decided only when an Agent call is routed (no false "user changed" notes, partial picks never inherit a try); no tries for counted steps; unjudged tries end at 2N; VERSION matches
 
 ## 0.29.3 (2026-11-22)
 - rules return after a compaction the router never hears of: the chat row that carried them is checked each turn; status names the model without prompt.compose (sec-default on Team accounts) (O6)
