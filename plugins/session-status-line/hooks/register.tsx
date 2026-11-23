@@ -6,7 +6,9 @@
 // sessions write their own readings to ${XDG_CONFIG_HOME:-~/.config}/claude-accounts/<key>.json).
 // Rows: groups (Claude's own state; helper budgets; the session), each wrapping onto as many rows as it needs.
 // Commands: `/status-line` toggles; `on|off`; `auto|one|rows` picks the layout;
-// `quotas on|off` reads the outside budgets or not; `account-label <name>` names this
+// `help` is a one-minute tour; `update` checks for a newer release now (a quiet check also runs daily, after
+// session.start) and puts an update request in the prompt box; `update-check on|off` controls the daily check
+// (also off with CLAUDE_PLUGINS_NO_UPDATE_CHECK=1 and for checkouts). `quotas on|off` reads the outside budgets or not; `account-label <name>` names this
 // account in the other accounts' status lines; `live on|off` lets it read other accounts' limits
 // straight from the service; `warm [on|off|now|for <span>|until HH:MM|every <span>]` keeps the
 // prompt cache warm while the chat waits (a side request, never added to the transcript); `debug` reports the
@@ -15,9 +17,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
+import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, shouldAnnounce, updateRequest, versionOfManifest } from './update'
+import type { UpdateState } from './update'
 import type { Account, Layout, Limit, Prefs, Quota, Quotas, Stats, Usage, Warm, Win } from '../types'
 
-const VERSION = '0.12.1' // keep in step with plugin.json; `/status-line debug` reports it
+const MOD = 'session-status-line'
 
 // ─── Tweak me ────────────────────────────────────────────────────────────
 const CONFIG = {
@@ -1599,9 +1603,116 @@ const warmCommand = async ($: EngineInterface, args: string): Promise<string> =>
   return warmStatus(await read($, warm), now)
 }
 
+// ─── Help, welcome and update check ──────────────────────────────────────
+const HELP = [
+  'Status line: one line above the prompt with model, context fill, 5h and weekly limits, cost and more.',
+  '  /status-line                    switch it on or off (also: on | off)',
+  '  /status-line auto | one | rows  layout: one line, or two when narrow (auto)',
+  '  /status-line quotas on | off    also show Kiro, Copilot, Codex and your other Claude accounts',
+  '  /status-line warm               keep the prompt cache warm while the chat waits (warm help: options)',
+  '  /status-line update             check for a newer version and update it from here',
+  '  /status-line update-check off   stop the quiet daily check for updates (on: resume)',
+  `Guide: ${guideUrl(MOD)}`,
+].join('\n')
+
+/** A checkout or --plugin-dir (never checks, never offers an update); CLAUDE_PLUGINS_UPDATE_CHECK_FORCE=1 lets the tests act as a cache install. */
+const devInstall = async ($: EngineInterface): Promise<boolean> =>
+  isDevInstall($.plugin.root) && (await $.env.get('CLAUDE_PLUGINS_UPDATE_CHECK_FORCE')) !== '1'
+
+/** The installed version, read from this plugin's own plugin.json (undefined when it cannot be read). */
+const installedVersion = async ($: EngineInterface): Promise<string | undefined> => {
+  try {
+    const v = (JSON.parse(String(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`))) as { version?: unknown }).version
+    return typeof v === 'string' ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const loadUpdate = async ($: EngineInterface): Promise<UpdateState> => {
+  const s = await $.store.get('update')
+  return s && typeof s === 'object' ? (s as UpdateState) : {}
+}
+
+/** Off by `/status-line update-check off` or the environment (strict organizations). */
+const updateCheckOff = async ($: EngineInterface): Promise<boolean> =>
+  (await $.store.get('updateCheck')) === false || (await $.env.get('CLAUDE_PLUGINS_NO_UPDATE_CHECK')) === '1'
+
+/** The version in the published manifest; undefined on any failure or after 5 s (never throws). */
+const fetchLatest = async ($: EngineInterface): Promise<string | undefined> => {
+  try {
+    const res = await Promise.race([$.http.fetch(manifestUrl(MOD)), $.clock.sleep(CHECK_TIMEOUT_MS).then(() => undefined)])
+    return res && res.ok ? versionOfManifest(res.text) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+type Checked = { installed?: string; state: UpdateState; ran: boolean; dev: boolean }
+/**
+ * Asks GitHub for the latest version and stores the answer (per Claude account). Unless `force`, only when the
+ * check is on, due and this is a cache install. The stamp is written before the request (as a failure), so chats
+ * starting together make one request, and stays that way when the request fails: that is the back-off.
+ */
+const runCheck = async ($: EngineInterface, force: boolean): Promise<Checked> => {
+  const installed = await installedVersion($)
+  const state = await loadUpdate($)
+  if (await devInstall($)) return { installed, state, ran: false, dev: true }
+  if (!force && (!installed || (await updateCheckOff($)) || !dueForCheck(await $.clock.now(), state))) return { installed, state, ran: false, dev: false }
+  await $.store.set('update', afterCheck(state, await $.clock.now(), undefined))
+  const latest = await fetchLatest($)
+  const next = afterCheck(await loadUpdate($), await $.clock.now(), latest) // others' changes since (a dismissal) are kept
+  await $.store.set('update', next)
+  return { installed, state: next, ran: true, dev: false }
+}
+
+/** After session.start, never awaited: a quiet check, and one toast per new version. */
+const backgroundCheck = async ($: EngineInterface) => {
+  const { installed, state, ran } = await runCheck($, false)
+  if (!ran || !installed || !shouldAnnounce(state, installed)) return
+  await $.store.set('update', { ...(await loadUpdate($)), toasted: state.latest })
+  void $.ui.toast(`${MOD} ${state.latest} is available: /status-line update`, { timeoutMs: 10_000 })
+}
+
+const updateCommand = async ($: EngineInterface, sub: string): Promise<string> => {
+  if (sub !== '' && sub !== 'dismiss') return 'Usage: /status-line update (check now, and fill the prompt with an update request) or /status-line update dismiss (stop announcing the latest version).'
+  if (await devInstall($)) return `${MOD} runs from a folder here (a checkout or --plugin-dir), not from the plugin cache, so it does not update itself: update the folder with git. How updating works: ${UPDATING_URL}`
+  if (sub === 'dismiss') {
+    const state = await loadUpdate($)
+    const installed = await installedVersion($)
+    if (!state.latest || !isNewer(state.latest, installed)) return 'No newer version is known, so there is nothing to dismiss.'
+    await $.store.set('update', { ...state, dismissed: state.latest })
+    return `Dismissed ${state.latest}: it is not announced again; a later version is. /status-line update still offers it.`
+  }
+  const { installed, state } = await runCheck($, true)
+  const have = installed ?? 'unknown'
+  if (state.lastOk === false) return `${MOD} ${have} is installed. Could not read the latest version from GitHub (offline, or blocked here); try again later. How updating works: ${UPDATING_URL}`
+  if (!isNewer(state.latest, installed)) return `${MOD} ${have} is installed; the latest is ${state.latest}: up to date.`
+  const request = updateRequest(MOD)
+  const filled = await $.prompt.fill({ text: request, mode: 'replace' }).catch(() => undefined)
+  return [
+    `${MOD} ${have} is installed; the latest is ${state.latest}.`,
+    filled?.isFilled ? 'The update request is in your prompt box: press Enter and Claude does the rest.' : `Send this to Claude to update: ${request}`,
+    `What's new: ${changelogUrl(MOD)}`,
+    `How updating works: ${UPDATING_URL}`,
+  ].join('\n')
+}
+
+const updateCheckCommand = async ($: EngineInterface, sub: string): Promise<string> => {
+  if (sub === 'on' || sub === 'off') {
+    await $.store.set('updateCheck', sub === 'on')
+    return sub === 'on' ? 'Daily update check on.' : 'Daily update check off. /status-line update still checks when you ask.'
+  }
+  const env = (await $.env.get('CLAUDE_PLUGINS_NO_UPDATE_CHECK')) === '1'
+  const on = (await $.store.get('updateCheck')) !== false
+  return `Daily update check: ${on && !env ? 'on' : 'off'}${env ? ' (CLAUDE_PLUGINS_NO_UPDATE_CHECK=1)' : ''}${(await devInstall($)) ? '; not used for a checkout or --plugin-dir' : ''}. Change it with /status-line update-check on | off.`
+}
+
 // ─── Hooks ───────────────────────────────────────────────────────────────
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // A store with nothing in it: this mod has never run here (an upgrading user's store is not empty).
+    const fresh = await $.store.keys().then(k => k.length === 0, () => false)
     noColor = (await $.env.get('NO_COLOR')) !== undefined
     icons = (await $.env.get('SESSION_STATUS_ASCII')) ? CONFIG.asciiIcons : CONFIG.icons
     const saved = await $.store.get('enabled')
@@ -1616,7 +1727,7 @@ export const register: Register = on => {
 
     await $.command.register({
       name: 'status-line',
-      description: 'Session status line: toggle, on | off, layout auto | one | rows, quotas on | off, account-label <name>, live on | off, warm [on | off | now | for 8h | until 07:30 | every 50m], or debug',
+      description: 'Session status line: help, toggle, on | off, layout auto | one | rows, quotas on | off, account-label <name>, live on | off, warm [on | off | now | for 8h | until 07:30 | every 50m], update [dismiss], update-check on | off, or debug',
     })
     // A chat keeps its warmer state across a reload: one on an earlier version's default wait follows the
     // current default from now on (a warm already overdue by it goes at the next tick); a chosen wait stays.
@@ -1629,6 +1740,11 @@ export const register: Register = on => {
     await loadPrefs($).catch(() => {})
     void refreshQuotas($) // network and CLI calls: never hold up the session
     void refreshAccounts($)
+    if (fresh) {
+      await $.store.set('welcomed', true)
+      void $.ui.toast('Status line on. /status-line help for a 1-minute tour.', { timeoutMs: 8000 })
+    }
+    void backgroundCheck($).catch(() => {}) // quiet: a failed check shows nothing
     // Once a minute: advance the countdowns and catch model switches made
     // outside a turn. Cheap: one state write, one model read.
     $.clock.every(60_000, () => {
@@ -1644,6 +1760,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'status-line' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
+    if (arg === 'help') return { text: `${HELP}\nVersion ${(await installedVersion($)) ?? 'unknown'}.` }
+    if (arg === 'update' || arg.startsWith('update ')) return { text: await updateCommand($, arg.slice(6).trim()) }
+    if (arg === 'update-check' || arg.startsWith('update-check ')) return { text: await updateCheckCommand($, arg.slice(12).trim()) }
     if (arg === 'warm' || arg.startsWith('warm ')) return { text: await warmCommand($, e.args.trim().slice(4)) }
     const named = /^account-label(?:\s+([\s\S]*))?$/i.exec(e.args.trim())
     if (named) {
@@ -1668,6 +1787,7 @@ export const register: Register = on => {
     }
     if (arg === 'debug') {
       const d = lastDraw
+      const VERSION = (await installedVersion($)) ?? 'unknown'
       const q = await read($, quotas)
       const readings = q.on
         ? q.items.map(i => `${i.id} ${JSON.stringify({ ...i, at: undefined })}`).join('; ') || 'none'
