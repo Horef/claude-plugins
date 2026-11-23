@@ -9,6 +9,7 @@ import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, model
 import { SEED_NOTES, checkNote, findNote, mergeNotes, parseNotesFile } from '../hooks/notes'
 import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from '../hooks/snapshot'
 import { DEFAULT_SETTINGS, KIND_TAGS, LADDER } from '../hooks/tiers'
+import { EXPLORE, exploreRungs } from '../hooks/logic'
 import { kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from '../hooks/strengths'
 import type { HistoryEntry, Step } from '../types'
 
@@ -4149,4 +4150,65 @@ test('the helper checks: skipped after a failure is not "not needed"; the rules 
   expect(byId.terminal).toMatchObject({ state: 'skip', blocked: true })
   expect(byId.terminal!.text).not.toContain('needs hc')
   expect(byId.enabled!.fix ?? '').not.toContain('Settings → Helpers')
+})
+
+// 0.29.4: auto mode leaves runs with no verdict out, and can try the rung below a learned one.
+const day = (n: number) => `2026-11-${String(n).padStart(2, '0')}T10:00:00.000Z`
+const sum = (n: number, model: 'haiku' | 'sonnet', effort: 'low' | 'medium' | 'high', over: Partial<HistoryEntry> = {}) =>
+  run(n, { kind: 'summarize', tier: 'standard', model, effort, verdict: 'ok', at: day(n), ...over })
+
+test('auto mode: a run with no verdict says nothing either way; a rerun still counts as weak', () => {
+  const set = mergeSettings({})
+  const five = [1, 2, 3, 4, 5].map(n => sum(n, 'haiku', 'high'))
+  const unjudged = [6, 7, 8].map(n => sum(n, 'haiku', 'high', { verdict: undefined }))
+  expect(learnedRungs([...five, ...unjudged], set)).toEqual({ summarize: { rung: { model: 'haiku', effort: 'high' }, n: 5 } })
+  // A rerun with no verdict is weak evidence: 5 ok of 6 judged is 83%, under 90%.
+  expect(learnedRungs([...five, sum(9, 'haiku', 'high', { verdict: undefined, rerun: true })], set)).toEqual({})
+  // Only unjudged runs: nothing learned.
+  expect(learnedRungs(unjudged, set)).toEqual({})
+})
+
+test('exploration is off by default; on, it tries the rung below a learned one every few runs, and stops on a weak run', () => {
+  expect(DEFAULT_SETTINGS.autoExplore).toBe(false)
+  expect(mergeSettings({ autoExplore: true }).autoExplore).toBe(true)
+  expect(EXPLORE.every).toBe(4)
+  const set = mergeSettings({ autoRoute: true, autoExplore: true })
+  const learnedOnSonnet = [1, 2, 3, 4, 5].map(n => sum(n, 'sonnet', 'medium'))
+  const learned = learnedRungs(learnedOnSonnet, set)
+  expect(learned).toEqual({ summarize: { rung: { model: 'sonnet', effort: 'medium' }, n: 5 } })
+  // 5 runs on sonnet/medium and none below: the next run tries haiku/high, the rung below on the ladder.
+  expect(exploreRungs(learnedOnSonnet, set, learned)).toEqual({
+    summarize: { rung: { model: 'haiku', effort: 'high' }, n: 0, explore: { model: 'sonnet', effort: 'medium' } },
+  })
+  // A step of the kind already trying it: the others stay on the learned rung.
+  expect(exploreRungs(learnedOnSonnet, set, learned, [{ kind: 'summarize', rung: { model: 'haiku', effort: 'high' } }])).toEqual(learned)
+  // One ok try, then 2 runs on the learned rung: too soon for the next try; after 4, again.
+  const tried = [...learnedOnSonnet, sum(6, 'haiku', 'high'), sum(7, 'sonnet', 'medium'), sum(8, 'sonnet', 'medium')]
+  expect(exploreRungs(tried, set, learnedRungs(tried, set))).toEqual(learnedRungs(tried, set))
+  const later = [...tried, sum(9, 'sonnet', 'medium'), sum(10, 'sonnet', 'medium')]
+  expect(exploreRungs(later, set, learnedRungs(later, set)).summarize).toMatchObject({ rung: { model: 'haiku', effort: 'high' }, n: 1 })
+  // A weak try stops the tries on that rung.
+  const weak = [...learnedOnSonnet, sum(6, 'haiku', 'high', { verdict: 'weak' }), ...[7, 8, 9, 10, 11].map(n => sum(n, 'sonnet', 'medium'))]
+  expect(exploreRungs(weak, set, learnedRungs(weak, set))).toEqual(learnedRungs(weak, set))
+  // Once the rung below has its 5 ok runs it is learned (the cheapest good rung), and the tries move one rung further down.
+  const earned = [...learnedOnSonnet, ...[6, 7, 8, 9, 10].map(n => sum(n, 'haiku', 'high')), ...[11, 12, 13, 14].map(n => sum(n, 'haiku', 'high'))]
+  const now = learnedRungs(earned, set)
+  expect(now.summarize?.rung).toEqual({ model: 'haiku', effort: 'high' })
+  expect(exploreRungs(earned, set, now).summarize).toMatchObject({ rung: { model: 'haiku', effort: 'medium' }, explore: { model: 'haiku', effort: 'high' } })
+  // The bottom of the ladder has nothing below.
+  const bottom = [1, 2, 3, 4, 5].map(n => sum(n, 'haiku', 'low'))
+  expect(exploreRungs(bottom, set, learnedRungs(bottom, set))).toEqual(learnedRungs(bottom, set))
+})
+
+test('a try one rung below is routed there, and the plan says so', async ($, on) => {
+  const past = [1, 2, 3, 4, 5].map(n => sum(n, 'sonnet', 'medium'))
+  const { calls } = await boot($, on, [['history', past], ['settings', { ...mergeSettings({}), autoRoute: true, autoExplore: true }]], [{ id: 'x1', description: '[s1] sum' }])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Summarize', tier: 'standard', where: 'agent', kind: 'summarize' }] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'haiku', effort: 'high' })
+  const after = await $.tool.call({ tool: PLAN, done: [] } as never)
+  expect(String(after.result)).toContain('[s1] Summarize: standard, haiku/high')
+  // Delegated again while it runs (a second call of the same run), it stays on the rung it was put on.
+  await $.tool.call({ tool: 'Agent', description: '[s1] sum', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: 'haiku', effort: 'high' })
 })

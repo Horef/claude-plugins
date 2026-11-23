@@ -105,12 +105,12 @@ export const prevRung = (r: Rung, set?: Ladder) => {
 export const rungLabel = (r: Rung) => `${r.model}/${r.effort}`
 
 /** Per kind, the rung auto mode runs it on, and from how many runs that was learned. */
-export type Learned = Record<string, { rung: Rung; n: number }>
+export type Learned = Record<string, { rung: Rung; n: number; explore?: Rung }>
 
 /** Where a step's rung comes from before the user's own picks: auto mode's learned rung, the kind's default, or the tier. */
-export const baseRung = (s: Step, set: Settings, learned?: Learned): Rung & { source: 'tier' | 'kind' | 'auto'; n?: number } => {
+export const baseRung = (s: Step, set: Settings, learned?: Learned): Rung & { source: 'tier' | 'kind' | 'auto'; n?: number; explore?: Rung } => {
   const auto = s.kind ? learned?.[s.kind] : undefined
-  if (auto) return { ...auto.rung, source: 'auto', n: auto.n }
+  if (auto) return { ...auto.rung, source: 'auto', n: auto.n, ...(auto.explore ? { explore: auto.explore } : {}) }
   const own = s.kind ? set.kinds?.[s.kind] : undefined
   if (own) return { model: own.model, effort: own.effort, source: 'kind' }
 
@@ -434,6 +434,7 @@ export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }
   autoRoute: stored?.autoRoute === true,
   autoMinRuns: wholeIn(stored?.autoMinRuns, 1, 1000) ?? DEFAULT_SETTINGS.autoMinRuns,
   autoOkPercent: wholeIn(stored?.autoOkPercent, 1, 100) ?? DEFAULT_SETTINGS.autoOkPercent,
+  autoExplore: stored?.autoExplore === true,
   models: Array.isArray(stored?.models) ? stored.models.filter(m => typeof m === 'string' && !MODELS.includes(m)) : [],
   prices: { ...(stored?.prices && typeof stored.prices === 'object' ? stored.prices : {}) },
   log: stored?.log !== false,
@@ -509,7 +510,7 @@ export const hereNeeds = (s: Step, set: Settings, mainModel: Model | undefined):
 export const rungSource = (s: Step, set: Settings, learned?: Learned) => {
   if (s.model && s.effort) return undefined
   const base = baseRung(s, set, learned)
-  if (base.source === 'auto') return `auto: learned, ${base.n} runs`
+  if (base.source === 'auto') return base.explore ? `auto: trying one rung below ${rungLabel(base.explore)} (${base.n} runs here so far)` : `auto: learned, ${base.n} runs`
   if (base.source === 'kind') return `${s.kind} default`
 
   return undefined
@@ -878,6 +879,12 @@ const isWeak = (x: HistoryEntry) => x.rerun || x.verdict === 'weak'
 const isOk = (x: HistoryEntry) => !x.rerun && x.verdict === 'ok'
 const isOverkill = (x: HistoryEntry) => !x.rerun && x.verdict === 'overkill'
 
+/**
+ * The runs auto mode judges a rung by: a run with no verdict (and no rerun) says nothing either way, since the lead did not judge
+ * it, so it is left out instead of counting against the rung (0.29.4: with a third of runs unjudged, no rung could reach 90%).
+ */
+export const voicedRuns = (h: readonly HistoryEntry[]) => judgedRuns(h).filter(x => x.rerun || !!x.verdict)
+
 export type VerdictCounts = { ok: number; weak: number; overkill: number; none: number; cutShort: number }
 
 const countVerdicts = (xs: readonly HistoryEntry[]): VerdictCounts => ({
@@ -986,7 +993,7 @@ export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggesti
 /** Auto mode: per kind, the cheapest rung that did it well (ok in at least `autoOkPercent` of at least `autoMinRuns` runs there). */
 export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned => {
   const out: Learned = {}
-  const runs = judgedRuns(h).filter(isAgentRun)
+  const runs = voicedRuns(h).filter(isAgentRun)
   for (const kind of kindsOf(runs, Infinity)) {
     const by = new Map<string, HistoryEntry[]>()
     for (const x of runs.filter(r => r.kind === kind)) by.set(entryRung(x), [...(by.get(entryRung(x)) ?? []), x])
@@ -996,6 +1003,34 @@ export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned
       .filter(g => rank(g.rung, set) !== undefined)
       .sort((a, b) => rank(a.rung, set)! - rank(b.rung, set)!)
     if (good[0]) out[kind] = good[0]
+  }
+
+  return out
+}
+
+/** Auto mode's exploration: after this many runs on a learned rung since the last try below it, the next run tries the rung below. */
+export const EXPLORE = { every: 4 }
+
+/**
+ * Auto mode with `autoExplore`: per kind, the learned rung, or now and then the rung below it, so a cheaper rung can earn its place
+ * (auto mode alone only picks among rungs with history, so a kind that always ran on Sonnet never learns that Haiku would do).
+ * The rung below is tried while it has fewer than `autoMinRuns` judged runs and none of them weak; once it has enough and does well,
+ * `learnedRungs` picks it as the cheapest good rung, and the tries move one rung further down. `busy`: rungs a running step of the
+ * kind is on now, so parallel steps do not all try at once.
+ */
+export const exploreRungs = (h: readonly HistoryEntry[], set: Settings, learned: Learned, busy: readonly { kind: string; rung: Rung }[] = []): Learned => {
+  const out: Learned = { ...learned }
+  const all = judgedRuns(h).filter(isAgentRun)
+  for (const [kind, got] of Object.entries(learned)) {
+    const below = prevRung(got.rung, set)
+    if (!below || busy.some(b => b.kind === kind && b.rung.model === below.model && b.rung.effort === below.effort)) continue
+    const mine = all.filter(x => x.kind === kind)
+    const low = mine.filter(x => sameRung(x, below))
+    const lowVoiced = voicedRuns(low)
+    if (lowVoiced.some(isWeak) || lowVoiced.length >= set.autoMinRuns) continue
+    const last = low.map(x => x.at).sort().at(-1) ?? ''
+    if (mine.filter(x => sameRung(x, got.rung) && x.at > last).length < EXPLORE.every) continue
+    out[kind] = { rung: { model: below.model, effort: below.effort }, n: low.length, explore: got.rung }
   }
 
   return out
@@ -1312,7 +1347,7 @@ export type HelperLearned = Record<string, (HelperChoice & { n: number })[]>
 export const learnedHelpers = (h: readonly HistoryEntry[], set: Settings, cfg: HelperConfig | undefined, cache?: ModelsCache): HelperLearned => {
   const out: HelperLearned = {}
   if (!cfg) return out
-  const runs = judgedRuns(h).filter(isHelperEntry)
+  const runs = voicedRuns(h).filter(isHelperEntry)
   for (const kind of kindsOf(runs, Infinity)) {
     const by = new Map<string, { choice: HelperChoice; xs: HistoryEntry[] }>()
     for (const x of runs.filter(r => r.kind === kind)) {

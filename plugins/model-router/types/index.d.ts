@@ -197,6 +197,8 @@ export type Settings = {
   /** Auto mode picks a rung only with at least this many runs on it, and at least `autoOkPercent` of them ok. */
   autoMinRuns: number
   autoOkPercent: number
+  /** Auto mode tries the rung below a learned one now and then (one run in EXPLORE.every + 1), so a cheaper rung can earn its place. */
+  autoExplore: boolean
   /** Models known beyond the defaults: seen in usage or added by name. */
   models: Model[]
   /** Prices set in Settings, over the defaults; a model with none has no price. */
@@ -242,6 +244,8 @@ export type Step = {
   /** Estimated dollars had the main chat's model done the same tokens. */
   mainCost: number
   resolvedModel?: string
+  /** Auto mode's exploration put this step on the rung below its learned one (0.29.4): the step's model and effort hold it. */
+  explored?: Rung
   /** Most of the step's tokens were the subagent's start-up, not its work. */
   setupHeavy?: boolean
   reruns: number

@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.29.4 (2026-11-22)
+- auto mode leaves runs with no verdict out of its share and can try the rung below a learned one (autoExplore, off by default) (O7)
+
 ## 0.29.3 (2026-11-22)
 - rules return after a compaction the router never hears of: the chat row that carried them is checked each turn; status names the model without prompt.compose (sec-default on Team accounts) (O6)
 
