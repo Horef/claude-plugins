@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>session-status-line guide</title>
+<meta name="description" content="Install the session status line, learn what each part means, and turn on the optional extras one at a time.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="nav" aria-label="Site"><div class="nav-in">
+  <a href="index.html">Home</a>
+  <a href="model-router.html">model-router</a>
+  <a href="session-status-line.html" aria-current="page">status line</a>
+  <a href="updating.html">Updating</a>
+</div></nav>
+<main>
+
+<h1>session-status-line</h1>
+<p class="lede">A compact status line above your prompt that shows the state of a chat at a glance: the model, how full the context is, your usage limits, and the cost. Install it and it works. The extras below are optional.</p>
+<ul class="toc" aria-label="On this page">
+  <li><a href="#reading">Reading the line</a></li>
+  <li><a href="#install">Install</a></li>
+  <li><a href="#advanced">Going further</a></li>
+  <li><a href="#update">Updating</a></li>
+  <li><a href="#trouble">Troubleshooting</a></li>
+</ul>
+
+<h2 id="reading">1. Reading the line</h2>
+<figure>
+  <div class="term" role="img" aria-label="Illustration of the status line with five numbered parts">
+    <span class="row"><span class="seg"><span class="n">1</span>✅ Opus 5.5 ·M</span> <span class="seg"><span class="n">2</span>ctx ▰▰▱▱▱▱ 30% 296k/1M</span> <span class="seg"><span class="n">3</span>5h 21% ⟳4h14m</span> <span class="seg">7d 30% ⟳4d16h</span></span>
+    <span class="row"><span class="seg"><span class="n">4</span>helpers</span> <span class="seg">Kiro 42% ⟳18d3h</span> <span class="seg">Copilot 28% ⟳21d16h</span> <span class="seg">Codex 5h 4% 7d 1% ⟳4h10m</span></span>
+    <span class="row"><span class="seg">agy 5h 0% 7d 1%</span> <span class="seg">Argon 36% ⟳5d4h</span> <span class="seg">uni 5h 21% 7d 30% ⟳3d4h</span></span>
+    <span class="row"><span class="seg"><span class="n">5</span>session $35.3</span> <span class="seg">⏱8s</span> <span class="seg">🗜1</span> <span class="seg">12 turns · 1h20m</span></span>
+  </div>
+  <figcaption>Illustration, from the mod's README. Yours shows only the budgets whose tools and logins exist on your computer. When everything fits it is one line; otherwise it wraps into these rows.</figcaption>
+</figure>
+<ol class="legend">
+  <li><span class="n">1</span><span><strong>State and model.</strong> ⏳ means a turn is running, ✅ means idle. Then the model and its thinking level (<code>·H</code> for high). A <code>⇄</code> in magenta for a few turns means you just switched model.</span></li>
+  <li><span class="n">2</span><span><strong>Context.</strong> How full the chat's memory is. The bar is green under 50%, then yellow, orange, and red from 90% with a hint to type <code>/compact</code>.</span></li>
+  <li><span class="n">3</span><span><strong>5h and 7d limits.</strong> Your usage in the current five-hour and seven-day windows, with the time until each resets (⟳). Subscription accounts only. A ⚠ appears only when, at your pace so far, you would run out well before the reset.</span></li>
+  <li><span class="n">4</span><span><strong>Helpers row.</strong> How much of your other subscriptions' quotas you have used (Kiro, Copilot, Codex, Antigravity as <code>agy</code> and <code>Argon</code>), and the limits of your other Claude accounts (here <code>uni</code>). A part with no data is hidden.</span></li>
+  <li><span class="n">5</span><span><strong>Session row.</strong> The chat's cost, how long the last turn took (⏱), how many times it was compacted (🗜), files edited (✎), the prompt cache's time left (<code>cache 42m</code>), the cache warmer's switch (🔥), then turns and age.</span></li>
+</ol>
+<p class="muted small">Colour only shows fullness: things go gold, orange, then bold red as they fill. Labels and the session row stay dim. Dimmed figures with a <code>~</code> are old readings.</p>
+
+<h2 id="install">2. Install and check it works</h2>
+<ol class="steps">
+  <li>In Claude Code (desktop app or terminal), type:
+    <div class="code"><pre>/plugin install session-status-line --marketplace Horef/claude-plugins</pre></div>
+    Confirm adding the marketplace if asked, then choose a scope (<em>Install for you</em> is the usual one).</li>
+  <li>In chats that were already open, type <code>/reload-plugins</code>. New chats load it by themselves.</li>
+  <li>The line appears above your prompt. If it does not, type <code>/status-line on</code>.</li>
+  <li>For a short tour of what it can do, type <code>/status-line help</code>.</li>
+</ol>
+
+<h2 id="advanced">3. Going further: the optional extras</h2>
+<p class="muted">Each card works on its own. They follow one shape: what it is, whether you need it, what it needs, how to turn it on, how to check it, how to turn it off.</p>
+
+<details class="card" id="quotas">
+<summary><span class="t">Quotas of your other subscriptions</span><span class="d">Kiro, Copilot, Codex, Antigravity and Claude extra usage in the line</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>Every five minutes the mod reads how much of each outside budget you have used and shows it in the helpers row: <code>Kiro</code> (credits this month), <code>Copilot</code> (premium credits this month), <code>Codex</code> (5-hour and weekly limits), <code>agy</code> and <code>Argon</code> (Antigravity), and <code>extra</code> (Claude credits spent past your plan's limits).</p>
+<h4>Do you need it?</h4>
+<p>If you use those subscriptions, it saves opening each tool's usage page. If you do not, nothing shows.</p>
+<h4>What you need</h4>
+<ul>
+  <li>The tool installed and logged in on this computer: <code>kiro-cli</code> for Kiro (the line says <code>Kiro log in</code> when its login has gone stale), <code>gh</code> logged in for Copilot, <code>codex</code> for Codex, <code>agy</code> for Antigravity.</li>
+  <li>Claude extra usage needs a Claude subscription account.</li>
+</ul>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>It is on by default. To read now, type <code>/status-line quotas on</code>.</li>
+</ol>
+<h4>Check it works</h4>
+<p>A part appears in the helpers row for each tool that is installed and logged in. A part that cannot be read keeps its last value, and shows a dim <code>~</code> before the number after 30 minutes.</p>
+<h4>Turn it off</h4>
+<p>Type <code>/status-line quotas off</code>. This also stops reading your other Claude accounts.</p>
+</div>
+</details>
+
+<details class="card" id="accounts">
+<summary><span class="t">Your other Claude accounts</span><span class="d">See each account's 5-hour and 7-day limits in one place</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>If you use more than one Claude account on the same computer (each with its own <code>CLAUDE_CONFIG_DIR</code>, for example a work or university plan beside a personal one), each chat shows the other accounts' limits as <code>uni 5h 21% 7d 30% ⟳3d4h</code>. Each session saves its own two windows to a small file in <code>~/.config/claude-accounts/</code> (no token, email or plan). Sessions of the other accounts read those files.</p>
+<h4>Do you need it?</h4>
+<p>Only if you have two or more accounts. With one account, nothing shows.</p>
+<h4>What you need</h4>
+<p>The mod installed under each account, and a session run in each, so each writes its file. Install it per account (see <a href="#update">Updating</a>: each account updates on its own).</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Install the mod under each account and start a chat in each.</li>
+  <li>Optional: give an account a short name with <code>/status-line account-label work</code>. The default is the folder name without <code>.claude-</code>, so <code>~/.claude-uni</code> is <code>uni</code>.</li>
+</ol>
+<h4>Check it works</h4>
+<p>The other account appears in the helpers row, dim if its reading is over 6 hours old. Type <code>/status-line account-label</code> with no name to see this account's label.</p>
+<h4>Turn it off</h4>
+<p><code>/status-line quotas off</code> hides them. The extra live read (fresher figures, using the other account's login, never refreshing it) has its own switch: <code>/status-line live off</code>. On a Mac the first live read may ask for Keychain permission.</p>
+</div>
+</details>
+
+<details class="card" id="warmer">
+<summary><span class="t">The cache warmer</span><span class="d">Keeps a waiting chat cheap to come back to</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>Claude remembers a chat's contents in a <em>prompt cache</em> for an hour on a subscription (5 minutes otherwise). Reading from the cache is far cheaper than reading the whole chat again. If you leave a long chat idle past that, the next message pays full price. The warmer prevents this: 50 minutes after the last request it sends one tiny side request over the conversation, so the cache stays alive. Nothing is added to your chat, and Claude is not woken into a turn. A warm costs about a tenth of a fresh read plus a few words, and counts toward your limits like any request.</p>
+<h4>Do you need it?</h4>
+<p>If you leave long chats waiting (a run that reports back every couple of hours, or a lunch break) and then continue them. It never revives a cache that has already lapsed, and it does not bother with a 5-minute cache.</p>
+<h4>What you need</h4>
+<p>Nothing installed. It belongs to the chat: a new chat, <code>/clear</code> or <code>/resume</code> starts with the warmer off.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Press 🔥 in the band (on for 12 hours), or type <code>/status-line warm</code>.</li>
+  <li>For other lengths: <code>/status-line warm for 8h</code>, <code>/status-line warm until 07:30</code> or <code>/status-line warm forever</code>.</li>
+  <li>To have it on in every chat, type <code>/status-line warm every-chat on</code>. It warms until 12 hours after the chat's last message.</li>
+</ol>
+<h4>Check it works</h4>
+<p>🔥 is lit and shows how many warms were sent, and <code>cache 42m</code> shows the time left. <code>/status-line warm status</code> gives the details. <code>/status-line warm now</code> sends one warm at once and says how much the cache served.</p>
+<h4>Turn it off</h4>
+<p>Type <code>/status-line warm off</code>. If it cannot keep the cache alive (a login problem, a lapse), it switches itself off and tells you.</p>
+</div>
+</details>
+
+<details class="card" id="idle-compact">
+<summary><span class="t">Idle compaction</span><span class="d">Shrinks a quiet, large chat before its cache runs out</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>To <em>compact</em> a chat is to replace its history with a summary. Claude Code does this to an idle chat shortly before its cache would lapse, and it cannot see the warmer. This option is the mod's own version: when on, a quiet chat of 200k tokens or more is compacted 5 minutes before its cache lapses, unless the warmer is keeping the cache alive. While the warmer is on and the cache is alive, the mod declines Claude Code's own idle compaction, and does the owed one itself later if the warmer stops.</p>
+<h4>Do you need it?</h4>
+<p>Only if you use the warmer on large chats and want to control when compaction happens. It is off by default.</p>
+<h4>What you need</h4>
+<p>Nothing. On Team and Enterprise accounts, Claude Code's built-in <code>cc-plugin-sec-default</code> plugin keeps compactions away from mods, so Claude Code's own idle compaction compacts about 54 minutes after your last message whatever the warmer does. There, also set <code>"idleCompaction": false</code> in your <code>settings.json</code> and use this option instead.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Type <code>/status-line warm idle-compact on</code>, or use the ⓘ options row on the band.</li>
+  <li>Optional: to turn off Claude Code's own idle compaction, put <code>"idleCompaction": false</code> in <code>settings.json</code> (in your <code>CLAUDE_CONFIG_DIR</code>, default <code>~/.claude</code>).</li>
+</ol>
+<h4>Check it works</h4>
+<p><code>/status-line warm status</code> and the ⓘ row say when a compaction is owed ("compacts at 08:25").</p>
+<h4>Turn it off</h4>
+<p><code>/status-line warm idle-compact off</code>. To keep a chat as it is instead of a compaction that is owed, type <code>/status-line warm skip-compact</code>.</p>
+</div>
+</details>
+
+<details class="card" id="layout">
+<summary><span class="t">Layout and look</span><span class="d">One line or rows, colours, plain characters</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>By default the line is one line when it fits and grouped rows (Claude, helpers, session) when it does not. You can force either, switch the line off, or change how it draws.</p>
+<h4>Do you need it?</h4>
+<p>If the line is too wide, too tall, or your terminal shows odd symbols.</p>
+<h4>What you need</h4>
+<p>Nothing. Your choices are remembered across chats.</p>
+<h4>Turn it on</h4>
+<ul>
+  <li><code>/status-line auto</code> (default), <code>/status-line one</code> or <code>/status-line rows</code>.</li>
+  <li><code>/status-line off</code> hides the line; <code>/status-line on</code> brings it back.</li>
+  <li>In the shell you start Claude Code from: <code>NO_COLOR=1</code> drops colours, <code>SESSION_STATUS_ASCII=1</code> uses plain characters.</li>
+</ul>
+<h4>Check it works</h4>
+<p>The line changes at once. <code>/status-line debug</code> prints the version, the measured width and the last readings.</p>
+<h4>Turn it off</h4>
+<p><code>/status-line auto</code> returns to the default.</p>
+</div>
+</details>
+
+<h2 id="update">4. Keeping it updated</h2>
+<p>Mods do not update by themselves unless you switch that on. You need only one of these:</p>
+<ol class="steps">
+  <li><strong>Turn on auto-update for the marketplace (once).</strong> In a chat, run <code>/plugin</code>, open the <em>Marketplaces</em> tab, pick <code>horef-claude-plugins</code> and turn auto-update on.</li>
+  <li><strong>Or update when the mod tells you.</strong> When a newer version exists the line shows an <em>Update</em> notice. The <em>Update</em> button fills the chat box with a request for Claude to run the update, and you press Enter. You can also type <code>/status-line update</code> to check now.</li>
+</ol>
+<p>Then type <code>/reload-plugins</code> in chats that are already open. Each Claude account updates on its own. Full steps: <a href="updating.html">Updating</a>.</p>
+
+<h2 id="trouble">5. Troubleshooting</h2>
+<dl class="trouble">
+  <div><dt>I see no line</dt><dd>Type <code>/status-line on</code>. If the command is unknown, the mod is not loaded: type <code>/reload-plugins</code>, or run <code>claude plugin list</code> in a terminal and look for session-status-line.</dd></div>
+  <div><dt>A budget I expect is missing</dt><dd>A part appears only when its tool is installed and logged in. For Kiro the line says <code>Kiro log in</code> when its login has expired: run <code>kiro-cli login</code>. Check that <code>/status-line quotas</code> is on.</dd></div>
+  <div><dt>Numbers are dim with a ~</dt><dd>That reading is old (over 30 minutes; other accounts, over 6 hours). Its tool could not be reached the last few times. Reconnect or log in again.</dd></div>
+  <div><dt>The line is cut off or too tall</dt><dd>Try <code>/status-line rows</code> or <code>/status-line one</code>. When rows do not fit, the mod drops parts, reset times first.</dd></div>
+  <div><dt>The warmer switched itself off</dt><dd>It does that on an error that will not pass, or when the cache lapsed (the computer slept). It says why in the chat. Switch it on again with <code>/status-line warm</code>.</dd></div>
+  <div><dt>Something else</dt><dd>Run <code>/status-line debug</code> and send the output.</dd></div>
+</dl>
+
+</main>
+<footer class="foot">
+  <p>Source and full reference: <a href="https://github.com/Horef/claude-plugins/tree/main/plugins/session-status-line">the session-status-line folder on GitHub</a>. Repository: <a href="https://github.com/Horef/claude-plugins">github.com/Horef/claude-plugins</a>.</p>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>model-router guide</title>
+<meta name="description" content="Install model-router, run your first plan, read the pane, and turn on the advanced features one at a time.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="nav" aria-label="Site"><div class="nav-in">
+  <a href="index.html">Home</a>
+  <a href="model-router.html" aria-current="page">model-router</a>
+  <a href="session-status-line.html">status line</a>
+  <a href="updating.html">Updating</a>
+</div></nav>
+<main>
+
+<h1>model-router</h1>
+<p class="lede">Plan multi-step work, run each step on the cheapest Claude model that does it well, and see what it cost and saved. Start with the first four sections. Everything after that is optional.</p>
+<ul class="toc" aria-label="On this page">
+  <li><a href="#what">What it does</a></li>
+  <li><a href="#install">Install</a></li>
+  <li><a href="#first-plan">First plan</a></li>
+  <li><a href="#pane">The pane</a></li>
+  <li><a href="#settings">Settings</a></li>
+  <li><a href="#advanced">Going further</a></li>
+  <li><a href="#update">Updating</a></li>
+  <li><a href="#trouble">Troubleshooting</a></li>
+</ul>
+
+<h2 id="what">1. What it does</h2>
+<p>When you ask for something with several steps, model-router first makes a <strong>plan</strong>: a short list of steps, each marked with how hard it is. You approve the plan. Then each step runs on the cheapest Claude model that should do it well, and the pane shows what it cost and how much that saved. Your main chat's own model never changes.</p>
+<p><strong>Why this saves usage.</strong> A big model costs more for every word it reads and writes. Many steps (finding files, listing, summarizing) do not need it. The router sends those to a smaller model, in a separate short run called a <em>subagent</em> (a helper Claude started for one step), and keeps the big model for the hard parts. The saving it shows compares each step with your main chat's model doing the same work. It is an estimate from list prices.</p>
+<p class="note"><strong>Words used here.</strong> A <em>level</em> says how hard a step is: <em>light</em> (mechanical), <em>standard</em> (follows instructions), <em>deep</em> (needs judgment). <em>Thinking</em> (also called effort) is how long the model reasons: low, medium, high. A <em>rung</em> is one model-and-thinking pair on the ladder from cheap to strong, such as "Haiku low" or "Sonnet high".</p>
+
+<h2 id="install">2. Install and check it works</h2>
+<ol class="steps">
+  <li>In Claude Code (desktop app or terminal), type:
+    <div class="code"><pre>/plugin install model-router --marketplace Horef/claude-plugins</pre></div>
+    Confirm adding the marketplace when asked, then choose a scope (<em>Install for you</em> is the usual one).</li>
+  <li>In chats that were already open, type <code>/reload-plugins</code>. New chats load it by themselves.</li>
+  <li>Look at the line under your prompt. You should see:
+    <div class="code"><pre>⇄ Router on · rules go out with your next message · /router for the pane</pre></div>
+    After your first message it changes to <code>rules sent to opus</code> (or whichever model your chat uses).</li>
+  <li>Type <code>/router</code> to open the pane. The first line, the <em>health line</em>, should read:
+    <div class="code"><pre>Router on · helpers off</pre></div></li>
+</ol>
+<div class="note"><strong>"Helpers off" is normal.</strong> <em>Helpers</em> are an optional extra: running steps on your other subscriptions. Without them, every step runs as a Claude subagent, which needs no setup. You can ignore this word until you read <a href="#helpers">the Helpers card</a>.</div>
+
+<h2 id="first-plan">3. Your first plan (2 minutes)</h2>
+<p>The router only steps in when a request clearly has several steps. A one-step question ("what does this function do?") gets no plan, and that is on purpose. Paste this to try it:</p>
+<div class="code"><pre>Do this in three separate steps, and plan them first:
+1. Find the five largest files in this folder.
+2. Summarize in one sentence what each of them is for.
+3. Tell me which one is most worth cleaning up first, and why.</pre></div>
+<p>Claude lists the steps and asks you to approve them. The question has three answers:</p>
+<ul>
+  <li><strong>Run it</strong>: go ahead with the plan as it is now. Any edits you made in the pane are kept.</li>
+  <li><strong>Run it, and auto-approve future plans</strong>: the same, and from now on plans run without asking. You can switch the asking back on in Settings.</li>
+  <li><strong>Change the steps</strong>: the steps themselves need work (add, drop, split or reword). Nothing runs. Claude asks what to change, or, if you typed it under <em>Other</em>, revises right away.</li>
+</ul>
+<p><strong>While it runs.</strong> The status line shows progress dots and the running step with its model. In the pane, each step turns from ○ (planned) to ◐ (running) to ● (done). When a step finishes, Claude checks the result and gives it a <em>verdict</em> (ok, weak, overkill or cut short). That is how the router learns, see <a href="#verdicts">Verdicts and advice</a>. The cost line fills in as the answers arrive.</p>
+
+<h2 id="pane">4. Reading the pane (<code>/router</code>)</h2>
+<figure>
+  <div class="term" role="img" aria-label="Illustration of the model-router pane with five numbered parts">
+    <span class="row"><span class="n">1</span>Router on · helpers off</span>
+    <span class="gap"></span>
+    <span class="row"><strong>Plan · 2 of 3 done</strong></span>
+    <span class="step">● s1 Find the five largest files
+      <span class="l2"><span class="n">2</span>Claude agent · light · haiku low · ≈$0.01 · ok</span></span>
+    <span class="step">● s2 Summarize each file
+      <span class="l2">Claude agent · standard · sonnet medium · ≈$0.04 · <span class="warn">weak</span> <span class="btnish acc"><span class="n">3</span>↑ Rerun on sonnet high</span></span></span>
+    <span class="step">◐ s3 Pick the best one to clean up
+      <span class="l2">this chat · rated deep</span></span>
+    <span class="gap"></span>
+    <span class="row"><span class="n">4</span>This plan ⇄ this chat ≈$0.42 · Claude agents ≈$0.05 · saved ≈$0.11 (21%)</span>
+    <span class="gap"></span>
+    <span class="row"><span class="n">5</span><span class="btnish">Settings ▸</span> <span class="btnish">Write report</span></span>
+  </div>
+  <figcaption>Illustration. The wording is the pane's; the steps and amounts are made up.</figcaption>
+</figure>
+<ol class="legend">
+  <li><span class="n">1</span><span><strong>Health line.</strong> Always first. Quiet when all is well. It turns into a <code>✗</code> message when something you switched on cannot run.</span></li>
+  <li><span class="n">2</span><span><strong>A step row.</strong> Id and title on the first line. On the second: where it runs (<em>this chat</em>, <em>Claude agent</em>, or <em>other subscription</em> when helpers are on), its level, then the model and thinking. Click ▸ on a row for the details: tokens, where its model came from, the verdict's reason.</span></li>
+  <li><span class="n">3</span><span><strong>Rerun one rung up.</strong> A finished step that came back weak can be redone on the next stronger rung. Claude is asked to run it again.</span></li>
+  <li><span class="n">4</span><span><strong>Cost line.</strong> The ⇄ button cycles three spans: <em>This plan</em>, <em>This chat</em> and <em>All time</em>. It shows what the main chat cost, what the subagents cost, and what was saved. <em>Details ▸</em> opens the tiles and tables. A cost shown as "?" means a model with no price (see <a href="#models-prices">Models and prices</a>).</span></li>
+  <li><span class="n">5</span><span><strong>Settings and report.</strong> <em>Settings ▸</em> replaces the plan until you press <em>Done</em>. <em>Write report</em> is for asking someone for help.</span></li>
+</ol>
+<div class="cols">
+  <div class="col">
+    <h4>In the terminal</h4>
+    <ul>
+      <li>Give the pane the keys: press <kbd>ctrl</kbd>+<kbd>x</kbd> then <kbd>Tab</kbd>, or click it.</li>
+      <li><kbd>↑</kbd> <kbd>↓</kbd> scroll. <kbd>Esc</kbd> returns to the prompt.</li>
+      <li>A short choice (up to three options) is a button marked <strong>⇄</strong>: press Enter to go to the next option.</li>
+      <li>A longer choice (models, effort, Spend) is a button marked <strong>▾</strong>: Enter opens a list under it, <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>Tab</kbd> move, Enter picks. The current one has ●.</li>
+    </ul>
+  </div>
+  <div class="col">
+    <h4>In the desktop app</h4>
+    <ul>
+      <li>Type <code>/router</code>, or turn on <a href="#settings">Open the pane in new chats</a>.</li>
+      <li>Scroll with the mouse or trackpad.</li>
+      <li>Click ▸ to open a step, click a picker to change it, click a button to press it.</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="settings">5. The settings most people touch</h2>
+<p>Press <em>Settings ▸</em> in the pane. The top five rows (the <em>Basics</em>) are the ones most people ever change. A small • marks any value that differs from the default.</p>
+<ul class="list">
+  <li><b>Ask me before a plan runs</b><span>On by default: you see the three-answer question. Turn it off if you trust the plans and want them to run at once.</span></li>
+  <li><b>Plan every message</b><span>Off by default. When on, every message you type carries a reminder to plan before using tools, even for one-step tasks. Turn it on if you want the router in every request.</span></li>
+  <li><b>Spend</b><span>The models and thinking the three levels run on. <em>Thrifty</em>: haiku low, sonnet low, opus medium (light, standard, deep). <em>Balanced</em> (default): haiku low, sonnet medium, opus high. <em>Best quality</em>: haiku high, sonnet high, opus high. <em>Custom</em> appears when you set the levels by hand under <em>Models per level</em>.</span></li>
+  <li><b>Open the pane in new chats</b><span>Saves typing <code>/router</code> every time.</span></li>
+  <li><b>Other subscriptions</b><span>Off / Long steps / All steps. Only for <a href="#helpers">helpers</a>. Leave it Off unless you have set them up.</span></li>
+</ul>
+<p>Below the basics are closed groups (Models per level, Other subscriptions, Learning, Models and prices, Skills, Diagnostics, Advanced). Each closed group says in one line what is inside. Nothing there needs touching to get value from the router. Your settings are remembered across chats and are kept in <code>~/.config/model-router/settings.json</code>, so they come back after a reinstall.</p>
+
+<h2 id="advanced">6. Going further: the advanced features</h2>
+<p class="muted">Each card works on its own. Open only the ones you want. They all follow the same shape: what it is, whether you need it, what it needs, how to turn it on, how to check it, how to turn it off.</p>
+
+<details class="card" id="verdicts">
+<summary><span class="t">Verdicts, advice and Apply</span><span class="d">How the router learns which model each kind of work needs</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>Each step Claude delegates gets a <em>kind</em> (a short label such as <code>summarize</code> or <code>code-review</code>), and when it finishes Claude gives it a <em>verdict</em>: <strong>ok</strong> (used as returned or with small edits), <strong>weak</strong> (needed a rerun or had a real error), <strong>overkill</strong> (plainly mechanical work that ran higher than it needed), or <strong>cut short</strong> (stopped by something outside the model, such as a lost connection or quota; it says nothing about the model). From these the pane suggests changes, called <em>advice</em>, each with an <em>Apply</em> button.</p>
+<h4>Do you need it?</h4>
+<p>It runs by itself. It pays off if you use the router for the same kinds of work again and again.</p>
+<h4>What you need</h4>
+<p>Nothing to install. Advice appears once a kind has at least 3 runs on the rung it uses now.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Use the router for a while. Under the cost line the pane says <code>History: 12 runs; advice needs 3 on one rung.</code></li>
+  <li>When advice appears under the cost line it shows its evidence, for example "code-review on light: 3 of 4 weak". It suggests one rung up when at least half of the runs were weak, or one rung down when at least half were overkill and none of the last three was weak.</li>
+  <li>Press <em>Apply</em> to accept. For a kind this sets that kind's default model (Settings → Learning). For runs with no kind it changes that level's model and thinking.</li>
+</ol>
+<h4>Check it works</h4>
+<p>After <em>Apply</em>, open Settings → Learning: the closed line says how many kinds are tuned (for example <code>auto off · 2 kinds tuned</code>).</p>
+<h4>Turn it off</h4>
+<p>Nothing changes unless you press <em>Apply</em>, so just do not press it. To undo one, Settings → Learning → the kind → <em>reset</em>. To start over, Settings → Advanced → <em>Clear history</em>; it asks you to confirm. A run wrongly marked weak because of a lost connection can be fixed with the quiet <em>cut short?</em> link on its card (<em>undo</em> puts the old verdict back).</p>
+</div>
+</details>
+
+<details class="card" id="auto">
+<summary><span class="t">Auto mode, and trying a cheaper rung <span class="tag">needs 0.29.4</span></span><span class="d">Let the router pick the model for each kind from its own history</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p><strong>Auto mode</strong> sends a kind of step to the cheapest rung that has worked well for it before: by default, at least 90% ok over at least 5 runs on that rung. Your own picks on a step still win. <strong>Try a cheaper rung now and then</strong> is a second switch, off by default: auto mode alone only chooses among rungs it has seen, so a kind that always ran on Sonnet never finds out that Haiku would do. With this on, after every 4 runs on the learned rung, the next run of that kind tries one rung down. If the try was weak (or you reran it), the router stops trying that rung. If it works enough times, it becomes the new learned rung.</p>
+<h4>Do you need it?</h4>
+<p>Only if you plan many steps of the same kinds and want the router to tune itself. Auto mode changes routing without asking, so wait until the advice has proved right a few times. The cheaper-rung switch is an experiment that spends a few runs to learn; leave it off if you would rather not risk a weaker answer now and then.</p>
+<h4>What you need</h4>
+<p>Some history with verdicts (see the card above). The cheaper-rung switch needs model-router 0.29.4 or later and works for Claude agent steps only.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Press <em>Settings ▸</em>, then open the group <em>Learning</em>.</li>
+  <li>Switch on <em>Auto mode</em>.</li>
+  <li>Optional: switch on <em>Try a cheaper rung now and then</em>.</li>
+  <li>Optional: under "Auto picks a rung with at least", choose how many runs (3, 5, 8, 10 or 20) and what share must be ok (70, 80, 90, 95 or 100%).</li>
+</ol>
+<h4>Check it works</h4>
+<p>The group's closed line reads <code>auto on · …</code>. A step's details (▸) say where its model came from, for example "auto: sonnet · high (learned, 5 runs)". A try says "auto: trying haiku · high, one rung below what it learned".</p>
+<h4>Turn it off</h4>
+<p>Switch the same two switches off in Settings → Learning. Steps go back to the kind's default, then the level's.</p>
+</div>
+</details>
+
+<details class="card" id="helpers">
+<summary><span class="t">Helpers: run steps on your other subscriptions</span><span class="d">Kiro, GitHub Copilot, Antigravity, Codex, another Claude account</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>Normally each step runs as a Claude subagent. With helpers, a step can instead run on <strong>another subscription you already pay for</strong>: Kiro, GitHub Copilot, Antigravity (its command is <code>agy</code>), Codex, or a second Claude account (for example a university plan, which is a second <code>CLAUDE_CONFIG_DIR</code>). Your main chat starts the helper, reads its report and checks it. The cost line then adds <code>Moved off Claude: …</code> showing what each provider used.</p>
+<h4>Do you need it?</h4>
+<p>Only if you have one of those subscriptions and want long, self-contained work (research, code to a spec, sweeps) to use their quota instead of Claude's. Most people do not, and the router works fully without it.</p>
+<h4>What you need</h4>
+<ul>
+  <li>The <strong>herdr-delegate</strong> plugin from this marketplace:
+    <div class="code"><pre>/plugin install herdr-delegate --marketplace Horef/claude-plugins</pre></div></li>
+  <li>At least one helper tool installed on your computer <em>and logged in</em>: Kiro (<code>kiro-cli</code>), GitHub Copilot, Codex, Antigravity (<code>agy</code>), or another Claude account. A second Claude account is found by itself once it has been used on this machine. Open each tool once by hand and sign in, so it does not stop at a login screen later.</li>
+  <li>Python 3 (the router runs herdr-delegate's script with <code>python3</code>).</li>
+  <li><strong>One of these two ways of running them:</strong>
+    <ul>
+      <li><em>Herdr terminals</em>: Herdr's <code>hc</code> command on your PATH, with Claude Code started from a Herdr terminal (Herdr is a terminal app that keeps helper terminals alive). Each helper runs in a terminal you can watch and type into.</li>
+      <li><em>Direct mode</em> (no Herdr): needs herdr-delegate 0.15 or later. Each helper runs once, on its own, in the background. Compared with Herdr: no live screen, no approvals while it runs (anything outside its allowed list is refused and reported as blocked), no questions, and a run stops after 60 minutes by default.</li>
+    </ul>
+  </li>
+</ul>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Install herdr-delegate and your helper tool(s) as above, then type <code>/reload-plugins</code>.</li>
+  <li>Press <em>Settings ▸</em>. Under the basics, set <em>Other subscriptions</em> to <em>Long steps</em> (only long self-contained steps go to helpers) or <em>All steps</em> (every self-contained step that would be a subagent step). This costs the chat one prompt-cache refresh.</li>
+  <li>Open the group <em>Other subscriptions</em> to see the order each level tries its helpers in (for example <code>deep: kiro → copilot → agy</code>) and to change it with <em>Edit</em>. <em>Run helpers</em> chooses <em>Herdr, else direct</em> (the default), <em>Herdr only</em> or <em>direct only</em>.</li>
+</ol>
+<h4>Check it works</h4>
+<p>The health line says what you have: <code>✓ Router on · helpers: Herdr (Kiro, Copilot, Antigravity)</code> or <code>✓ Router on · helpers: direct mode (no Herdr terminal)</code>. If something is missing it says <code>✗ Helpers can't run: …</code> and names the first problem, for example <code>this chat is not inside a Herdr terminal</code>. Press <em>Why ▸</em> next to it: it lists every check with a one-line fix. Fix the first ✗, press <em>Look again</em> in Settings → Other subscriptions, and read the line again. The status line adds <code>helpers ✗</code> while it is broken.</p>
+<h4>Turn it off</h4>
+<p>Settings → <em>Other subscriptions</em> → <em>Off</em>. Any helper step in a plan then runs as a subagent. The router runs no commands of its own while helpers are off.</p>
+<p class="small muted">Also in the Other subscriptions group: <em>Helper models</em> (which model and thinking each helper uses; <em>Check models</em> asks each tool what it offers) and <em>Copilot Fusion</em> (off by default). Full reference: the <a href="https://github.com/Horef/claude-plugins/blob/main/plugins/model-router/README.md#helpers-other-subscriptions-and-accounts">README's Helpers section</a>.</p>
+</div>
+</details>
+
+<details class="card" id="new-models">
+<summary><span class="t">The New models card</span><span class="d">When a new model appears, and what to do about it</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>The router notices when a model is new (or gone). With helpers on it reads each installed tool's model list at the start of a chat, and it also notices a new Claude model the first time it appears in your usage. It then asks Claude, once and when your task is finished, to look the model up and write notes (release, strengths, weaknesses, which level it suits). A <em>New models</em> card appears under the health line, only while something is waiting. Each proposal reads like <code>deep Antigravity: gemini-4-neon high → …</code> with <em>Apply</em> and <em>Dismiss</em> buttons.</p>
+<h4>Do you need it?</h4>
+<p>Useful if you use helpers and want to try new models without hunting for them. If you use only Claude, you will rarely see it.</p>
+<h4>What you need</h4>
+<p>Nothing extra for Claude models. For helper models, <a href="#helpers">helpers must be ready</a>.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>It is on by itself. To look now, open Settings → <em>Models and prices</em> and press <em>Check now</em>.</li>
+  <li>When the card shows a line, press <em>Notes ▸</em> to read why it is proposed.</li>
+  <li>Press <em>Apply</em> to make the change (it sets that level's model), or <em>Dismiss</em> to remember that you said no.</li>
+</ol>
+<h4>Check it works</h4>
+<p>After <em>Apply</em> the line says <code>applied</code> in place. Settings → Models and prices shows <code>Model notes (N) · checked &lt;date&gt;</code>.</p>
+<h4>Turn it off</h4>
+<p>Nothing changes without your click, so there is no switch: press <em>Dismiss</em> on a proposal and it is not shown again.</p>
+</div>
+</details>
+
+<details class="card" id="herdr-sidebar">
+<summary><span class="t">The Herdr sidebar (Herdr users)</span><span class="d">The plan in a normal, scrollable column beside your terminals</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>If you run Claude Code inside the Herdr app, a small Herdr mod shows the router's plan in a column on the right: health line, plan rows and cost. It is <strong>read-only</strong>: approving, editing and Settings stay in Claude Code. It helps because the pane cannot scroll while the approval question is open in a terminal.</p>
+<h4>Do you need it?</h4>
+<p>Only if you use Herdr on a Mac and your plans are long.</p>
+<h4>What you need</h4>
+<p>The Herdr app (a <code>~/.config/herdr-app</code> folder), Python 3, and model-router installed.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Run the setup script once, using the newest version folder:
+    <div class="code"><pre>python3 ~/.claude/plugins/cache/horef-claude-plugins/model-router/&lt;version&gt;/herdr/sidebar.py</pre></div></li>
+  <li>It adds a column to a personal copy of Herdr's layout and switches to it. Run it again after a plugin update that changes the <code>herdr/</code> folder.</li>
+  <li>Press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>R</kbd> to show or hide the column.</li>
+</ol>
+<h4>Check it works</h4>
+<p>The column shows the focused chat's plan. With no recent chat it says <code>No router state yet.</code> Start a chat with the router and send a plan.</p>
+<h4>Turn it off</h4>
+<p>Press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>L</kbd> to go back to Herdr's own layout. To stop the router writing the data it reads, switch off Settings → Diagnostics → <em>Show in Herdr</em>.</p>
+</div>
+</details>
+
+<details class="card" id="report">
+<summary><span class="t">Write report</span><span class="d">A file you can send when you ask someone for help</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>A single text file with the router's version, your computer and surface, the settings that differ from the defaults, the health checks with fixes, the helper setup, some counts, and the last 100 log events. The log never holds your prompts, briefs, file contents or step titles.</p>
+<h4>Do you need it?</h4>
+<p>When something is wrong and you are asking Sergiy (or anyone) for help.</p>
+<h4>What you need</h4>
+<p>Nothing. The log that feeds it is on by default and kept for 14 days.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Type <code>/router report</code>. Or press <em>Write report</em> in the pane's footer, or under the health line's <em>Why ▸</em>.</li>
+  <li>The pane says where the file went: <code>~/.config/model-router/report-YYYYMMDD-HHMM.md</code>. Send that file.</li>
+</ol>
+<h4>Check it works</h4>
+<p>The pane shows <code>Report written: …</code> next to the button. Open the file to see what it holds before you send it.</p>
+<h4>Turn it off</h4>
+<p>Nothing is written unless you ask. To stop the log too, switch off Settings → Diagnostics → <em>Keep a log</em>.</p>
+</div>
+</details>
+
+<details class="card" id="reruns">
+<summary><span class="t">Reruns and edits after approval</span><span class="d">Fix one step without redoing the plan</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>Two pane tools for a plan that is running or done. <strong>Rerun one rung up</strong> redoes a finished step on the next stronger model. <strong>Editing a running plan</strong>: change a step's where, level, model or thinking in the pane. The change is held as a draft (marked ✎) until you press <em>Send changes (N)</em> at the top of the plan, so a half-finished edit never reaches Claude. <em>Discard</em> drops it.</p>
+<h4>Do you need it?</h4>
+<p>When a result is not good enough, or you want a later step on a stronger model.</p>
+<h4>What you need</h4>
+<p>Nothing.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Rerun: on a finished step, press <em>↑ Rerun on …</em>. Claude is asked to delegate it again. A rerun counts as weak in the router's learning.</li>
+  <li>Edit: change a picker on a step that has not started, then press <em>Send changes (N)</em>. Claude hears about it at its next turn.</li>
+</ol>
+<h4>Check it works</h4>
+<p>The row says <code>change noted, applies from the next turn</code> until Claude's next turn, and then runs with your values.</p>
+<h4>Turn it off</h4>
+<p>Do not press them. <em>Discard</em> removes an unsent edit. <em>Clear plan</em> (at the end of the plan) empties the pane's plan.</p>
+</div>
+</details>
+
+<details class="card" id="models-prices">
+<summary><span class="t">Models and prices</span><span class="d">What the router assumes things cost, and what "?" means</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>The router's cost and savings figures are estimates from list prices and the token counts the API reports. Settings → <em>Models and prices</em> lists every model it knows, with its price per million tokens. A model with no price shows its cost as "?" and is left out of the savings.</p>
+<h4>Do you need it?</h4>
+<p>When you see "?" in the cost line, or you use a model the router did not know.</p>
+<h4>What you need</h4>
+<p>The price from the model's provider: "input output" in dollars per million tokens, or all four numbers (input, output, cache write, cache read).</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Settings → <em>Models and prices</em>.</li>
+  <li>Find the model and type its price. You can also add a model by name.</li>
+</ol>
+<h4>Check it works</h4>
+<p>The "?" in the cost line turns into an amount on the next response.</p>
+<h4>Turn it off</h4>
+<p>Clear the price box to go back to the default (or none).</p>
+</div>
+</details>
+
+<details class="card" id="groups">
+<summary><span class="t">Groups, parts and Always plan</span><span class="d">Bigger plans, and planning every message</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>Claude can split a step into <em>parts</em> that need different levels or run side by side. A step with parts is a <em>group</em>: it is done when all its parts are, and its cost is the sum. A part can also be several identical agents at once (shown as <code>×N</code>). The parts sit indented under their group, each with its own pickers. <em>Always plan</em> is the setting <em>Plan every message</em> (see Settings above).</p>
+<h4>Do you need it?</h4>
+<p>You do nothing for groups; Claude builds them when the work splits naturally. Turn on Plan every message if you want a plan even for small tasks.</p>
+<h4>What you need</h4>
+<p>Nothing.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Groups appear in plans by themselves.</li>
+  <li>For Always plan: Settings → <em>Plan every message</em>.</li>
+</ol>
+<h4>Check it works</h4>
+<p>A group's second line reads <code>rated deep · 2/3 done · ≈$x</code>. With Plan every message on, the status line adds <code>· always plan</code>.</p>
+<h4>Turn it off</h4>
+<p>Switch <em>Plan every message</em> off in Settings. Groups cannot be switched off; they only appear when the work is split.</p>
+</div>
+</details>
+
+<h2 id="update">7. Keeping it updated</h2>
+<p>Mods do not update by themselves unless you switch that on. There are two ways. You only need one.</p>
+<ol class="steps">
+  <li><strong>Turn on auto-update for the marketplace (once).</strong> In a chat, run <code>/plugin</code>, open the <em>Marketplaces</em> tab, pick <code>horef-claude-plugins</code> and turn auto-update on. After that Claude Code refreshes it at the start of each session.</li>
+  <li><strong>Or update when the mod tells you.</strong> When a newer version exists the mod shows an <em>Update</em> notice. The <em>Update</em> button fills the chat box with a request for Claude to run the update for you, and you press Enter. You can also type <code>/router update</code> to check now.</li>
+</ol>
+<p>Either way, finish with <code>/reload-plugins</code> in chats that are already open. If you use more than one Claude account, each account updates on its own. Full steps: <a href="updating.html">Updating</a>.</p>
+
+<h2 id="trouble">8. Troubleshooting</h2>
+<dl class="trouble">
+  <div><dt>Nothing happens when I send a message</dt><dd>The router only plans requests with several steps. Try the <a href="#first-plan">starter prompt</a>, or turn on <em>Plan every message</em> in Settings. Check that the line under your prompt starts with <code>⇄ Router on</code>.</dd></div>
+  <div><dt>The pane does not show</dt><dd>Type <code>/router</code>. If the command is unknown, the mod is not loaded: type <code>/reload-plugins</code>, or run <code>claude plugin list</code> in a terminal and look for model-router. In a terminal, press ctrl+x then Tab to scroll it. Turn on <em>Open the pane in new chats</em> to have it ready.</dd></div>
+  <div><dt>The health line shows ✗ Helpers can't run</dt><dd>Helpers are optional. Press <em>Why ▸</em> and follow the first fix, then <em>Look again</em> in Settings. Or switch <em>Other subscriptions</em> to Off. See <a href="#helpers">Helpers</a>.</dd></div>
+  <div><dt>Costs show "?"</dt><dd>That model has no price. Add one under <a href="#models-prices">Models and prices</a>.</dd></div>
+  <div><dt>Claude ignores the plan, or the rules did not arrive</dt><dd>Ask Claude: "Call the model-router plan tool with <code>status: true</code> and show me the result." It reports the version, whether the rules are in this chat, and the health checks.</dd></div>
+  <div><dt>Something else is wrong</dt><dd>Type <code>/router report</code> and send the file it writes. See <a href="#report">Write report</a>.</dd></div>
+</dl>
+<p class="small muted">To remove the router, type <code>/plugin uninstall model-router</code>. Plans stop appearing; nothing else changes in your chats.</p>
+
+</main>
+<footer class="foot">
+  <p>Source and full reference: <a href="https://github.com/Horef/claude-plugins/tree/main/plugins/model-router">the model-router folder on GitHub</a> (its README is long and detailed). Repository: <a href="https://github.com/Horef/claude-plugins">github.com/Horef/claude-plugins</a>.</p>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>
