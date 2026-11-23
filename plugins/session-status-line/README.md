@@ -2,6 +2,15 @@
 
 A compact status line above the prompt that shows the state of a session at a glance. Besides what Claude Code exposes to mods, it reads a few outside budgets (Kiro, Copilot, Codex, Antigravity, Claude extra usage) every five minutes where their logins exist, and shows the 5h / 7d limits of your other Claude accounts on the same machine; `/status-line quotas off` stops that.
 
+**Start here**
+
+1. Install: `/plugin install session-status-line --marketplace Horef/claude-plugins` (it adds the marketplace if you have not).
+2. Chats that are already open: `/reload-plugins`. New chats show the line by themselves.
+3. `/status-line help`: a one-minute tour of the commands.
+4. The guide: https://horef.github.io/claude-plugins/session-status-line.html
+5. Updates: mods do not update by themselves. The mod checks quietly once a day and shows one toast when a newer version exists; `/status-line update` checks at once and puts the update request in your prompt box (press Enter).
+6. How updating works, in the terminal and the desktop app: https://horef.github.io/claude-plugins/updating.html
+
 ```
 ✅ Opus 5.5 ·M │ ctx ▰▰▱▱▱▱ 30% 296k/1M │ 5h 21% ⟳4h14m │ 7d 30% ⟳4d16h
 helpers  Kiro    42% ⟳18d3h         │ Copilot 28% ⟳21d16h      │ Codex   5h 4% 7d 1% ⟳4h10m
@@ -75,19 +84,22 @@ Optional live read: when a reading is over ten minutes old and the other account
 
 ## Commands
 
+- `/status-line help`: a one-minute tour (what it shows, the most useful commands, the guide).
 - `/status-line`: toggle; `on` / `off`.
 - `/status-line auto|one|rows`: layout. `auto` (default) uses one line when it fits, else the rows; `two` still works and means `rows`.
 - `/status-line quotas on|off`: read the outside budgets or not (on by default); `on` reads them now.
 - `/status-line account-label <name>`: how this account appears in the other accounts' status lines (`reset` restores the default); with no name it shows the current one.
 - `/status-line live on|off`: the optional live read of other accounts' limits (on by default).
 - `/status-line warm [on | off | now | forever | for <span> | until HH:MM | every <minutes> | every-chat on|off | idle-compact on|off | skip-compact | status | help]`: the cache warmer (above).
+- `/status-line update`: check for a newer version now (ignoring the daily back-off), say which version is installed and which is the latest, and, if a newer one exists, put an update request in the prompt box (Enter sends it; Claude runs `claude plugin marketplace update` and `claude plugin update` with its shell, which also works in the desktop app, and reminds you to `/reload-plugins`). `update dismiss` stops announcing the latest version; a later one is announced again.
+- `/status-line update-check on|off`: the quiet daily check (on by default; `CLAUDE_PLUGINS_NO_UPDATE_CHECK=1` turns it off for strict setups). It reads the published `plugin.json` from GitHub once every 24 hours (6 hours after a failure), with a 5 second limit, never shows an error, and keeps what it found per Claude account, so each account notices on its own. A newer version shows one toast, once per version; nothing is added to the status line. A copy loaded from a folder (a checkout, `--plugin-dir`, `CLAUDE_CODE_PLUGIN_DIRS`) never checks.
 - `/status-line debug`: version, surface, measured band width, the width of each drawn line and the last budget readings.
 
 The choices are remembered across chats. `NO_COLOR=1` drops colours; `SESSION_STATUS_ASCII=1` uses plain ASCII glyphs.
 
 ## Install
 
-From this marketplace: `/plugin install session-status-line@horef-claude-plugins`. To load it from a folder instead, set `CLAUDE_CODE_PLUGIN_DIRS` to the plugin's path in the `settings.json` of `$CLAUDE_CONFIG_DIR` (default `~/.claude`; an `env` entry) and add `CLAUDE_CODE_PLUGIN_DIR_WATCH=1` to reload it on edits.
+From this marketplace: `/plugin install session-status-line --marketplace Horef/claude-plugins` (or `/plugin install session-status-line@horef-claude-plugins` where the marketplace is already added). To load it from a folder instead, set `CLAUDE_CODE_PLUGIN_DIRS` to the plugin's path in the `settings.json` of `$CLAUDE_CONFIG_DIR` (default `~/.claude`; an `env` entry) and add `CLAUDE_CODE_PLUGIN_DIR_WATCH=1` to reload it on edits.
 
 Colours, thresholds, icons, widths, drop order and the groups are in the `CONFIG` object at the top of `hooks/register.tsx`.
 
@@ -97,4 +109,4 @@ Colours, thresholds, icons, widths, drop order and the groups are in the `CONFIG
 - Chats compacted before this mod was loaded start at 0; `/clear` starts a new conversation and resets the count.
 - The Codex limits are verified against a live response (a free plan: one monthly window); how a paid plan's `secondary_window` looks is taken from Codex's rollout format. The Linux Kiro path and the live read of another account's usage (`utilization` field) are not verified against a real install.
 - The cache warmer learns the cache's lifetime from the main conversation's cache writes; a request that only read the cache does not say it, so a chat whose first request this session only read assumes 1 h until one writes. That a warm's read renews the 1 h lifetime is the API's documented behaviour, first seen live on 2026-11-21 (`warm now` read 161k tokens); a warm after 50 idle minutes is the check.
-- Tests (`tests/render.test.tsx`, `tests/accounts.test.tsx`, `tests/behaviour.test.tsx`, `tests/warm.test.tsx`, `tests/idle.test.tsx`) run in Claude Code's function-hooks test runner: `claude plugin test plugins/session-status-line`. They are not run in CI.
+- Tests (`tests/render.test.tsx`, `tests/accounts.test.tsx`, `tests/behaviour.test.tsx`, `tests/warm.test.tsx`, `tests/idle.test.tsx`, `tests/update.test.tsx`) run in Claude Code's function-hooks test runner: `claude plugin test plugins/session-status-line`. They are not run in CI.
