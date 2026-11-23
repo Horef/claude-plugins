@@ -140,6 +140,8 @@ import {
   tiersSummary,
   whereLabel,
 } from './logic'
+import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
+import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
@@ -199,8 +201,12 @@ const pickNav = { keys: [] as string[], focused: '' }
 const showHelperGrid = atom({ plugin: 'model-router', key: 'showHelperGrid' } as const, false)
 const confirmReset = atom({ plugin: 'model-router', key: 'confirmReset' } as const, '')
 const resetNote = atom({ plugin: 'model-router', key: 'resetNote' } as const, '')
+const updates = atom({ plugin: 'model-router', key: 'updates' } as const, { dev: true, state: {} })
+const updateNote = atom({ plugin: 'model-router', key: 'updateNote' } as const, '')
+// True until the remembered state says otherwise, so the welcome never flashes for someone who has used the router.
+const welcomeSeen = atom({ plugin: 'model-router', key: 'welcomeSeen' } as const, true)
 
-const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews' }
+const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews', welcome: 'welcomeSeen', update: 'update' }
 const EFFORT_LOG_CAP = 200
 const HISTORY_CAP = 500
 
@@ -506,6 +512,7 @@ async function refreshShared($: EngineInterface) {
 }
 
 async function loadRemembered($: EngineInterface) {
+  const welcomeStored = await $.store.get(STORE.welcome)
   const stored = (await $.store.get(STORE.settings)) as Partial<Settings> | undefined
   const storedAuto = await $.store.get(STORE.auto)
   const storedAlways = await $.store.get(STORE.always)
@@ -539,6 +546,7 @@ async function loadRemembered($: EngineInterface) {
   await update($, lifetime, () => life)
   const news = asModelNews(await $.store.get(STORE.modelNews))
   await update($, modelNews, () => news)
+  await update($, welcomeSeen, () => welcomeStored === true)
   const noted = await $.store.get(STORE.genome)
   await update($, genomeNoted, () => (Array.isArray(noted) ? noted.filter((x): x is string => typeof x === 'string') : []))
   // The store is the source: bring the mirror up to date with it.
@@ -2052,7 +2060,7 @@ async function writeReport($: EngineInterface): Promise<string | undefined> {
       platform = undefined
     }
     const text = reportMarkdown({
-      version: VERSION,
+      version: await shownVersion($),
       at,
       platform,
       surface: surfaceNow,
@@ -2102,7 +2110,7 @@ type RenderArgs = Parameters<Hook<'ui.render'>>
 // the glossary (?), cost details, and the Settings groups. Settings replace plan, cost and footer while open.
 export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const ui = $.ui.resolve(e)
-  const { Box, Text, Button } = ui
+  const { Box, Text, Button, Link } = ui
   const hasFields = e.surface !== 'mobile'
   const tty = e.surface === 'terminal'
   const site = e.props as { isFocused?: boolean; scroll?: { offset: number }; bodyColumns?: number }
@@ -2138,6 +2146,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const gridOpen = await read($, showHelperGrid)
   const asking = await read($, confirmReset)
   const resetText = await read($, resetNote)
+  const up = await read($, updates)
+  const updateText = await read($, updateNote)
+  const welcomed = await read($, welcomeSeen)
 
   // Groups are the sum of their parts: counted once, through the parts.
   const work = leavesOf(list)
@@ -2214,6 +2225,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     run: set.helpers.run !== D.helpers.run,
     log: set.log !== D.log,
     herdrView: set.herdrView !== D.herdrView,
+    updateCheck: set.updateCheck !== D.updateCheck,
   }
   // A model's price differs when Settings set one other than the default table's (or any, for a new model).
   const priceDiffers = (x: string) => !!set.prices[x] && JSON.stringify(set.prices[x]) !== JSON.stringify(PRICES[x])
@@ -2236,7 +2248,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     learning: differs.autoRoute || differs.autoExplore || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0 || Object.keys(set.kindTags).length > 0,
     prices: set.models.length > 0 || models.some(priceDiffers),
     skills: Object.keys(set.skills).length > 0,
-    diagnostics: differs.log || differs.herdrView,
+    diagnostics: differs.log || differs.herdrView || differs.updateCheck,
     advanced: differs.hereEffort || (set.hereEffort.enabled && differs.hereLimit) || TIER_ORDER.some(t => tierDiffers(t).scope),
   }
   const preset = presetOf(set)
@@ -2438,6 +2450,33 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>,
     ]
   }
+  // One quiet line under the health line when a newer release is known and not dismissed.
+  const newer = noticeOf(up, set)
+  const updateRow = newer ? (
+    <Box key="section:update" flexDirection="column">
+      <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+        <Text key="update-line" dimColor size="footnote">{`↑ ${MOD} ${newer} available`}</Text>
+        <Link key="update-news" href={changelogUrl(MOD)} label="What's new ↗" />
+        <Button
+          key="update-run"
+          plain
+          onPress={() =>
+            void (async () => {
+              const filled = await fillUpdateRequest($)
+              await update($, updateNote, () => (filled ? 'The update request is in your prompt box: press Enter.' : `Send this to Claude to update: ${updateRequest(MOD)}`))
+            })()
+          }
+        >
+          Update
+        </Button>
+        <Link key="update-how" href={UPDATING_URL} label="How ↗" />
+        <Button key="update-dismiss" plain dimColor onPress={() => void dismissUpdate($)}>
+          ×
+        </Button>
+      </Box>
+      {updateText ? <Text key="update-note" dimColor size="footnote" wrap="wrap">{updateText}</Text> : null}
+    </Box>
+  ) : null
   const healthRow = (
     <Box key="section:health" flexDirection="column" rowGap="xs">
       <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
@@ -2450,6 +2489,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Button>
         )}
       </Box>
+      {updateRow}
       {!health.ok && healthOpen && (
         <Box key="health-checks" flexDirection="column" rowGap="xs" paddingLeft={2}>
           {checkList('health')}
@@ -2822,9 +2862,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ] as [string, string][])
       : []),
   ]
+  // Only a fresh start: no plan, no history, no plan ever posted, and not dismissed. Whoever has used the router never sees it.
+  const showWelcome = !welcomed && past.length === 0 && life.plans === 0 && life.steps === 0
   const planSection = (
     <Box key="section:plan" flexDirection="column" rowGap="xs">
-      {list.length === 0 ? (
+      {list.length === 0 && showWelcome ? (
+        <Box key="welcome" flexDirection="column">
+          <Text key="welcome-title" weight="semibold">New here? Three steps:</Text>
+          <Text key="welcome-1" size="footnote" wrap="wrap">1. Ask for something with several steps (e.g. "In three steps: find the five largest files here, summarize each, and pick the one most worth cleaning up").</Text>
+          <Text key="welcome-2" size="footnote" wrap="wrap">2. Approve the plan in the question that appears.</Text>
+          <Text key="welcome-3" size="footnote" wrap="wrap">3. Watch the steps, models and cost here.</Text>
+          <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+            <Link key="welcome-guide" href={guideUrl(MOD)} label="Guide ↗" />
+            <Text dimColor size="footnote">·</Text>
+            <Button key="welcome-ok" plain onPress={() => void markWelcomed($)}>
+              Got it
+            </Button>
+          </Box>
+        </Box>
+      ) : list.length === 0 ? (
         <Box flexDirection="column">
           <Text key="plan-empty" size="footnote" wrap="wrap">No plan yet. Multi-step tasks show their steps here.</Text>
           {!always && <Text dimColor size="footnote" wrap="wrap">Turn on "Plan every message" in Settings to plan single-step tasks too.</Text>}
@@ -3095,6 +3151,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       >
         Settings ▸
       </Button>
+      <Link key="guide" href={guideUrl(MOD)} label="Guide ↗" />
       {reportRow('footer-report')}
     </Box>
   )
@@ -3872,6 +3929,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           switchRow('log', 'Keep a log', 'One file a day in ~/.config/model-router/log/, kept 14 days; no prompts or contents.', set.log, () => void editSettings($, s => ({ ...s, log: !s.log })), differs.log),
           reportRow('settings-report'),
           switchRow(
+            'update-check',
+            'Check for updates',
+            'Once a day, a quiet look at GitHub for a newer version. Never installs anything; CLAUDE_PLUGINS_NO_UPDATE_CHECK=1 turns it off too.',
+            set.updateCheck,
+            () => void editSettings($, s => ({ ...s, updateCheck: !s.updateCheck })),
+            differs.updateCheck,
+          ),
+          switchRow(
             'herdr-view',
             'Show in Herdr',
             'The plan in a Herdr sidebar (read-only), for plans too long for this pane.',
@@ -3961,6 +4026,151 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   )
 }
 
+// --- Welcome, guide and update check ------------------------------------------------------
+
+const MOD = 'model-router'
+
+/** The first-use welcome is over (Got it, or a plan was posted): remembered in the store, per account. */
+async function markWelcomed($: EngineInterface) {
+  if (await read($, welcomeSeen)) return
+  await update($, welcomeSeen, () => true)
+  if (await ready($)) await $.store.set(STORE.welcome, true)
+}
+
+const HELP = [
+  'Model router plans multi-step tasks and runs each step on the cheapest model that does it well.',
+  'To start:',
+  '  1. Ask for something with several steps ("In three steps: find the five largest files here, summarize each, and pick the one most worth cleaning up").',
+  '  2. Approve the plan in the question that appears.',
+  '  3. Watch the steps, models and cost in the pane.',
+  '  /router                 open the pane',
+  '  /router report          write a diagnostics report to send',
+  '  /router update          check for a newer version and update it from here',
+].join('\n')
+
+/** The installed version, read from this plugin's own plugin.json (undefined when it cannot be read). */
+async function installedVersion($: EngineInterface): Promise<string | undefined> {
+  try {
+    const v = (JSON.parse(String(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`))) as { version?: unknown }).version
+
+    return typeof v === 'string' ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The version to show a person: the manifest's (VERSION is only what this code was last bumped to). */
+const shownVersion = async ($: EngineInterface) => (await read($, updates)).installed ?? VERSION
+
+/** A checkout or --plugin-dir never checks and never offers an update; CLAUDE_PLUGINS_UPDATE_CHECK_FORCE=1 lets the tests act as a cache install. */
+async function isDev($: EngineInterface) {
+  return isDevInstall($.plugin.root) && (await $.env.get('CLAUDE_PLUGINS_UPDATE_CHECK_FORCE')) !== '1'
+}
+
+const loadUpdate = async ($: EngineInterface): Promise<UpdateState> => {
+  const s = await $.store.get(STORE.update)
+
+  return s && typeof s === 'object' ? (s as UpdateState) : {}
+}
+
+async function saveUpdate($: EngineInterface, state: UpdateState) {
+  await $.store.set(STORE.update, state)
+  await update($, updates, u => ({ ...u, state }))
+}
+
+/** What this chat knows of its install and of the last check, read at the start. */
+async function startUpdates($: EngineInterface) {
+  const installed = await installedVersion($)
+  const dev = await isDev($)
+  const envOff = (await $.env.get('CLAUDE_PLUGINS_NO_UPDATE_CHECK')) === '1'
+  await update($, updates, () => ({ installed, dev, envOff, state: {} }))
+  await update($, updateNote, () => '')
+  const state = await loadUpdate($).catch(() => ({}))
+  await update($, updates, u => ({ ...u, state }))
+}
+
+/** The version to announce in the pane: newer than the installed one, not dismissed; nothing for a checkout or an opt-out. */
+const noticeOf = (u: { installed?: string; dev: boolean; envOff?: boolean; state: UpdateState }, set: Settings) =>
+  !u.dev && !u.envOff && set.updateCheck && u.state.latest && isNewer(u.state.latest, u.installed) && u.state.dismissed !== u.state.latest ? u.state.latest : undefined
+
+/** The version in the published manifest; undefined on any failure or after 5 s (never throws). */
+async function fetchLatest($: EngineInterface): Promise<string | undefined> {
+  try {
+    const res = await Promise.race([$.http.fetch(manifestUrl(MOD)), $.clock.sleep(CHECK_TIMEOUT_MS).then(() => undefined)])
+
+    return res && res.ok ? versionOfManifest(res.text) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Asks GitHub for the latest version and stores the answer. Unless `force`, only when the check is on, due and this is a
+ * cache install. The stamp is written before the request (as a failure), so chats starting together make one request,
+ * and stays that way when the request fails: that is the back-off.
+ */
+async function runCheck($: EngineInterface, force: boolean) {
+  const u = await read($, updates)
+  const state = await loadUpdate($).catch(() => ({}) as UpdateState)
+  if (u.dev) return { state, ran: false }
+  const off = u.envOff || (await read($, settings)).updateCheck === false
+  if (!force && (!u.installed || off || !dueForCheck(await $.clock.now(), state))) return { state, ran: false }
+  await saveUpdate($, afterCheck(state, await $.clock.now(), undefined))
+  const latest = await fetchLatest($)
+  const next = afterCheck(await loadUpdate($), await $.clock.now(), latest) // others' changes since (a dismissal) are kept
+  await saveUpdate($, next)
+
+  return { state: next, ran: true }
+}
+
+/** After session.start, never awaited, never loud: a failure leaves no trace beyond the back-off stamp. */
+async function backgroundCheck($: EngineInterface) {
+  try {
+    await ready($)
+    await runCheck($, false)
+  } catch {
+    // silent by design
+  }
+}
+
+/** The update request goes into the prompt box; false when the box would not take it (a dialog holds the keys). */
+async function fillUpdateRequest($: EngineInterface) {
+  const filled = await $.prompt.fill({ text: updateRequest(MOD), mode: 'replace' }).catch(() => undefined)
+
+  return filled?.isFilled === true
+}
+
+async function dismissUpdate($: EngineInterface) {
+  const state = await loadUpdate($).catch(() => ({}) as UpdateState)
+  if (!state.latest) return
+  await saveUpdate($, { ...state, dismissed: state.latest })
+}
+
+async function updateCommand($: EngineInterface, sub: string): Promise<string> {
+  if (sub !== '' && sub !== 'dismiss') return 'Usage: /router update (check now, and fill the prompt with an update request) or /router update dismiss (stop announcing the latest version).'
+  const u = await read($, updates)
+  if (u.dev) return `${MOD} runs from a folder here (a checkout or --plugin-dir), not from the plugin cache, so it does not update itself: update the folder with git. How updating works: ${UPDATING_URL}`
+  if (sub === 'dismiss') {
+    const state = await loadUpdate($).catch(() => ({}) as UpdateState)
+    if (!state.latest || !isNewer(state.latest, u.installed)) return 'No newer version is known, so there is nothing to dismiss.'
+    await dismissUpdate($)
+
+    return `Dismissed ${state.latest}: it is not announced again; a later version is. /router update still offers it.`
+  }
+  await ready($)
+  const { state } = await runCheck($, true)
+  const have = u.installed ?? 'unknown'
+  if (state.lastOk === false) return `${MOD} ${have} is installed. Could not read the latest version from GitHub (offline, or blocked here); try again later. How updating works: ${UPDATING_URL}`
+  if (!isNewer(state.latest, u.installed)) return `${MOD} ${have} is installed; the latest is ${state.latest}: up to date.`
+
+  return [
+    `${MOD} ${have} is installed; the latest is ${state.latest}.`,
+    (await fillUpdateRequest($)) ? 'The update request is in your prompt box: press Enter and Claude does the rest.' : `Send this to Claude to update: ${updateRequest(MOD)}`,
+    `What's new: ${changelogUrl(MOD)}`,
+    `How updating works: ${UPDATING_URL}`,
+  ].join('\n')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     loading = undefined
@@ -3989,7 +4199,7 @@ export const register: Register = on => {
     if (chat.helper.steps === 0 && chat.helper.usage.length === 0 && (moved.steps > 0 || moved.usage.length > 0)) {
       await update($, chatTotals, t => ({ ...t, helper: moved }))
     }
-    await $.command.register({ name: 'router', description: 'Show the model-router pane; /router report writes a diagnostics report' })
+    await $.command.register({ name: 'router', description: 'Show the model-router pane; help: first steps; report: write a diagnostics report; update [dismiss]: check for a newer version' })
     setHelperConfig(undefined)
     planToolHelpers = undefined
     modelsBackground = false
@@ -4000,12 +4210,17 @@ export const register: Register = on => {
     await registerPlanTool($)
     await refreshStatus($)
     if ((await read($, settings)).openPane) void $.ui.open({ id: PANE, title: 'Model router' })
+    await startUpdates($)
+    void backgroundCheck($)
 
     return next(e)
   })
 
   on('command.run', { command: 'router' }, async ($, e) => {
-    if ((e.args ?? '').trim().toLowerCase() === 'report') {
+    const arg = (e.args ?? '').trim().toLowerCase()
+    if (arg === 'help') return { text: `${HELP}\nGuide: ${guideUrl(MOD)}\nVersion ${await shownVersion($)}.` }
+    if (arg === 'update' || arg.startsWith('update ')) return { text: await updateCommand($, arg.slice(6).trim()) }
+    if (arg === 'report') {
       const path = await writeReport($)
 
       return { text: path ? `Model router report written: ${path}. Send this file.` : `Model router report not written: ${await read($, reportNote)}` }
@@ -4040,7 +4255,7 @@ export const register: Register = on => {
       const st = await read($, helperCfg)
       const dir = await logDir($).catch(() => undefined)
       const report = {
-        version: VERSION,
+        version: await shownVersion($),
         delivery: await read($, delivery),
         rulesSentTo: (await read($, policySent)).model ?? null,
         alwaysPlan: await read($, alwaysPlan),
@@ -4098,6 +4313,7 @@ export const register: Register = on => {
       await update($, notes, n => [...n, `These step ids came up twice in the plan and the repeats were ignored: ${flat.dropped.join(', ')}. Every id must be unique.`])
     }
     void $.ui.open({ id: PANE, title: 'Model router' })
+    await markWelcomed($)
 
     if (await read($, autoApprove)) {
       if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))

@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-23 (later): model-router 0.30.0, welcome, guide link, help and update check
+Owner request: his father found the mod too complex on first sight and did not know mods do not update by themselves. A guide site is published in parallel (https://horef.github.io/claude-plugins/model-router.html, updating.html); the shared spec for both mods was `.review/ONBOARDING-SPEC.md` (not committed).
+- Changes: `hooks/update.ts` copied byte for byte from session-status-line 0.14.0 (pure rules, unit-tested here too); a quiet check after `session.start` (once a day, 6 h after a failure, silent, per account in `$.store` key `update`), off by Settings → Diagnostics → *Check for updates* (`updateCheck`, default on), `CLAUDE_PLUGINS_NO_UPDATE_CHECK=1` or a checkout (unless `CLAUDE_PLUGINS_UPDATE_CHECK_FORCE=1`, as in the tests); the pane's update line under the health line (What's new, Update fills the prompt, How, ×); the welcome replacing "No plan yet" on a fresh start (store `welcomeSeen`; never with history or `lifetime.plans/steps`); the footer *Guide ↗*; `/router help`, `/router update [dismiss]`; the report, the status check and `/router update` read the version from `plugin.json`; README "Start here" and Update check.
+- Commands: `claude plugin test plugins/model-router` 172 pass (28 new: 4 are the pure update.ts rules; of the other 24, 22 fail on the 0.29.5 sources, the other 2 are negative cases that cannot); `loop.py check --base bcf417e` 0 errors; `loop.py eval model-router` exit 0; `docmap.py check` 0 errors.
+- One existing test edited: the empty-states test now starts with `welcomeSeen` set (its fresh store would show the welcome instead of "No plan yet"); the VERSION test follows the bump.
+- Not verified: the check against the real GitHub URL from a cache install (the site and the pushed 0.30.0 manifest do not exist yet), the pane in the desktop app and the real terminal.
+
 ## 2026-11-23: model-router 0.29.5, verdicts asked for at the next turn
 Owner's real history (O7): 47 of 130 delegated runs never got a verdict. `verdictsMissing` ran only inside the plan tool, and `turn.complete` marks a subagent step done by itself, so after the last step of a plan the agent usually never called the plan tool again and was never asked (found in the review of PR #128).
 - Change: `turn.start` adds the same one-line request (`verdictRequest`) to the hidden router note for delegated steps that are done, ran, have no verdict and were not asked about; the `asked` flag is set once the note is in the chat, so the plan tool does not ask again (and the reverse). Logged as `verdicts-asked`.

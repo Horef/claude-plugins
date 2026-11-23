@@ -3198,7 +3198,7 @@ test('a helper step that falls back: start with a reason, or an Agent call witho
 })
 
 test('empty states: helpers on and none run yet; no history yet, or runs without advice; never a heading with nothing under it', async ($, on) => {
-  await boot($, on, [HELPERS_ON])
+  await boot($, on, [HELPERS_ON, ['welcomeSeen', true]])
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   expect(await pane.find(text(/^Off Claude: no helper steps yet$/))).toBeTruthy()
   expect(await pane.find(text(/^History: no runs yet; advice starts after 3 runs of a kind\.$/))).toBeTruthy()
@@ -4336,7 +4336,7 @@ test('review fix 7: a started try still says so in the plan; n counts voiced tri
 })
 
 test('review fix 8: VERSION is the plugin version', () => {
-  expect(VERSION).toBe('0.29.5')
+  expect(VERSION).toBe('0.30.0')
 })
 
 // --- Verdicts asked for at the next turn (0.29.5) ---------------------------------------
@@ -4398,4 +4398,374 @@ test('a step the plan tool already asked about is not asked again at the next tu
   const count = rows.appended().length
   await $.turn.start({ text: 'next', turnId: 't2' })
   expect(rows.appended().length).toBe(count)
+})
+
+// --- Welcome, Guide link, help and update check (0.30.0) --------------------------------------
+// By default the test engine loads the mod from a checkout (a dev install, which never checks); the
+// CLAUDE_PLUGINS_UPDATE_CHECK_FORCE=1 environment makes it act as a cache install, as in session-status-line's tests.
+
+const GUIDE_URL = 'https://horef.github.io/claude-plugins/model-router.html'
+const UPDATING = 'https://horef.github.io/claude-plugins/updating.html'
+const CHANGELOG = 'https://github.com/Horef/claude-plugins/blob/main/plugins/model-router/CHANGELOG.md'
+const MANIFEST = 'https://raw.githubusercontent.com/Horef/claude-plugins/main/plugins/model-router/.claude-plugin/plugin.json'
+const T0 = Date.parse('2026-11-23T08:00:00Z')
+const DAY = 24 * 3_600_000
+const SEEN: [string, unknown] = ['welcomeSeen', true]
+
+/** The plugin's own plugin.json, whatever folder the engine loaded the mod from. */
+class ManifestFiles extends Map<string, string> {
+  version = '0.30.0'
+  override get(k: string) {
+    return k.endsWith('/.claude-plugin/plugin.json') ? JSON.stringify({ name: 'model-router', version: this.version }) : super.get(k)
+  }
+}
+
+type Up = { installed?: string; latest?: string; init?: [string, unknown][]; env?: Record<string, string>; cache?: boolean }
+/** A chat with a pretend manifest on GitHub ('down' answers 503), clock and prompt box. */
+const bootUp = async ($: Parameters<TestBody>[0], on: Parameters<TestBody>[1], o: Up = {}) => {
+  const files = new ManifestFiles()
+  if (o.installed) files.version = o.installed
+  const fetched: string[] = []
+  const fills: { text: string; mode?: string }[] = []
+  const net = { latest: o.latest ?? '0.30.0' }
+  const box = { open: true }
+  let clock!: ReturnType<typeof mock.clock>
+  const b = await boot($, on, o.init ?? [], [], files, () => {
+    on('http.fetch', (_, e) => {
+      fetched.push((e as { url: string }).url)
+      return { value: net.latest === 'down' ? { status: 503, ok: false, headers: {}, text: 'busy' } : { status: 200, ok: true, headers: {}, text: JSON.stringify({ name: 'model-router', version: net.latest }) } }
+    })
+    on('prompt.fill', (_, e) => {
+      fills.push(e as never)
+      return (box.open ? { isFilled: true, text: (e as { text: string }).text } : { isFilled: false, text: '', refusal: 'dialog' }) as never
+    })
+    clock = mock.clock(on, { now: T0 })
+    helperWorld(on, files).setup()
+  }, { HC_TERMINAL_ID: 'w1:t1', ...(o.cache === false ? {} : { CLAUDE_PLUGINS_UPDATE_CHECK_FORCE: '1' }), ...o.env })
+  // The check runs after session.start returns: a few pretend milliseconds let it finish.
+  await clock.advance(10)
+
+  return { ...b, files, fetched, fills, net, box, clock }
+}
+const router = async ($: Parameters<TestBody>[0], args: string) => String(((await $.command.run({ command: 'router', args } as never)) as { text: string }).text)
+const updateState = (store: Map<string, unknown>) => store.get('update') as { latest?: string; dismissed?: string; lastOk?: boolean } | undefined
+const NOTICE = /^↑ model-router 0\.30\.1 available$/
+const link = (label: string) => ({ type: 'Link', text: label }) as never
+/** A Link's props, found by its label. */
+const hrefOf = async (pane: { findAll: (q: never) => Promise<unknown[]> }, label: string) =>
+  ((await pane.findAll({ type: 'Link' } as never)) as { props: { href: string; label: string } }[]).filter(l => l.props.label === label).map(l => l.props.href)
+
+test('welcome: a fresh store replaces the empty-plan line with three steps; a Guide link and Got it close it, and it stays closed', async ($, on) => {
+  const { store } = await bootUp($, on)
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const pane = await $.ui.mount({ ...PANE, surface } as never)
+    expect(await pane.find(text(/^New here\? Three steps:$/))).toBeTruthy()
+    expect(await pane.find(text(/^1\. Ask for something with several steps \(e\.g\. "In three steps: find the five largest files here, summarize each, and pick the one most worth cleaning up"\)\.$/))).toBeTruthy()
+    expect(await pane.find(text(/^2\. Approve the plan in the question that appears\.$/))).toBeTruthy()
+    expect(await pane.find(text(/^3\. Watch the steps, models and cost here\.$/))).toBeTruthy()
+    expect(await pane.find(text(/^No plan yet/))).toBeFalsy()
+    expect(await pane.find(link('Guide ↗'))).toBeTruthy()
+    expect(await pane.find({ key: 'welcome-ok' } as never)).toBeTruthy()
+    await pane.unmount()
+  }
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'welcome-ok' } as never)
+  expect(store.get('welcomeSeen')).toBe(true)
+  expect(await pane.find(text(/^New here\?/))).toBeFalsy()
+  expect(await pane.find(text(/^No plan yet\. Multi-step tasks show their steps here\.$/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('welcome: never for someone with history or any plan ever posted; the first plan closes it for good', async ($, on) => {
+  // History: runs on record.
+  const old = await bootUp($, on, { init: [['history', [run(1)]]] })
+  let pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^New here\?/))).toBeFalsy()
+  expect(await pane.find(text(/^No plan yet/))).toBeTruthy()
+  await pane.unmount()
+  expect(old.store.has('welcomeSeen')).toBe(false)
+})
+
+test('welcome: all-time counters count too (history cleared, a plan once posted)', async ($, on) => {
+  const seeded = { mainCost: 5, agentCost: 1, mainEquivalent: 3, steps: 0, plans: 2, since: '2026-10-01T00:00:00.000Z', byTier: { light: 1, standard: 2, deep: 1 } }
+  await bootUp($, on, { init: [['lifetime', seeded]] })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^New here\?/))).toBeFalsy()
+  await pane.unmount()
+})
+
+test('welcome: the first posted plan sets it seen, and it does not come back when the plan is gone', async ($, on) => {
+  const { store } = await bootUp($, on)
+  let pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^New here\?/))).toBeTruthy()
+  await pane.unmount()
+  await $.tool.call({ tool: PLAN, steps: [{ id: 'a', title: 'Look', tier: 'light', where: 'here' }] } as never)
+  expect(store.get('welcomeSeen')).toBe(true)
+  await $.tool.call({ tool: PLAN, steps: [] } as never).catch(() => undefined)
+  pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/^New here\?/))).toBeFalsy()
+  await pane.unmount()
+})
+
+test('footer: a Guide link sits beside Settings and Write report, on every surface', async ($, on) => {
+  await bootUp($, on, { init: [SEEN] })
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const pane = await $.ui.mount({ ...PANE, surface } as never)
+    expect(await hrefOf(pane, 'Guide ↗')).toEqual([GUIDE_URL])
+    expect(await pane.find({ type: 'Button', key: 'settings' } as never)).toBeTruthy()
+    expect(await pane.find({ type: 'Button', key: 'footer-report' } as never)).toBeTruthy()
+    await pane.unmount()
+  }
+})
+
+test('/router help: at most 12 plain lines: what it does, the three steps, the commands, the guide and the installed version', async ($, on) => {
+  const { clock } = await bootUp($, on, { installed: '7.8.9', latest: '7.8.9' })
+  const help = await router($, 'help')
+  expect(help.split('\n').length).toBeLessThanOrEqual(12)
+  expect(help).toBe(
+    [
+      'Model router plans multi-step tasks and runs each step on the cheapest model that does it well.',
+      'To start:',
+      '  1. Ask for something with several steps ("In three steps: find the five largest files here, summarize each, and pick the one most worth cleaning up").',
+      '  2. Approve the plan in the question that appears.',
+      '  3. Watch the steps, models and cost in the pane.',
+      '  /router                 open the pane',
+      '  /router report          write a diagnostics report to send',
+      '  /router update          check for a newer version and update it from here',
+      `Guide: ${GUIDE_URL}`,
+      'Version 7.8.9.',
+    ].join('\n'),
+  )
+  expect(await router($, ' HELP ')).toBe(help)
+  void clock
+})
+
+test('the command description names help and update', async ($, on) => {
+  const registered: { description?: string }[] = []
+  mock.env(on, { HOME })
+  on('command.register', (_, e) => {
+    registered.push(e as never)
+    return { value: { command: 'router' } }
+  })
+  on('tool.register', () => ({ value: { tool: PLAN } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('store.get', () => ({ value: undefined }))
+  on('store.set', () => ({ value: undefined }))
+  on('fs.read', () => ({ deny: 'ENOENT' }))
+  on('fs.write', () => ({ value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('ui.status', () => ({ value: undefined }))
+  on('agent.list', () => ({ value: [] }))
+  mock.session(on)
+  helperWorld(on, new Map()).setup()
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  expect(registered.at(-1)?.description).toContain('help')
+  expect(registered.at(-1)?.description).toContain('update')
+})
+
+test('update notice: a newer release is one quiet line under the health line, with What\'s new, Update, How and ×', async ($, on) => {
+  const { store, fetched } = await bootUp($, on, { latest: '0.30.1', init: [SEEN] })
+  expect(fetched).toEqual([MANIFEST])
+  expect(updateState(store)).toMatchObject({ latest: '0.30.1', lastOk: true })
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const pane = await $.ui.mount({ ...PANE, surface } as never)
+    expect(await pane.find(text(NOTICE))).toBeTruthy()
+    expect(await hrefOf(pane, "What's new ↗")).toEqual([CHANGELOG])
+    expect(await hrefOf(pane, 'How ↗')).toEqual([UPDATING])
+    expect(await pane.find({ type: 'Button', key: 'update-run' } as never)).toBeTruthy()
+    expect(await pane.find({ type: 'Button', key: 'update-dismiss' } as never)).toBeTruthy()
+    await pane.unmount()
+  }
+})
+
+for (const latest of ['0.29.9', '0.30.0', '0.31.0-rc.1', '0.9.0', 'down']) {
+  test(`update notice: not for ${latest === 'down' ? 'a failed check' : `a latest of ${latest} (installed 0.30.0)`}, and a failed check never touches the health line`, async ($, on) => {
+    const { fetched } = await bootUp($, on, { latest, init: [SEEN] })
+    expect(fetched).toEqual([MANIFEST])
+    const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+    expect(await pane.find(text(/available$/))).toBeFalsy()
+    expect(await pane.find(text(/✗/))).toBeFalsy()
+    await pane.unmount()
+  })
+}
+
+test('update notice: × dismisses that version (remembered); a later version shows again; a dismissed one stays quiet', async ($, on) => {
+  const { store, net, clock } = await bootUp($, on, { latest: '0.30.1', init: [SEEN] })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'update-dismiss' } as never)
+  expect(updateState(store)?.dismissed).toBe('0.30.1')
+  expect(await pane.find(text(NOTICE))).toBeFalsy()
+  await pane.unmount()
+  // A later release (its check is due after a day) is announced.
+  net.latest = '0.31.0'
+  store.set('update', { ...updateState(store), lastCheck: new Date(T0 - 2 * DAY).toISOString() })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await clock.advance(10)
+  const again = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await again.find(text(/^↑ model-router 0\.31\.0 available$/))).toBeTruthy()
+  expect(updateState(store)?.dismissed).toBe('0.30.1')
+  await again.unmount()
+})
+
+test('update notice: a version dismissed before is not shown', async ($, on) => {
+  await bootUp($, on, { latest: '0.30.1', init: [SEEN, ['update', { lastCheck: new Date(T0).toISOString(), lastOk: true, latest: '0.30.1', dismissed: '0.30.1' }]] })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/available$/))).toBeFalsy()
+  await pane.unmount()
+})
+
+test('update notice: Update puts the request in the prompt box; when the box refuses, the pane shows the text', async ($, on) => {
+  const { fills, box } = await bootUp($, on, { latest: '0.30.1', init: [SEEN] })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await pane.press({ key: 'update-run' } as never)
+  expect(fills).toHaveLength(1)
+  expect(fills[0]).toMatchObject({ mode: 'replace' })
+  expect(fills[0]!.text).toContain('claude plugin marketplace update horef-claude-plugins')
+  expect(fills[0]!.text).toContain('claude plugin update model-router@horef-claude-plugins')
+  expect(await pane.find(text(/^The update request is in your prompt box: press Enter\.$/))).toBeTruthy()
+  box.open = false
+  await pane.press({ key: 'update-run' } as never)
+  expect(await pane.find(text(/^Send this to Claude to update: Please update my model-router plugin/))).toBeTruthy()
+  await pane.unmount()
+})
+
+test('/router update: checks now (also with the daily check off), prints both versions and the links, fills the prompt', async ($, on) => {
+  const { fills, fetched, store } = await bootUp($, on, { latest: '0.30.1', init: [SEEN, ['settings', { updateCheck: false }]], env: { CLAUDE_PLUGINS_NO_UPDATE_CHECK: '1' } })
+  expect(fetched).toEqual([]) // both opt-outs: the quiet check never ran
+  const out = await router($, 'update')
+  expect(fetched).toEqual([MANIFEST])
+  expect(out).toContain('model-router 0.30.0 is installed; the latest is 0.30.1.')
+  expect(out).toContain('press Enter')
+  expect(out).toContain(CHANGELOG)
+  expect(out).toContain(UPDATING)
+  expect(fills).toMatchObject([{ mode: 'replace' }])
+  expect(updateState(store)?.latest).toBe('0.30.1')
+})
+
+test('/router update: up to date, offline and a closed prompt box say so; dismiss stores the latest version', async ($, on) => {
+  const e = await bootUp($, on, { latest: '0.30.0', init: [SEEN] })
+  expect(await router($, 'update')).toContain('model-router 0.30.0 is installed; the latest is 0.30.0: up to date.')
+  e.net.latest = 'down'
+  const offline = await router($, 'update')
+  expect(offline).toContain('Could not read the latest version')
+  expect(offline).toContain(UPDATING)
+  expect(await router($, 'update dismiss')).toContain('nothing to dismiss')
+  e.net.latest = '0.30.1'
+  e.box.open = false
+  expect(await router($, 'update')).toContain('Send this to Claude to update: Please update my model-router plugin')
+  expect(await router($, 'update dismiss')).toContain('Dismissed 0.30.1')
+  expect(updateState(e.store)?.dismissed).toBe('0.30.1')
+  expect(await router($, 'update later')).toContain('Usage')
+})
+
+test('update check: a checkout (dev install) never checks, shows no notice and /router update says how to update', async ($, on) => {
+  const { fetched, fills } = await bootUp($, on, { latest: '0.30.1', init: [SEEN], cache: false })
+  expect(fetched).toEqual([])
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await pane.find(text(/available$/))).toBeFalsy()
+  await pane.unmount()
+  expect(await router($, 'update')).toContain('does not update itself')
+  expect(fetched).toEqual([])
+  expect(fills).toEqual([])
+})
+
+for (const [how, o] of [
+  ['the CLAUDE_PLUGINS_NO_UPDATE_CHECK environment', { env: { CLAUDE_PLUGINS_NO_UPDATE_CHECK: '1' }, init: [SEEN] }],
+  ['the Check for updates setting', { init: [SEEN, ['settings', { updateCheck: false }]] }],
+] as [string, Up][]) {
+  test(`update check: off by ${how}: nothing is asked and a version found by hand stays out of the pane`, async ($, on) => {
+    const { fetched } = await bootUp($, on, { latest: '0.30.1', ...o })
+    expect(fetched).toEqual([])
+    expect(await router($, 'update')).toContain('the latest is 0.30.1')
+    const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+    expect(await pane.find(text(/available$/))).toBeFalsy()
+    await pane.unmount()
+  })
+}
+
+test('update check: Settings → Diagnostics has the Check for updates switch, on by default', async ($, on) => {
+  const { store, fetched } = await bootUp($, on, { latest: '0.30.1', init: [SEEN] })
+  expect(mergeSettings(undefined).updateCheck).toBe(true)
+  expect(DEFAULT_SETTINGS.updateCheck).toBe(true)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await openSettings(pane)
+  expect(await pane.find(text(/^Check for updates$/))).toBeTruthy()
+  await pane.press({ key: 'update-check' } as never)
+  expect((store.get('settings') as { updateCheck: boolean }).updateCheck).toBe(false)
+  await pane.unmount()
+  expect(fetched).toHaveLength(1) // asked once, at the start, while it was on
+})
+
+test('update check: once a day, and a failure is silent and backs off for 6 hours', async ($, on) => {
+  const e = await bootUp($, on, { latest: 'down', init: [SEEN] })
+  expect(e.fetched).toHaveLength(1)
+  expect(updateState(e.store)?.lastOk).toBe(false)
+  const restart = async () => {
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+    await e.clock.advance(10)
+  }
+  await restart()
+  expect(e.fetched).toHaveLength(1) // inside the back-off
+  e.store.set('update', { ...updateState(e.store), lastCheck: new Date(T0 - 7 * 3_600_000).toISOString() })
+  e.net.latest = '0.30.1'
+  await restart()
+  expect(e.fetched).toHaveLength(2)
+  await restart()
+  expect(e.fetched).toHaveLength(2) // a good answer holds for 24 h
+})
+
+test('the report and the status check show the installed version from plugin.json', async ($, on) => {
+  await bootUp($, on, { installed: '7.8.9', init: [SEEN] })
+  const status = await $.tool.call({ tool: PLAN, status: true } as never)
+  expect(String(status.result)).toContain('"version":"7.8.9"')
+})
+
+// --- hooks/update.ts (the same file as in session-status-line: its pure rules) ---------------------
+
+import { dueForCheck, installCommand, isDevInstall, isNewer, parseVersion, shouldAnnounce, updateRequest, versionOfManifest } from '../hooks/update'
+
+const HOUR = 3_600_000
+test('update.ts: parseVersion takes plain releases only', () => {
+  expect(parseVersion('0.30.0')).toEqual([0, 30, 0])
+  expect(parseVersion('12.0.104')).toEqual([12, 0, 104])
+  for (const bad of ['0.30.0-rc.1', 'v1.2.3', '1.2', '1.2.3.4', '', ' 1.2.3', '1.2.x', 'latest', undefined, 3]) expect(parseVersion(bad)).toBeUndefined()
+})
+
+test('update.ts: isNewer is true only for a higher release, numerically', () => {
+  expect(isNewer('0.30.1', '0.30.0')).toBe(true)
+  expect(isNewer('0.30.0', '0.9.9')).toBe(true) // not a string comparison
+  expect(isNewer('1.0.0', '0.99.99')).toBe(true)
+  expect(isNewer('0.30.0', '0.30.0')).toBe(false)
+  expect(isNewer('0.29.9', '0.30.0')).toBe(false)
+  expect(isNewer('0.31.0-rc.1', '0.30.0')).toBe(false) // a pre-release is never "newer"
+  expect(isNewer('0.30.0', 'dev')).toBe(false)
+  expect(isNewer(undefined, '0.1.0')).toBe(false)
+})
+
+test('update.ts: dueForCheck is at once without a check, 24 h after a good one, 6 h after a failed one', () => {
+  const at = (h: number) => T0 + h * HOUR
+  const iso = (ms: number) => new Date(ms).toISOString()
+  expect(dueForCheck(T0, undefined)).toBe(true)
+  expect(dueForCheck(T0, { lastCheck: 'garbage' })).toBe(true)
+  const ok = { lastCheck: iso(T0), lastOk: true }
+  expect(dueForCheck(at(0), ok)).toBe(false)
+  expect(dueForCheck(at(23.9), ok)).toBe(false)
+  expect(dueForCheck(at(24), ok)).toBe(true)
+  const failed = { lastCheck: iso(T0), lastOk: false }
+  expect(dueForCheck(at(5.9), failed)).toBe(false)
+  expect(dueForCheck(at(6), failed)).toBe(true)
+  expect(dueForCheck(T0 - 5_000, ok)).toBe(false)
+})
+
+test('update.ts: only a folder under plugins/cache is an installed copy; the request and install command say what to run', () => {
+  expect(isDevInstall('/Users/a/.claude/plugins/cache/horef-claude-plugins/model-router/0.30.0')).toBe(false)
+  expect(isDevInstall('C:\\Users\\a\\.claude\\plugins\\cache\\horef-claude-plugins\\model-router\\0.30.0')).toBe(false)
+  expect(isDevInstall('/Users/a/Programming/claude-plugins/plugins/model-router')).toBe(true)
+  expect(updateRequest('model-router')).toContain('claude plugin update model-router@horef-claude-plugins')
+  expect(installCommand('model-router')).toBe('/plugin install model-router --marketplace Horef/claude-plugins')
+  expect(versionOfManifest('{"version":"0.30.1"}')).toBe('0.30.1')
+  expect(versionOfManifest('{"version":"0.30.1-rc.1"}')).toBeUndefined()
+  expect(versionOfManifest('<html>rate limited</html>')).toBeUndefined()
+  expect(shouldAnnounce({ latest: '0.30.1' }, '0.30.0')).toBe(true)
+  expect(shouldAnnounce({ latest: '0.30.1', dismissed: '0.30.1' }, '0.30.0')).toBe(false)
 })
