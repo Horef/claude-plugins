@@ -13,6 +13,7 @@ Design and rationale: `plugins/strange-loop/README.md`; research behind it: `doc
 - Each plugin is `plugins/<name>/` with `.claude-plugin/plugin.json` (name, version, description); skills are `plugins/<name>/skills/<name>/SKILL.md`; the listing is `.claude-plugin/marketplace.json`.
 - A **unit** is a skill folder, or a mod's plugin root. Every unit has `LEARNINGS.md` (observations), `CHANGELOG.md` (versions) and `evals/` (`run.py` scripted, `cases.md` judged). `loop.py where` lists them.
 - Skill helper code lives in the skill's `scripts/`; file docstrings say what each script does.
+- `site/` is the newcomer guide website (GitHub Pages, D13): plain HTML, published on push to `main`.
 
 ## Commands
 - Unit evals: `python plugins/strange-loop/skills/strange-loop/scripts/loop.py eval <unit>` (exit 2 = not run, e.g. a library that lives on another machine; never report that as a pass).
@@ -34,7 +35,7 @@ Design and rationale: `plugins/strange-loop/README.md`; research behind it: `doc
 | finish a unit of work | `docs/STATUS.md` (overwrite) and a new entry at the top of `docs/WORKLOG.md` with commands and results |
 | choose between alternatives about the genome itself | the next D entry in `docs/DECISIONS.md` |
 | add a skill or mod | `loop.py new <name> --description ... --category general\|personal [--from DIR] [--mod]` creates the manifest, marketplace entry, README row and unit files; then fill the `TODO(new)` placeholders and real eval cases (strange-loop SKILL.md section 8) |
-| change what a plugin does for its users | its README and the root `README.md` table |
+| change what a plugin does for its users | its README and the root `README.md` table; for a mod also its guide page `site/<mod>.html` (D13) |
 | write or revise a doc in `docs/` | its `Status:` line |
 
 - Before every commit: `loop.py check`, `docmap.py update` + `check`, the evals of the units you changed, `git diff --check`.

@@ -16,6 +16,7 @@ Every choice between alternatives about the genome itself, and every gap we fill
 | D10 | How lessons travel; who merges (2026-10-30; status: accepted) |
 | D11 | The router cluster's shared contracts (2026-11-14; status: accepted) |
 | D12 | Each skill works on its own (2026-11-15; status: accepted) |
+| D13 | A guide website for newcomers, with updates checked from inside the mods (2026-11-23; status: accepted) |
 <!-- docmap:end -->
 
 ## D1. This repository is the genome (2026-10-30; status: accepted, confirmed by owner 2026-10-30)
@@ -118,3 +119,10 @@ Every choice between alternatives about the genome itself, and every gap we fill
 - **Alternatives:** one shared source per rule (less text, but breaks single installs); bundling skills (defeats separate plugins).
 - **Consequences:** some duplication is intended and is not bloat; audits remove repetition only inside one skill. The learning-loop footer stays self-contained in each skill.
 - **Evidence / source:** owner, 2026-11-15, while approving restructures R2-R8.
+
+## D13. A guide website for newcomers, with updates checked from inside the mods (2026-11-23; status: accepted)
+- **Context:** the owner's father installed model-router and found it too complex on first sight: its README is a 49 KB reference with install last, and nothing said what to do first, what is optional, or that mods do not update by themselves (third-party marketplaces have auto-update off by default).
+- **Decision:** a static guide site in `site/` (plain HTML, no build step), published by GitHub Pages from `.github/workflows/pages.yml`, at https://horef.github.io/claude-plugins/. Each mod gets a guide page in newcomer order (what it does, install and check, first use, reading it, common settings, then every advanced feature as a plain-language card: what it is, do you need it, what you need, turn it on, check it, turn it off), plus a shared Updating page. The READMEs stay the full reference and gain a short "Start here" at the top. The mods link to their guide and check once a day for a newer version on GitHub (notify only; the *Update* action fills a request for Claude to run the update, since a mod cannot run commands in the desktop app and cannot reload plugins). The check code (`hooks/update.ts`) is copied into each mod (D12).
+- **Alternatives:** README-only "Start here" (still lands newcomers in 49 KB of reference, no screenshots); a `gh-pages` branch (an orphan branch to keep in step); the pane alone (cannot teach install); advanced features as links to the README only (owner: technical users who are not experts must be able to use them too); a self-update button through `$.process.run` (terminal only; the father uses the desktop app).
+- **Consequences:** the guide pages must follow the mods: a change to a mod's user-visible behaviour updates its guide page in the same change (`site/<mod>.html`). Pages has to be enabled once in the repo settings (source: GitHub Actions).
+- **Evidence / source:** owner request 2026-11-23 (from the father's first install); design review by Gemini 4 Neon the same day (proposal and review in that session's work, not in the repo).
