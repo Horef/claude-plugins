@@ -207,6 +207,8 @@ export type Settings = {
   log: boolean
   /** Write the state file the Herdr view reads (~/.config/model-router/state/<chat>.json), when ~/.config/herdr-app exists. */
   herdrView: boolean
+  /** Look for a newer release once a day (a quiet request for the published plugin.json), and say so in the pane. */
+  updateCheck: boolean
 }
 
 export type HereEffortSettings = {
@@ -443,6 +445,12 @@ declare module 'claude-code' {
       resetNote: string
       /** This chat's key for the Herdr view's state file (<config>/model-router/state/<chatKey>.json). */
       chatKey: string
+      /** The update check (hooks/update.ts): the installed version (from plugin.json), whether this load is a checkout (never checked), whether CLAUDE_PLUGINS_NO_UPDATE_CHECK is set, and what was last found. */
+      updates: { installed?: string; dev: boolean; envOff?: boolean; state: { lastCheck?: string; lastOk?: boolean; latest?: string; dismissed?: string; toasted?: string } }
+      /** What the pane's Update button did (the request when the prompt box would not take it). */
+      updateNote: string
+      /** The first-use welcome was dismissed or a plan was posted (true until the remembered state is loaded, so it never flashes for an existing user). */
+      welcomeSeen: boolean
     }
   }
 }

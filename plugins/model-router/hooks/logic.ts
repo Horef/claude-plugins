@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUN
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.29.4'
+export const VERSION = '0.30.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -439,6 +439,7 @@ export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }
   prices: { ...(stored?.prices && typeof stored.prices === 'object' ? stored.prices : {}) },
   log: stored?.log !== false,
   herdrView: stored?.herdrView !== false,
+  updateCheck: stored?.updateCheck !== false,
 })
 
 // --- The pane's plain words, presets and views ----------------------------------------

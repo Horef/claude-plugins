@@ -39,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   models: [],
   prices: {},
   log: true,
+  updateCheck: true,
   herdrView: true,
 }
 

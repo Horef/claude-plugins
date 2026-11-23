@@ -2,6 +2,12 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.30.0 (2026-11-23)
+- first-use welcome in the empty pane, Guide link in the footer, /router help, and a quiet daily update check (setting Check for updates, CLAUDE_PLUGINS_NO_UPDATE_CHECK=1, never for checkouts) with an update notice under the health line and /router update; versions shown to people come from plugin.json (owner request: his father found the mod too complex at first sight and did not know mods do not update by themselves)
+
+## 0.29.5 (2026-11-23)
+- a delegated step finished with no verdict is asked for in the next turn's router note (once per step), not only in the plan tool's result: after the last step of a plan the plan tool is usually not called again (O7: 47 of 130 runs had no verdict)
+
 ## 0.29.4 (2026-11-22)
 - auto mode leaves runs with no verdict out of its share and can try the rung below a learned one (autoExplore, off by default) (O7)
 - review fixes: overkill counts as passing for auto mode; parallel calls of a kind never both try; tries are decided only when an Agent call is routed (no false "user changed" notes, partial picks never inherit a try); no tries for counted steps; unjudged tries end at 2N; VERSION matches
