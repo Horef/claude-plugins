@@ -63,6 +63,8 @@ import {
   knownOf,
   learnedHelpers,
   learnedRungs,
+  exploreBusy,
+  exploreRungs,
   leavesOf,
   mergeSettings,
   modelsChecked,
@@ -605,11 +607,20 @@ async function editModelNews($: EngineInterface, fn: (n: ModelNews) => ModelNews
   })
 }
 
-/** Auto mode's learned rung per kind, or nothing while auto mode is off. */
+/**
+ * Auto mode's learned rung per kind, or nothing while auto mode is off. Never the tries one rung below (`exploringOf`): what the
+ * agent was told, the pane's comparisons and the model map all see the learned rung, which does not flip as steps start and end.
+ */
 async function learnedOf($: EngineInterface): Promise<Learned | undefined> {
   const set = await read($, settings)
 
   return set.autoRoute ? learnedRungs(await read($, history), set) : undefined
+}
+
+/** The learned rungs with `autoExplore`'s tries one rung below laid over: only for routing an Agent call and the pane's hint. */
+async function exploringOf($: EngineInterface, set: Settings, learned: Learned | undefined): Promise<Learned | undefined> {
+  if (!learned || !set.autoExplore) return learned
+  return exploreRungs(await read($, history), set, learned, exploreBusy(await read($, steps)))
 }
 
 /** The strange-loop unit an observation about a kind belongs to: the skill of that name, else model-router. */
@@ -833,6 +844,9 @@ const freshRun = (s: Step): Step => ({
   historyKey: undefined,
   startedAt: undefined,
   priorOutput: s.usage.output,
+  // A try one rung below that is run again goes back to the learned rung, unless the owner picked another since; either way the try is over.
+  explored: undefined,
+  ...(s.explored && s.model === s.explored.model && s.effort === s.explored.effort ? { model: undefined, effort: undefined } : {}),
 })
 
 /** Moves a finished step one rung up the ladder and asks the main agent to redo it. */
@@ -2130,7 +2144,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const helpersOn = helpersLive(set)
   const helperAdvice = set.helpers.enabled ? helperSuggestions(past, set, hcfg, hs.models) : []
   // Auto mode: the rung each kind has learned, for the rows (nothing while it is off).
-  const learned = set.autoRoute ? learnedRungs(past, set) : undefined
+  const learned = await learnedOf($)
+  // With autoExplore, the tries one rung below: only for the hint on a step that has not started, never for the comparisons.
+  const exploring = await exploringOf($, set, learned)
   const learnedHelp = set.autoRoute && helpersOn ? learnedHelpers(past, set, hcfg, hs.models) : undefined
   // The health line: quiet when helpers are off or can run; the first failing check, with the full list one click away, when not.
   const checks = healthChecks({ set, st: hs, rules: (await read($, delivery)).inChat && (await read($, toldHelpers)) === helperRuleSig(set) })
@@ -2178,6 +2194,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     use: set.helpers.enabled && set.helpers.use !== D.helpers.use,
     fusion: set.helpers.fusion !== D.helpers.fusion,
     autoRoute: set.autoRoute !== D.autoRoute,
+    autoExplore: set.autoExplore !== D.autoExplore,
     autoMinRuns: set.autoMinRuns !== D.autoMinRuns,
     autoOkPercent: set.autoOkPercent !== D.autoOkPercent,
     run: set.helpers.run !== D.helpers.run,
@@ -2202,7 +2219,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     helpers:
       set.helpers.enabled &&
       (differs.run || differs.fusion || set.helpers.script !== D.helpers.script || Object.keys(set.helpers.kinds).length > 0 || helperTiersDiffering.length > 0 || TIER_ORDER.some(orderDiffers)),
-    learning: differs.autoRoute || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0 || Object.keys(set.kindTags).length > 0,
+    learning: differs.autoRoute || differs.autoExplore || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0 || Object.keys(set.kindTags).length > 0,
     prices: set.models.length > 0 || models.some(priceDiffers),
     skills: Object.keys(set.skills).length > 0,
     diagnostics: differs.log || differs.herdrView,
@@ -2565,6 +2582,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const rungFrom = (s: Step) => {
     if (s.where !== 'agent') return null
     const b = baseRung(s, set, learned)
+    if (s.explored && s.model === s.explored.model && s.effort === s.explored.effort) {
+      return <Text key={`from:${s.id}`} color="suggestion" size="footnote">{`auto: trying ${s.explored.model} · ${s.explored.effort}, one rung below what it learned`}</Text>
+    }
+    const t = s.status === 'planned' && !s.model && !s.effort && (s.count ?? 1) <= 1 ? baseRung(s, set, exploring) : undefined
+    if (t?.source === 'auto' && t.explore) {
+      return <Text key={`from:${s.id}`} color="suggestion" size="footnote">{`auto: next run tries ${t.model} · ${t.effort}, one rung below ${t.explore.model} · ${t.explore.effort}`}</Text>
+    }
     // A pick of the model or the effort alone fills the rest from the rung it would otherwise run on.
     if (s.model || s.effort) return <Text key={`from:${s.id}`} dimColor size="footnote">{`your pick: ${s.model ?? b.model} · ${s.effort ?? b.effort}`}</Text>
     if (b.source === 'tier') return <Text key={`from:${s.id}`} dimColor size="footnote">{`${s.tier} level's default: ${b.model} · ${b.effort}`}</Text>
@@ -3581,6 +3605,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               })(),
             differs.autoRoute,
           ),
+          switchRow(
+            'auto-explore',
+            'Try a cheaper rung now and then',
+            'With auto mode on: after 4 runs on a kind\'s learned rung, the next tries the rung below; it takes over once it does as well, and one weak run stops the tries.',
+            set.autoExplore,
+            () => void editSettings($, s => ({ ...s, autoExplore: !s.autoExplore })),
+            differs.autoExplore,
+          ),
           <Box key="auto-thresholds" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="xs" rowGap="xs">
             <Text dimColor size="footnote">Auto picks a rung with at least</Text>
             {pick('auto-min-runs', String(set.autoMinRuns), withCurrent(AUTO_RUNS, set.autoMinRuns).map(n => ({ value: String(n), label: `${n} runs` })), v =>
@@ -4133,32 +4165,61 @@ export const register: Register = on => {
         await setSteps($, list => [...list, { ...newStep(tag, `Skill ${tag.slice(SKILL_TAG.length)}`, tier, 'agent'), ...(kind ? { kind } : {}) }])
       }
     }
-    let step = (await read($, steps)).find(s => s.id === tag)
-    if (!step) return next(e)
-    if (step.group) {
-      const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
-      return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
-    }
-    // A finished step delegated again is a rerun: a fact the history counts as weak. One whose last run was cut short is not.
-    if (step.status === 'done') {
-      const key = step.historyKey
-      if (key && step.verdict !== 'cut-short') await editHistory($, h => h.map(x => (x.key === key ? { ...x, rerun: true } : x)))
-      await editStep($, step.id, freshRun)
-      step = (await read($, steps)).find(s => s.id === tag)!
-    }
-    // A helper step run through the Agent tool is the fallback: it is a subagent step now, and no helper ran it.
-    if (step.where === 'helper') {
-      await recordFallback($, step.id, 'no reason given')
-      step = (await read($, steps)).find(s => s.id === tag)!
-    }
+    // Choosing a step's rung and marking it running happen one Agent call at a time, so parallel calls of one kind see each
+    // other's tries one rung below. The lock alone is not enough: every read of one dispatch sees the moment it started, so
+    // the try is decided inside the write itself, on the steps as they stand (update retries on a newer version).
+    const routed = await locked('route', async () => {
+      let step = (await read($, steps)).find(s => s.id === tag)
+      if (!step) return undefined
+      if (step.group) {
+        const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
+        return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
+      }
+      // The router itself moved the step's rung (a try ended, or began): the agent's record of it follows, so no "the user changed" note.
+      let moved = false
+      // A finished step delegated again is a rerun: a fact the history counts as weak. One whose last run was cut short is not.
+      if (step.status === 'done') {
+        const key = step.historyKey
+        if (key && step.verdict !== 'cut-short') await editHistory($, h => h.map(x => (x.key === key ? { ...x, rerun: true } : x)))
+        moved = !!step.explored
+        await editStep($, step.id, freshRun)
+        step = (await read($, steps)).find(s => s.id === tag)!
+      }
+      // A helper step run through the Agent tool is the fallback: it is a subagent step now, and no helper ran it.
+      if (step.where === 'helper') {
+        await recordFallback($, step.id, 'no reason given')
+        step = (await read($, steps)).find(s => s.id === tag)!
+      }
 
-    const learnedNow = await learnedOf($)
-    const { model, effort } = runsOn(step, set, learnedNow)
-    await logEvent($, 'route', { id: step.id, model, effort, source: step.model || step.effort ? 'step' : baseRung(step, set, learnedNow).source })
+      const learnedNow = await learnedOf($)
+      const base = baseRung(step, set, learnedNow)
+      const past = set.autoExplore && learnedNow ? await read($, history) : undefined
+      const at = new Date().toISOString()
+      // The run starts with its first Agent call (N calls for a counted step). A try one rung below is decided on a run's first
+      // call, for a step with no pick of its own and one agent (never N), and pinned in the same write, so it is busy at once:
+      // its cost, its history entry and a rerun all see the rung it really ran on.
+      const tried: { rung?: Rung } = {}
+      await setSteps($, list =>
+        list.map(s => {
+          if (s.id !== step!.id) return s
+          const t = past && learnedNow && !s.model && !s.effort && (s.count ?? 1) <= 1 && s.status !== 'running' ? baseRung(s, set, exploreRungs(past, set, learnedNow, exploreBusy(list))) : undefined
+          tried.rung = t?.source === 'auto' && t.explore ? { model: t.model, effort: t.effort } : undefined
+
+          return { ...s, ...(tried.rung ? { ...tried.rung, explored: tried.rung } : {}), status: 'running', startedAt: s.status === 'running' && s.startedAt ? s.startedAt : at }
+        }),
+      )
+      await refreshStatus($)
+      const exploring = !!tried.rung
+      const { model, effort } = tried.rung ?? runsOn(step, set, learnedNow)
+      await logEvent($, 'route', { id: step.id, model, effort, source: exploring ? 'explore' : step.model || step.effort ? 'step' : base.source })
+      if (exploring || moved) await tellSteps($, [step.id])
+
+      return { step, model, effort }
+    })
+    if (!routed) return next(e)
+    if (routed.deny !== undefined) return { deny: routed.deny }
+    const { step, model, effort } = routed
     const prompt = set.tiers[step.tier].scopeNote ? `${e.prompt}\n\n${SCOPE_NOTE}` : e.prompt
-    const at = new Date().toISOString()
-    // The run starts with its first Agent call (N calls for a counted step).
-    await editStep($, step.id, s => ({ ...s, status: 'running', startedAt: s.status === 'running' && s.startedAt ? s.startedAt : at }))
     const ran = await next({ ...e, model: model as typeof e.model, effort, prompt })
     const resolved = ran.deny === undefined ? (ran.result as { resolvedModel?: string } | undefined)?.resolvedModel : undefined
     if (resolved) await editStep($, step.id, s => ({ ...s, resolvedModel: resolved }))
