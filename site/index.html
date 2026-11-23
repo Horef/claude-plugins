@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude plugins by Sergiy Horef: guide</title>
+<meta name="description" content="A friendly guide to the model-router and session-status-line mods for Claude Code, and the skills in this marketplace.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="nav" aria-label="Site"><div class="nav-in">
+  <a href="index.html" aria-current="page">Home</a>
+  <a href="model-router.html">model-router</a>
+  <a href="session-status-line.html">status line</a>
+  <a href="updating.html">Updating</a>
+</div></nav>
+<main>
+
+<h1>Claude plugins, explained</h1>
+<p class="lede">This is Sergiy Horef's marketplace of plugins for Claude Code: two <em>mods</em> that add a panel or a status line to your chat, and a set of <em>skills</em> that teach Claude how to do specific jobs. This site shows you how to start with each, step by step.</p>
+
+<h2 id="mods" class="first">The two mods</h2>
+<p class="muted">A mod changes what Claude Code itself shows you. Both are optional, and both work without any extra setup.</p>
+<div class="mods">
+  <section class="mod" aria-labelledby="m1">
+    <h3 id="m1">model-router</h3>
+    <p>Plans multi-step work, runs each step on the cheapest Claude model that does it well, and shows what it cost and saved. Your main chat's model never changes.</p>
+    <a class="btn primary" href="model-router.html">Start with model-router</a>
+  </section>
+  <section class="mod" aria-labelledby="m2">
+    <h3 id="m2">session-status-line</h3>
+    <p>A compact line above your prompt: model, how full the context is, your 5-hour and weekly limits, cost, and more. Optionally keeps a waiting chat's cache alive.</p>
+    <a class="btn primary" href="session-status-line.html">Start with the status line</a>
+  </section>
+</div>
+
+<h2 id="skills">The skills</h2>
+<p>Skills need no setup beyond installing them. Claude picks one up when your request matches it, or you can ask for it by name.</p>
+<ul class="list">
+  <li><b>strange-loop</b><span>Makes skills and tools improve themselves from use, with evidence-gated reviews.</span></li>
+  <li><b>project-foundations</b><span>Sets up, upgrades or audits a repo so agents and humans can maintain it (AGENTS.md, status, decisions, doc checks).</span></li>
+  <li><b>scientific-figures</b><span>Draws figures for notes, papers and slides: circuits, anatomy, plots, phase portraits, 3D surfaces.</span></li>
+  <li><b>gui-design</b><span>Designs panels, settings pages, viewers and dashboards at the right density, and checks them with screenshots.</span></li>
+  <li><b>research-writing</b><span>Turns results, logs and figures into a coherent write-up or paper draft in LaTeX.</span></li>
+  <li><b>literature-research</b><span>Searches several sources, records every finding with its quote, and checks claims against the sources.</span></li>
+  <li><b>research-assistant</b><span>Takes a research question through literature, hypotheses, analyses and write-up, stopping for you at three gates.</span></li>
+  <li><b>local-run-queue</b><span>Runs many local jobs in parallel inside a memory budget.</span></li>
+  <li><b>model-routing</b><span>The model-router approach as a plain skill, for agents without the mod (GitHub Copilot, Kiro, Codex, Cursor, claude.ai).</span></li>
+  <li><b>herdr-delegate</b><span>Hands self-contained steps to helpers on your other subscriptions. Used by model-router's <a href="model-router.html#helpers">helpers</a>.</span></li>
+  <li><b>course-lecture-notes</b><span>Turns a lecture into teaching notes (written for one person's setup: DEVONthink, Anki).</span></li>
+  <li><b>paper-premark</b><span>Pre-reads and marks up a scientific paper in DEVONthink (written for one person's setup).</span></li>
+</ul>
+
+<h2 id="install">Install anything in 3 steps</h2>
+<ol class="steps">
+  <li><strong>Open Claude Code.</strong> In the desktop app, use the Code tab. In a terminal, type <code>claude</code>. Click in the chat box.</li>
+  <li><strong>Type the install command</strong>, with the plugin's name. For example, for model-router:
+    <div class="code"><pre>/plugin install model-router --marketplace Horef/claude-plugins</pre></div>
+    The first time, Claude Code shows the marketplace it found and asks you to confirm adding it. Then it shows the plugin's details and asks where to install it. <em>Install for you (user scope)</em> is the usual choice.</li>
+  <li><strong>Load it.</strong> New chats load it by themselves. In a chat that is already open, type <code>/reload-plugins</code>.</li>
+</ol>
+<p class="small muted">Prefer a shell? <code>claude plugin install model-router --marketplace Horef/claude-plugins</code> does the same without opening a chat. Plugin names are the ones in the lists above.</p>
+
+<h2 id="updating">Updating</h2>
+<p>Plugins from this marketplace do <strong>not</strong> update by themselves unless you switch that on: Claude Code only auto-updates official marketplaces by default. You can switch auto-update on once, or update on request whenever you like. <a href="updating.html">How to update, step by step</a>.</p>
+
+</main>
+<footer class="foot">
+  <p>Source and issues: <a href="https://github.com/Horef/claude-plugins">github.com/Horef/claude-plugins</a>. The mods use Claude Code's mod (function-hooks) interface, which is in early access and may change, so they need a recent Claude Code.</p>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>

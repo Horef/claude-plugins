@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Updating the plugins</title>
+<meta name="description" content="Why these mods do not update by themselves, and how to update them: auto-update, or update now.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="nav" aria-label="Site"><div class="nav-in">
+  <a href="index.html">Home</a>
+  <a href="model-router.html">model-router</a>
+  <a href="session-status-line.html">status line</a>
+  <a href="updating.html" aria-current="page">Updating</a>
+</div></nav>
+<main>
+
+<h1>Updating</h1>
+<p class="lede">New versions of these plugins add features and fix problems. They do not arrive by themselves unless you switch that on. Pick one of the two ways below.</p>
+<ul class="toc" aria-label="On this page">
+  <li><a href="#why">Why not automatic</a></li>
+  <li><a href="#auto">A. Turn on auto-update</a></li>
+  <li><a href="#now">B. Update now</a></li>
+  <li><a href="#accounts">Several accounts</a></li>
+  <li><a href="#version">Your version</a></li>
+</ul>
+
+<h2 id="why">Why mods do not update by themselves</h2>
+<p>Claude Code keeps each plugin's files on your computer. It updates them for you only when the marketplace they came from has <em>auto-update</em> turned on. That is on by default for Anthropic's official marketplaces, and <strong>off by default for every other marketplace</strong>, including this one. So until you switch it on, you stay on the version you installed.</p>
+
+<h2 id="auto">A. Turn on auto-update (do it once)</h2>
+<p>This follows Claude Code's own documentation (<a href="https://code.claude.com/docs/en/discover-plugins#keep-plugins-updated">Keep plugins updated</a>).</p>
+<ol class="steps">
+  <li>In a Claude Code chat (desktop app or terminal), type <code>/plugin</code>.</li>
+  <li>Go to the <strong>Marketplaces</strong> tab.</li>
+  <li>Select <code>horef-claude-plugins</code> to open its menu.</li>
+  <li>Turn auto-update on.</li>
+</ol>
+<p>From then on, after a session starts, Claude Code refreshes the marketplace and updates the plugins you installed from it. When it does, you may see <code>Plugin updated: &lt;name&gt; · Run /reload-plugins to apply</code>. Type <code>/reload-plugins</code> in that chat. If you do not, the new version loads the next time you start Claude Code.</p>
+<p class="small muted">The same documentation says the exact timing, the plugins auto-update skips, and the environment variables that turn it off are on its <a href="https://code.claude.com/docs/en/plugins/loading.md#when-auto-update-runs">"When auto-update runs"</a> page.</p>
+
+<h2 id="now">B. Update now</h2>
+<p>Use this when you want the new version at once, or when you prefer not to use auto-update. Pick the way that suits you.</p>
+
+<h3>B1. Ask Claude to do it (works in the desktop app too)</h3>
+<p>Paste this into a chat, changing the plugin name if it is not model-router:</p>
+<div class="code"><pre>Please update my model-router plugin: run `claude plugin marketplace update horef-claude-plugins` and then `claude plugin update model-router@horef-claude-plugins`, tell me what version I have now, and remind me to type /reload-plugins in my open chats.</pre></div>
+<p>When a mod finds a newer version it shows an <strong>Update</strong> notice. The <em>Update</em> button puts exactly this request in your chat box, and you press Enter. Both mods also have a command that checks now and prints the installed and latest versions: <code>/router update</code> and <code>/status-line update</code>.</p>
+<p class="small muted">The mods look for a new version on GitHub at most once a day, quietly; if it fails (offline, a blocked network) you see nothing. To stop it: in model-router, Settings → Diagnostics → <em>Check for updates</em>; in the status line, <code>/status-line update-check off</code>; for every mod at once, set the environment variable <code>CLAUDE_PLUGINS_NO_UPDATE_CHECK=1</code>.</p>
+
+<h3>B2. In the plugin panel</h3>
+<ol class="steps">
+  <li>Type <code>/plugin</code>.</li>
+  <li>To update one plugin: open the <strong>Installed</strong> tab, open the plugin, and choose <strong>Update now</strong>.</li>
+  <li>To update everything you installed from this marketplace: open the <strong>Marketplaces</strong> tab, select <code>horef-claude-plugins</code>, and choose <strong>Update marketplace</strong>. It refreshes the listing, updates your installed plugins from it, and says if it left any for you to update yourself.</li>
+</ol>
+
+<h3>B3. In a terminal</h3>
+<div class="code"><pre>claude plugin marketplace update horef-claude-plugins
+claude plugin update model-router@horef-claude-plugins
+claude plugin update session-status-line@horef-claude-plugins</pre></div>
+<p>The first line refreshes the list of what is available. It does not change your installed plugins by itself; the <code>claude plugin update</code> lines do. There is no single command that updates every plugin, so repeat the last line for each plugin you use (for example <code>herdr-delegate@horef-claude-plugins</code>).</p>
+
+<h3>Then: load it</h3>
+<p>New chats pick up the new version by themselves. In a chat that is already open, type <code>/reload-plugins</code>.</p>
+
+<h2 id="accounts">If you use several Claude accounts</h2>
+<p>Each account has its own folder (<code>CLAUDE_CONFIG_DIR</code>, default <code>~/.claude</code>) and keeps its own plugins, so <strong>each account updates on its own</strong>. Do option A or B once in a chat of each account. In a terminal, point the command at the account's folder:</p>
+<div class="code"><pre>CLAUDE_CONFIG_DIR=~/.claude-uni claude plugin update model-router@horef-claude-plugins</pre></div>
+<p>Auto-update, the <em>Update</em> notice and the version check also work per account, so each account notices on its own.</p>
+
+<h2 id="version">Which version do I have?</h2>
+<p>In a terminal, run:</p>
+<div class="code"><pre>claude plugin list</pre></div>
+<p>It prints each plugin with its <code>Version</code>, <code>Scope</code> and <code>Status</code>. You can also type <code>/plugin</code> and open the <strong>Installed</strong> tab. To see what changed, read the plugin's <code>CHANGELOG.md</code> on GitHub, for example <a href="https://github.com/Horef/claude-plugins/blob/main/plugins/model-router/CHANGELOG.md">model-router's</a>.</p>
+
+</main>
+<footer class="foot">
+  <p>Official reference: <a href="https://code.claude.com/docs/en/discover-plugins">Install and manage plugins</a>. Repository: <a href="https://github.com/Horef/claude-plugins">github.com/Horef/claude-plugins</a>.</p>
+</footer>
+<script src="site.js"></script>
+</body>
+</html>
