@@ -972,18 +972,32 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
   await editLifetime($, l => ({ ...l, helper: addHelperTotals(l.helper, gain) }))
 }
 
-/** The line a plan tool result carries for finished delegated steps that have no verdict yet: asked once, or when named again. */
-async function verdictsMissing($: EngineInterface, named: readonly string[]) {
+/** Finished delegated steps that have no verdict yet: not asked about, or named again. */
+async function stepsMissingVerdict($: EngineInterface, named: readonly string[]) {
   const list = await read($, steps)
   const again = expandIds(list, named)
   // A subagent step that never ran (marked done unrun) has nothing to judge.
   const ran = (s: Step) => isHelperRun(s) || !!s.startedAt || !!s.historyKey
-  const missing = list.filter(s => isDelegated(s) && s.status === 'done' && !s.verdict && ran(s) && (!s.asked || again.has(s.id)))
-  if (missing.length === 0) return undefined
+
+  return list.filter(s => isDelegated(s) && s.status === 'done' && !s.verdict && ran(s) && (!s.asked || again.has(s.id)))
+}
+
+/** Marks steps as asked about, so neither the plan tool nor the next turn asks again. */
+async function markAsked($: EngineInterface, missing: readonly Step[]) {
   const ids = new Set(missing.map(s => s.id))
   await update($, steps, l => l.map(s => (ids.has(s.id) ? { ...s, asked: true } : s)))
+}
 
-  return `Verdict needed for ${missing.map(s => `[${s.id}]`).join(', ')}: call ${PLAN_TOOL} with done: [{id, verdict: "ok" | "weak" | "overkill" | "cut-short", why}] (rule 5). Until then each counts as "no verdict".`
+const verdictRequest = (missing: readonly Step[]) =>
+  `Verdict needed for ${missing.map(s => `[${s.id}]`).join(', ')}: call ${PLAN_TOOL} with done: [{id, verdict: "ok" | "weak" | "overkill" | "cut-short", why}] (rule 5). Until then each counts as "no verdict".`
+
+/** The line a plan tool result carries for finished delegated steps that have no verdict yet: asked once, or when named again. */
+async function verdictsMissing($: EngineInterface, named: readonly string[]) {
+  const missing = await stepsMissingVerdict($, named)
+  if (missing.length === 0) return undefined
+  await markAsked($, missing)
+
+  return verdictRequest(missing)
 }
 
 /** Records that a helper step runs as a subagent instead, and why: once per run, counted in the chat and all-time totals. */
@@ -4371,7 +4385,9 @@ export const register: Register = on => {
     const pending = await read($, notes)
     // What the chat knows of helpers changed since the rules: one note with the whole helper rule (none when the rules go now).
     const helperChange = how.inChat ? await helperNote($) : undefined
-    const all = [...pending, ...(helperChange ? [helperChange] : []), ...changes.map(c => c.note)]
+    // Delegated steps that finished without a verdict: the plan tool is often not called again after the last step, so ask here (once per step).
+    const unjudged = await stepsMissingVerdict($, [])
+    const all = [...pending, ...(helperChange ? [helperChange] : []), ...changes.map(c => c.note), ...(unjudged.length ? [verdictRequest(unjudged)] : [])]
     if (all.length) extra.push(`Model router notes:\n${all.map(n => `- ${n}`).join('\n')}`)
 
     if (extra.length > 0) {
@@ -4381,6 +4397,10 @@ export const register: Register = on => {
         diag.appends += 1
         await update($, delivery, d => ({ ...d, inChat: true, planDue: false, rulesRow: how.inChat ? d.rulesRow : row.uuid }))
         await update($, notes, () => [])
+        if (unjudged.length) {
+          await markAsked($, unjudged)
+          await logEvent($, 'verdicts-asked', { ids: unjudged.map(s => s.id) })
+        }
         if (!how.inChat || helperChange) await helpersTold($)
         if (!how.inChat) await logEvent($, 'rules', { delivered: true, via: how.via ?? 'message', helpers: helperMode() })
         await tellSteps($, replan ? undefined : changes.map(c => c.id))

@@ -4336,5 +4336,66 @@ test('review fix 7: a started try still says so in the plan; n counts voiced tri
 })
 
 test('review fix 8: VERSION is the plugin version', () => {
-  expect(VERSION).toBe('0.29.4')
+  expect(VERSION).toBe('0.29.5')
+})
+
+// --- Verdicts asked for at the next turn (0.29.5) ---------------------------------------
+
+test('a delegated step that finished with no verdict is asked for in the next turn note, once; judged or already asked steps are not', async ($, on) => {
+  const { step, rows } = await boot($, on, [], [
+    { id: 'x1', description: '[r1] review' },
+    { id: 'x2', description: '[r2] review' },
+    { id: 'x3', description: '[r3] review' },
+  ])
+  await $.turn.start({ text: 'plan it', turnId: 't0' })
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 'r1', title: 'Review one', tier: 'light', where: 'agent' },
+      { id: 'r2', title: 'Review two', tier: 'light', where: 'agent' },
+      { id: 'r3', title: 'Review three', tier: 'light', where: 'agent' },
+    ],
+  } as never)
+  const run = async (id: string, n: number) => {
+    await $.tool.call({ tool: 'Agent', description: `[${id}] review`, prompt: 'go' })
+    await new Promise(r => setTimeout(r, 5))
+    await step(`t${n}`, haikuUse, `x${n}`)
+    await end($, `x${n}`, `t${n}`)
+  }
+  await run('r2', 2)
+  await run('r3', 3)
+  // r2 gets its verdict; the plan tool asks about r3 in the same call.
+  expect(String((await $.tool.call({ tool: PLAN, done: [{ id: 'r2', verdict: 'ok', why: 'fine' }] } as never)).result)).toContain('Verdict needed for [r3]')
+  // r1 finishes last and the plan tool is not called again.
+  await run('r1', 1)
+  const count = rows.appended().length
+  await $.turn.start({ text: 'next', turnId: 't9' })
+  // r1 alone: it never reached the plan tool again after finishing.
+  expect(rows.appended().length).toBe(count + 1)
+  expect(lastRow(rows)).toContain('Verdict needed for [r1]:')
+  expect(lastRow(rows)).not.toContain('[r2]')
+  expect(lastRow(rows)).not.toContain('[r3]')
+  // Once: the turn after says nothing, and the plan tool does not ask again either.
+  await $.turn.start({ text: 'and on', turnId: 't10' })
+  expect(rows.appended().length).toBe(count + 1)
+  expect(String((await $.tool.call({ tool: PLAN, done: [] } as never)).result)).not.toContain('Verdict needed')
+})
+
+test('a step the plan tool already asked about is not asked again at the next turn; one never run is not asked', async ($, on) => {
+  const { step, rows } = await boot($, on, [], [{ id: 'x1', description: '[r1] review' }])
+  await $.turn.start({ text: 'plan it', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: [
+    { id: 'r1', title: 'Review one', tier: 'light', where: 'agent' },
+    { id: 'r2', title: 'Never run', tier: 'light', where: 'agent' },
+  ] } as never)
+  await $.tool.call({ tool: 'Agent', description: '[r1] review', prompt: 'go' })
+  await new Promise(r => setTimeout(r, 5))
+  await step('t1', haikuUse, 'x1')
+  await end($, 'x1', 't1')
+  const asked = String((await $.tool.call({ tool: PLAN, done: ['r2'] } as never)).result)
+  expect(asked).toContain('Verdict needed for [r1]')
+  expect(asked).not.toContain('[r2]:')
+  const count = rows.appended().length
+  await $.turn.start({ text: 'next', turnId: 't2' })
+  expect(rows.appended().length).toBe(count)
 })

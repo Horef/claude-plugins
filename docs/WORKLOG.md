@@ -2,6 +2,11 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-23: model-router 0.29.5, verdicts asked for at the next turn
+Owner's real history (O7): 47 of 130 delegated runs never got a verdict. `verdictsMissing` ran only inside the plan tool, and `turn.complete` marks a subagent step done by itself, so after the last step of a plan the agent usually never called the plan tool again and was never asked (found in the review of PR #128).
+- Change: `turn.start` adds the same one-line request (`verdictRequest`) to the hidden router note for delegated steps that are done, ran, have no verdict and were not asked about; the `asked` flag is set once the note is in the chat, so the plan tool does not ask again (and the reverse). Logged as `verdicts-asked`.
+- Commands: `claude plugin test plugins/model-router` 144 pass (2 new; the first fails on 0.29.4); `VERSION` test follows 0.29.5; `loop.py check --base bcf417e` 0 errors; `loop.py eval model-router` exit 0.
+
 ## 2026-11-22 (later): model-router 0.29.3, rules survive compactions it never hears of
 Owner asked to fix model-router too (O6, found in the session-status-line 0.13.0 work). On Team/Enterprise accounts Claude Code 2.1.330's built-in sec-default sends `session.compact` and `prompt.compose` past every person's mod, so the router never marked its rules lost after a compaction (no rules or plan re-sent) and its status line kept saying the rules go out with the next message.
 - Changes: the id of the row that carried the rules is kept (`delivery.rulesRow`); each main turn reads `$.session.messages({ after: rulesRow })`, and `{ deny }` (row cleared, rewound or left behind a compaction) marks the rules lost and the plan due, so both go out in that turn. A refused append now counts as a fault, not a delivery. The turn sets "rules sent to <model>" from `$.session.model()` (known families only), so the status no longer needs prompt.compose.
