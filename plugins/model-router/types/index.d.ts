@@ -197,6 +197,8 @@ export type Settings = {
   /** Auto mode picks a rung only with at least this many runs on it, and at least `autoOkPercent` of them ok. */
   autoMinRuns: number
   autoOkPercent: number
+  /** Auto mode tries the rung below a learned one now and then (one run in EXPLORE.every + 1), so a cheaper rung can earn its place. */
+  autoExplore: boolean
   /** Models known beyond the defaults: seen in usage or added by name. */
   models: Model[]
   /** Prices set in Settings, over the defaults; a model with none has no price. */
@@ -205,6 +207,8 @@ export type Settings = {
   log: boolean
   /** Write the state file the Herdr view reads (~/.config/model-router/state/<chat>.json), when ~/.config/herdr-app exists. */
   herdrView: boolean
+  /** Look for a newer release once a day (a quiet request for the published plugin.json), and say so in the pane. */
+  updateCheck: boolean
 }
 
 export type HereEffortSettings = {
@@ -242,6 +246,8 @@ export type Step = {
   /** Estimated dollars had the main chat's model done the same tokens. */
   mainCost: number
   resolvedModel?: string
+  /** Auto mode's exploration put this step on the rung below its learned one (0.29.4): the step's model and effort hold it. */
+  explored?: Rung
   /** Most of the step's tokens were the subagent's start-up, not its work. */
   setupHeavy?: boolean
   reruns: number
@@ -439,6 +445,12 @@ declare module 'claude-code' {
       resetNote: string
       /** This chat's key for the Herdr view's state file (<config>/model-router/state/<chatKey>.json). */
       chatKey: string
+      /** The update check (hooks/update.ts): the installed version (from plugin.json), whether this load is a checkout (never checked), whether CLAUDE_PLUGINS_NO_UPDATE_CHECK is set, and what was last found. */
+      updates: { installed?: string; dev: boolean; envOff?: boolean; state: { lastCheck?: string; lastOk?: boolean; latest?: string; dismissed?: string; toasted?: string } }
+      /** What the pane's Update button did (the request when the prompt box would not take it). */
+      updateNote: string
+      /** The first-use welcome was dismissed or a plan was posted (true until the remembered state is loaded, so it never flashes for an existing user). */
+      welcomeSeen: boolean
     }
   }
 }

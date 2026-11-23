@@ -35,9 +35,11 @@ export const DEFAULT_SETTINGS: Settings = {
   // Auto mode changes routing without asking, so it wants more evidence than the advice does.
   autoMinRuns: 5,
   autoOkPercent: 90,
+  autoExplore: false,
   models: [],
   prices: {},
   log: true,
+  updateCheck: true,
   herdrView: true,
 }
 

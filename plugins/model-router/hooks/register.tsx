@@ -63,6 +63,8 @@ import {
   knownOf,
   learnedHelpers,
   learnedRungs,
+  exploreBusy,
+  exploreRungs,
   leavesOf,
   mergeSettings,
   modelsChecked,
@@ -138,6 +140,8 @@ import {
   tiersSummary,
   whereLabel,
 } from './logic'
+import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
+import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
@@ -197,8 +201,12 @@ const pickNav = { keys: [] as string[], focused: '' }
 const showHelperGrid = atom({ plugin: 'model-router', key: 'showHelperGrid' } as const, false)
 const confirmReset = atom({ plugin: 'model-router', key: 'confirmReset' } as const, '')
 const resetNote = atom({ plugin: 'model-router', key: 'resetNote' } as const, '')
+const updates = atom({ plugin: 'model-router', key: 'updates' } as const, { dev: true, state: {} })
+const updateNote = atom({ plugin: 'model-router', key: 'updateNote' } as const, '')
+// True until the remembered state says otherwise, so the welcome never flashes for someone who has used the router.
+const welcomeSeen = atom({ plugin: 'model-router', key: 'welcomeSeen' } as const, true)
 
-const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews' }
+const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews', welcome: 'welcomeSeen', update: 'update' }
 const EFFORT_LOG_CAP = 200
 const HISTORY_CAP = 500
 
@@ -504,6 +512,7 @@ async function refreshShared($: EngineInterface) {
 }
 
 async function loadRemembered($: EngineInterface) {
+  const welcomeStored = await $.store.get(STORE.welcome)
   const stored = (await $.store.get(STORE.settings)) as Partial<Settings> | undefined
   const storedAuto = await $.store.get(STORE.auto)
   const storedAlways = await $.store.get(STORE.always)
@@ -537,6 +546,7 @@ async function loadRemembered($: EngineInterface) {
   await update($, lifetime, () => life)
   const news = asModelNews(await $.store.get(STORE.modelNews))
   await update($, modelNews, () => news)
+  await update($, welcomeSeen, () => welcomeStored === true)
   const noted = await $.store.get(STORE.genome)
   await update($, genomeNoted, () => (Array.isArray(noted) ? noted.filter((x): x is string => typeof x === 'string') : []))
   // The store is the source: bring the mirror up to date with it.
@@ -605,11 +615,20 @@ async function editModelNews($: EngineInterface, fn: (n: ModelNews) => ModelNews
   })
 }
 
-/** Auto mode's learned rung per kind, or nothing while auto mode is off. */
+/**
+ * Auto mode's learned rung per kind, or nothing while auto mode is off. Never the tries one rung below (`exploringOf`): what the
+ * agent was told, the pane's comparisons and the model map all see the learned rung, which does not flip as steps start and end.
+ */
 async function learnedOf($: EngineInterface): Promise<Learned | undefined> {
   const set = await read($, settings)
 
   return set.autoRoute ? learnedRungs(await read($, history), set) : undefined
+}
+
+/** The learned rungs with `autoExplore`'s tries one rung below laid over: only for routing an Agent call and the pane's hint. */
+async function exploringOf($: EngineInterface, set: Settings, learned: Learned | undefined): Promise<Learned | undefined> {
+  if (!learned || !set.autoExplore) return learned
+  return exploreRungs(await read($, history), set, learned, exploreBusy(await read($, steps)))
 }
 
 /** The strange-loop unit an observation about a kind belongs to: the skill of that name, else model-router. */
@@ -833,6 +852,9 @@ const freshRun = (s: Step): Step => ({
   historyKey: undefined,
   startedAt: undefined,
   priorOutput: s.usage.output,
+  // A try one rung below that is run again goes back to the learned rung, unless the owner picked another since; either way the try is over.
+  explored: undefined,
+  ...(s.explored && s.model === s.explored.model && s.effort === s.explored.effort ? { model: undefined, effort: undefined } : {}),
 })
 
 /** Moves a finished step one rung up the ladder and asks the main agent to redo it. */
@@ -958,18 +980,32 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
   await editLifetime($, l => ({ ...l, helper: addHelperTotals(l.helper, gain) }))
 }
 
-/** The line a plan tool result carries for finished delegated steps that have no verdict yet: asked once, or when named again. */
-async function verdictsMissing($: EngineInterface, named: readonly string[]) {
+/** Finished delegated steps that have no verdict yet: not asked about, or named again. */
+async function stepsMissingVerdict($: EngineInterface, named: readonly string[]) {
   const list = await read($, steps)
   const again = expandIds(list, named)
   // A subagent step that never ran (marked done unrun) has nothing to judge.
   const ran = (s: Step) => isHelperRun(s) || !!s.startedAt || !!s.historyKey
-  const missing = list.filter(s => isDelegated(s) && s.status === 'done' && !s.verdict && ran(s) && (!s.asked || again.has(s.id)))
-  if (missing.length === 0) return undefined
+
+  return list.filter(s => isDelegated(s) && s.status === 'done' && !s.verdict && ran(s) && (!s.asked || again.has(s.id)))
+}
+
+/** Marks steps as asked about, so neither the plan tool nor the next turn asks again. */
+async function markAsked($: EngineInterface, missing: readonly Step[]) {
   const ids = new Set(missing.map(s => s.id))
   await update($, steps, l => l.map(s => (ids.has(s.id) ? { ...s, asked: true } : s)))
+}
 
-  return `Verdict needed for ${missing.map(s => `[${s.id}]`).join(', ')}: call ${PLAN_TOOL} with done: [{id, verdict: "ok" | "weak" | "overkill" | "cut-short", why}] (rule 5). Until then each counts as "no verdict".`
+const verdictRequest = (missing: readonly Step[]) =>
+  `Verdict needed for ${missing.map(s => `[${s.id}]`).join(', ')}: call ${PLAN_TOOL} with done: [{id, verdict: "ok" | "weak" | "overkill" | "cut-short", why}] (rule 5). Until then each counts as "no verdict".`
+
+/** The line a plan tool result carries for finished delegated steps that have no verdict yet: asked once, or when named again. */
+async function verdictsMissing($: EngineInterface, named: readonly string[]) {
+  const missing = await stepsMissingVerdict($, named)
+  if (missing.length === 0) return undefined
+  await markAsked($, missing)
+
+  return verdictRequest(missing)
 }
 
 /** Records that a helper step runs as a subagent instead, and why: once per run, counted in the chat and all-time totals. */
@@ -2024,7 +2060,7 @@ async function writeReport($: EngineInterface): Promise<string | undefined> {
       platform = undefined
     }
     const text = reportMarkdown({
-      version: VERSION,
+      version: await shownVersion($),
       at,
       platform,
       surface: surfaceNow,
@@ -2074,7 +2110,7 @@ type RenderArgs = Parameters<Hook<'ui.render'>>
 // the glossary (?), cost details, and the Settings groups. Settings replace plan, cost and footer while open.
 export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const ui = $.ui.resolve(e)
-  const { Box, Text, Button } = ui
+  const { Box, Text, Button, Link } = ui
   const hasFields = e.surface !== 'mobile'
   const tty = e.surface === 'terminal'
   const site = e.props as { isFocused?: boolean; scroll?: { offset: number }; bodyColumns?: number }
@@ -2110,6 +2146,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const gridOpen = await read($, showHelperGrid)
   const asking = await read($, confirmReset)
   const resetText = await read($, resetNote)
+  const up = await read($, updates)
+  const updateText = await read($, updateNote)
+  const welcomed = await read($, welcomeSeen)
 
   // Groups are the sum of their parts: counted once, through the parts.
   const work = leavesOf(list)
@@ -2130,7 +2169,9 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const helpersOn = helpersLive(set)
   const helperAdvice = set.helpers.enabled ? helperSuggestions(past, set, hcfg, hs.models) : []
   // Auto mode: the rung each kind has learned, for the rows (nothing while it is off).
-  const learned = set.autoRoute ? learnedRungs(past, set) : undefined
+  const learned = await learnedOf($)
+  // With autoExplore, the tries one rung below: only for the hint on a step that has not started, never for the comparisons.
+  const exploring = await exploringOf($, set, learned)
   const learnedHelp = set.autoRoute && helpersOn ? learnedHelpers(past, set, hcfg, hs.models) : undefined
   // The health line: quiet when helpers are off or can run; the first failing check, with the full list one click away, when not.
   const checks = healthChecks({ set, st: hs, rules: (await read($, delivery)).inChat && (await read($, toldHelpers)) === helperRuleSig(set) })
@@ -2178,11 +2219,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     use: set.helpers.enabled && set.helpers.use !== D.helpers.use,
     fusion: set.helpers.fusion !== D.helpers.fusion,
     autoRoute: set.autoRoute !== D.autoRoute,
+    autoExplore: set.autoExplore !== D.autoExplore,
     autoMinRuns: set.autoMinRuns !== D.autoMinRuns,
     autoOkPercent: set.autoOkPercent !== D.autoOkPercent,
     run: set.helpers.run !== D.helpers.run,
     log: set.log !== D.log,
     herdrView: set.herdrView !== D.herdrView,
+    updateCheck: set.updateCheck !== D.updateCheck,
   }
   // A model's price differs when Settings set one other than the default table's (or any, for a new model).
   const priceDiffers = (x: string) => !!set.prices[x] && JSON.stringify(set.prices[x]) !== JSON.stringify(PRICES[x])
@@ -2202,10 +2245,10 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     helpers:
       set.helpers.enabled &&
       (differs.run || differs.fusion || set.helpers.script !== D.helpers.script || Object.keys(set.helpers.kinds).length > 0 || helperTiersDiffering.length > 0 || TIER_ORDER.some(orderDiffers)),
-    learning: differs.autoRoute || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0 || Object.keys(set.kindTags).length > 0,
+    learning: differs.autoRoute || differs.autoExplore || differs.autoMinRuns || differs.autoOkPercent || Object.keys(set.kinds).length > 0 || Object.keys(set.kindTags).length > 0,
     prices: set.models.length > 0 || models.some(priceDiffers),
     skills: Object.keys(set.skills).length > 0,
-    diagnostics: differs.log || differs.herdrView,
+    diagnostics: differs.log || differs.herdrView || differs.updateCheck,
     advanced: differs.hereEffort || (set.hereEffort.enabled && differs.hereLimit) || TIER_ORDER.some(t => tierDiffers(t).scope),
   }
   const preset = presetOf(set)
@@ -2407,6 +2450,33 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>,
     ]
   }
+  // One quiet line under the health line when a newer release is known and not dismissed.
+  const newer = noticeOf(up, set)
+  const updateRow = newer ? (
+    <Box key="section:update" flexDirection="column">
+      <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+        <Text key="update-line" dimColor size="footnote">{`↑ ${MOD} ${newer} available`}</Text>
+        <Link key="update-news" href={changelogUrl(MOD)} label="What's new ↗" />
+        <Button
+          key="update-run"
+          plain
+          onPress={() =>
+            void (async () => {
+              const filled = await fillUpdateRequest($)
+              await update($, updateNote, () => (filled ? 'The update request is in your prompt box: press Enter.' : `Send this to Claude to update: ${updateRequest(MOD)}`))
+            })()
+          }
+        >
+          Update
+        </Button>
+        <Link key="update-how" href={UPDATING_URL} label="How ↗" />
+        <Button key="update-dismiss" plain dimColor onPress={() => void dismissUpdate($)}>
+          ×
+        </Button>
+      </Box>
+      {updateText ? <Text key="update-note" dimColor size="footnote" wrap="wrap">{updateText}</Text> : null}
+    </Box>
+  ) : null
   const healthRow = (
     <Box key="section:health" flexDirection="column" rowGap="xs">
       <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
@@ -2419,6 +2489,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Button>
         )}
       </Box>
+      {updateRow}
       {!health.ok && healthOpen && (
         <Box key="health-checks" flexDirection="column" rowGap="xs" paddingLeft={2}>
           {checkList('health')}
@@ -2565,6 +2636,13 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const rungFrom = (s: Step) => {
     if (s.where !== 'agent') return null
     const b = baseRung(s, set, learned)
+    if (s.explored && s.model === s.explored.model && s.effort === s.explored.effort) {
+      return <Text key={`from:${s.id}`} color="suggestion" size="footnote">{`auto: trying ${s.explored.model} · ${s.explored.effort}, one rung below what it learned`}</Text>
+    }
+    const t = s.status === 'planned' && !s.model && !s.effort && (s.count ?? 1) <= 1 ? baseRung(s, set, exploring) : undefined
+    if (t?.source === 'auto' && t.explore) {
+      return <Text key={`from:${s.id}`} color="suggestion" size="footnote">{`auto: next run tries ${t.model} · ${t.effort}, one rung below ${t.explore.model} · ${t.explore.effort}`}</Text>
+    }
     // A pick of the model or the effort alone fills the rest from the rung it would otherwise run on.
     if (s.model || s.effort) return <Text key={`from:${s.id}`} dimColor size="footnote">{`your pick: ${s.model ?? b.model} · ${s.effort ?? b.effort}`}</Text>
     if (b.source === 'tier') return <Text key={`from:${s.id}`} dimColor size="footnote">{`${s.tier} level's default: ${b.model} · ${b.effort}`}</Text>
@@ -2784,9 +2862,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         ] as [string, string][])
       : []),
   ]
+  // Only a fresh start: no plan, no history, no plan ever posted, and not dismissed. Whoever has used the router never sees it.
+  const showWelcome = !welcomed && past.length === 0 && life.plans === 0 && life.steps === 0
   const planSection = (
     <Box key="section:plan" flexDirection="column" rowGap="xs">
-      {list.length === 0 ? (
+      {list.length === 0 && showWelcome ? (
+        <Box key="welcome" flexDirection="column">
+          <Text key="welcome-title" weight="semibold">New here? Three steps:</Text>
+          <Text key="welcome-1" size="footnote" wrap="wrap">1. Ask for something with several steps (e.g. "In three steps: find the five largest files here, summarize each, and pick the one most worth cleaning up").</Text>
+          <Text key="welcome-2" size="footnote" wrap="wrap">2. Approve the plan in the question that appears.</Text>
+          <Text key="welcome-3" size="footnote" wrap="wrap">3. Watch the steps, models and cost here.</Text>
+          <Box flexDirection="row" flexWrap="wrap" columnGap="sm" alignItems="center">
+            <Link key="welcome-guide" href={guideUrl(MOD)} label="Guide ↗" />
+            <Text dimColor size="footnote">·</Text>
+            <Button key="welcome-ok" plain onPress={() => void markWelcomed($)}>
+              Got it
+            </Button>
+          </Box>
+        </Box>
+      ) : list.length === 0 ? (
         <Box flexDirection="column">
           <Text key="plan-empty" size="footnote" wrap="wrap">No plan yet. Multi-step tasks show their steps here.</Text>
           {!always && <Text dimColor size="footnote" wrap="wrap">Turn on "Plan every message" in Settings to plan single-step tasks too.</Text>}
@@ -3057,6 +3151,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       >
         Settings ▸
       </Button>
+      <Link key="guide" href={guideUrl(MOD)} label="Guide ↗" />
       {reportRow('footer-report')}
     </Box>
   )
@@ -3581,6 +3676,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
               })(),
             differs.autoRoute,
           ),
+          switchRow(
+            'auto-explore',
+            'Try a cheaper rung now and then',
+            'With auto mode on: after 4 runs on a kind\'s learned rung, the next tries the rung below; it takes over once it does as well, and one weak run stops the tries.',
+            set.autoExplore,
+            () => void editSettings($, s => ({ ...s, autoExplore: !s.autoExplore })),
+            differs.autoExplore,
+          ),
           <Box key="auto-thresholds" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap="xs" rowGap="xs">
             <Text dimColor size="footnote">Auto picks a rung with at least</Text>
             {pick('auto-min-runs', String(set.autoMinRuns), withCurrent(AUTO_RUNS, set.autoMinRuns).map(n => ({ value: String(n), label: `${n} runs` })), v =>
@@ -3826,6 +3929,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           switchRow('log', 'Keep a log', 'One file a day in ~/.config/model-router/log/, kept 14 days; no prompts or contents.', set.log, () => void editSettings($, s => ({ ...s, log: !s.log })), differs.log),
           reportRow('settings-report'),
           switchRow(
+            'update-check',
+            'Check for updates',
+            'Once a day, a quiet look at GitHub for a newer version. Never installs anything; CLAUDE_PLUGINS_NO_UPDATE_CHECK=1 turns it off too.',
+            set.updateCheck,
+            () => void editSettings($, s => ({ ...s, updateCheck: !s.updateCheck })),
+            differs.updateCheck,
+          ),
+          switchRow(
             'herdr-view',
             'Show in Herdr',
             'The plan in a Herdr sidebar (read-only), for plans too long for this pane.',
@@ -3915,6 +4026,151 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   )
 }
 
+// --- Welcome, guide and update check ------------------------------------------------------
+
+const MOD = 'model-router'
+
+/** The first-use welcome is over (Got it, or a plan was posted): remembered in the store, per account. */
+async function markWelcomed($: EngineInterface) {
+  if (await read($, welcomeSeen)) return
+  await update($, welcomeSeen, () => true)
+  if (await ready($)) await $.store.set(STORE.welcome, true)
+}
+
+const HELP = [
+  'Model router plans multi-step tasks and runs each step on the cheapest model that does it well.',
+  'To start:',
+  '  1. Ask for something with several steps ("In three steps: find the five largest files here, summarize each, and pick the one most worth cleaning up").',
+  '  2. Approve the plan in the question that appears.',
+  '  3. Watch the steps, models and cost in the pane.',
+  '  /router                 open the pane',
+  '  /router report          write a diagnostics report to send',
+  '  /router update          check for a newer version and update it from here',
+].join('\n')
+
+/** The installed version, read from this plugin's own plugin.json (undefined when it cannot be read). */
+async function installedVersion($: EngineInterface): Promise<string | undefined> {
+  try {
+    const v = (JSON.parse(String(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`))) as { version?: unknown }).version
+
+    return typeof v === 'string' ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The version to show a person: the manifest's (VERSION is only what this code was last bumped to). */
+const shownVersion = async ($: EngineInterface) => (await read($, updates)).installed ?? VERSION
+
+/** A checkout or --plugin-dir never checks and never offers an update; CLAUDE_PLUGINS_UPDATE_CHECK_FORCE=1 lets the tests act as a cache install. */
+async function isDev($: EngineInterface) {
+  return isDevInstall($.plugin.root) && (await $.env.get('CLAUDE_PLUGINS_UPDATE_CHECK_FORCE')) !== '1'
+}
+
+const loadUpdate = async ($: EngineInterface): Promise<UpdateState> => {
+  const s = await $.store.get(STORE.update)
+
+  return s && typeof s === 'object' ? (s as UpdateState) : {}
+}
+
+async function saveUpdate($: EngineInterface, state: UpdateState) {
+  await $.store.set(STORE.update, state)
+  await update($, updates, u => ({ ...u, state }))
+}
+
+/** What this chat knows of its install and of the last check, read at the start. */
+async function startUpdates($: EngineInterface) {
+  const installed = await installedVersion($)
+  const dev = await isDev($)
+  const envOff = (await $.env.get('CLAUDE_PLUGINS_NO_UPDATE_CHECK')) === '1'
+  await update($, updates, () => ({ installed, dev, envOff, state: {} }))
+  await update($, updateNote, () => '')
+  const state = await loadUpdate($).catch(() => ({}))
+  await update($, updates, u => ({ ...u, state }))
+}
+
+/** The version to announce in the pane: newer than the installed one, not dismissed; nothing for a checkout or an opt-out. */
+const noticeOf = (u: { installed?: string; dev: boolean; envOff?: boolean; state: UpdateState }, set: Settings) =>
+  !u.dev && !u.envOff && set.updateCheck && u.state.latest && isNewer(u.state.latest, u.installed) && u.state.dismissed !== u.state.latest ? u.state.latest : undefined
+
+/** The version in the published manifest; undefined on any failure or after 5 s (never throws). */
+async function fetchLatest($: EngineInterface): Promise<string | undefined> {
+  try {
+    const res = await Promise.race([$.http.fetch(manifestUrl(MOD)), $.clock.sleep(CHECK_TIMEOUT_MS).then(() => undefined)])
+
+    return res && res.ok ? versionOfManifest(res.text) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Asks GitHub for the latest version and stores the answer. Unless `force`, only when the check is on, due and this is a
+ * cache install. The stamp is written before the request (as a failure), so chats starting together make one request,
+ * and stays that way when the request fails: that is the back-off.
+ */
+async function runCheck($: EngineInterface, force: boolean) {
+  const u = await read($, updates)
+  const state = await loadUpdate($).catch(() => ({}) as UpdateState)
+  if (u.dev) return { state, ran: false }
+  const off = u.envOff || (await read($, settings)).updateCheck === false
+  if (!force && (!u.installed || off || !dueForCheck(await $.clock.now(), state))) return { state, ran: false }
+  await saveUpdate($, afterCheck(state, await $.clock.now(), undefined))
+  const latest = await fetchLatest($)
+  const next = afterCheck(await loadUpdate($), await $.clock.now(), latest) // others' changes since (a dismissal) are kept
+  await saveUpdate($, next)
+
+  return { state: next, ran: true }
+}
+
+/** After session.start, never awaited, never loud: a failure leaves no trace beyond the back-off stamp. */
+async function backgroundCheck($: EngineInterface) {
+  try {
+    await ready($)
+    await runCheck($, false)
+  } catch {
+    // silent by design
+  }
+}
+
+/** The update request goes into the prompt box; false when the box would not take it (a dialog holds the keys). */
+async function fillUpdateRequest($: EngineInterface) {
+  const filled = await $.prompt.fill({ text: updateRequest(MOD), mode: 'replace' }).catch(() => undefined)
+
+  return filled?.isFilled === true
+}
+
+async function dismissUpdate($: EngineInterface) {
+  const state = await loadUpdate($).catch(() => ({}) as UpdateState)
+  if (!state.latest) return
+  await saveUpdate($, { ...state, dismissed: state.latest })
+}
+
+async function updateCommand($: EngineInterface, sub: string): Promise<string> {
+  if (sub !== '' && sub !== 'dismiss') return 'Usage: /router update (check now, and fill the prompt with an update request) or /router update dismiss (stop announcing the latest version).'
+  const u = await read($, updates)
+  if (u.dev) return `${MOD} runs from a folder here (a checkout or --plugin-dir), not from the plugin cache, so it does not update itself: update the folder with git. How updating works: ${UPDATING_URL}`
+  if (sub === 'dismiss') {
+    const state = await loadUpdate($).catch(() => ({}) as UpdateState)
+    if (!state.latest || !isNewer(state.latest, u.installed)) return 'No newer version is known, so there is nothing to dismiss.'
+    await dismissUpdate($)
+
+    return `Dismissed ${state.latest}: it is not announced again; a later version is. /router update still offers it.`
+  }
+  await ready($)
+  const { state } = await runCheck($, true)
+  const have = u.installed ?? 'unknown'
+  if (state.lastOk === false) return `${MOD} ${have} is installed. Could not read the latest version from GitHub (offline, or blocked here); try again later. How updating works: ${UPDATING_URL}`
+  if (!isNewer(state.latest, u.installed)) return `${MOD} ${have} is installed; the latest is ${state.latest}: up to date.`
+
+  return [
+    `${MOD} ${have} is installed; the latest is ${state.latest}.`,
+    (await fillUpdateRequest($)) ? 'The update request is in your prompt box: press Enter and Claude does the rest.' : `Send this to Claude to update: ${updateRequest(MOD)}`,
+    `What's new: ${changelogUrl(MOD)}`,
+    `How updating works: ${UPDATING_URL}`,
+  ].join('\n')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     loading = undefined
@@ -3943,7 +4199,7 @@ export const register: Register = on => {
     if (chat.helper.steps === 0 && chat.helper.usage.length === 0 && (moved.steps > 0 || moved.usage.length > 0)) {
       await update($, chatTotals, t => ({ ...t, helper: moved }))
     }
-    await $.command.register({ name: 'router', description: 'Show the model-router pane; /router report writes a diagnostics report' })
+    await $.command.register({ name: 'router', description: 'Show the model-router pane; help: first steps; report: write a diagnostics report; update [dismiss]: check for a newer version' })
     setHelperConfig(undefined)
     planToolHelpers = undefined
     modelsBackground = false
@@ -3954,12 +4210,17 @@ export const register: Register = on => {
     await registerPlanTool($)
     await refreshStatus($)
     if ((await read($, settings)).openPane) void $.ui.open({ id: PANE, title: 'Model router' })
+    await startUpdates($)
+    void backgroundCheck($)
 
     return next(e)
   })
 
   on('command.run', { command: 'router' }, async ($, e) => {
-    if ((e.args ?? '').trim().toLowerCase() === 'report') {
+    const arg = (e.args ?? '').trim().toLowerCase()
+    if (arg === 'help') return { text: `${HELP}\nGuide: ${guideUrl(MOD)}\nVersion ${await shownVersion($)}.` }
+    if (arg === 'update' || arg.startsWith('update ')) return { text: await updateCommand($, arg.slice(6).trim()) }
+    if (arg === 'report') {
       const path = await writeReport($)
 
       return { text: path ? `Model router report written: ${path}. Send this file.` : `Model router report not written: ${await read($, reportNote)}` }
@@ -3994,7 +4255,7 @@ export const register: Register = on => {
       const st = await read($, helperCfg)
       const dir = await logDir($).catch(() => undefined)
       const report = {
-        version: VERSION,
+        version: await shownVersion($),
         delivery: await read($, delivery),
         rulesSentTo: (await read($, policySent)).model ?? null,
         alwaysPlan: await read($, alwaysPlan),
@@ -4052,6 +4313,7 @@ export const register: Register = on => {
       await update($, notes, n => [...n, `These step ids came up twice in the plan and the repeats were ignored: ${flat.dropped.join(', ')}. Every id must be unique.`])
     }
     void $.ui.open({ id: PANE, title: 'Model router' })
+    await markWelcomed($)
 
     if (await read($, autoApprove)) {
       if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
@@ -4133,32 +4395,61 @@ export const register: Register = on => {
         await setSteps($, list => [...list, { ...newStep(tag, `Skill ${tag.slice(SKILL_TAG.length)}`, tier, 'agent'), ...(kind ? { kind } : {}) }])
       }
     }
-    let step = (await read($, steps)).find(s => s.id === tag)
-    if (!step) return next(e)
-    if (step.group) {
-      const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
-      return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
-    }
-    // A finished step delegated again is a rerun: a fact the history counts as weak. One whose last run was cut short is not.
-    if (step.status === 'done') {
-      const key = step.historyKey
-      if (key && step.verdict !== 'cut-short') await editHistory($, h => h.map(x => (x.key === key ? { ...x, rerun: true } : x)))
-      await editStep($, step.id, freshRun)
-      step = (await read($, steps)).find(s => s.id === tag)!
-    }
-    // A helper step run through the Agent tool is the fallback: it is a subagent step now, and no helper ran it.
-    if (step.where === 'helper') {
-      await recordFallback($, step.id, 'no reason given')
-      step = (await read($, steps)).find(s => s.id === tag)!
-    }
+    // Choosing a step's rung and marking it running happen one Agent call at a time, so parallel calls of one kind see each
+    // other's tries one rung below. The lock alone is not enough: every read of one dispatch sees the moment it started, so
+    // the try is decided inside the write itself, on the steps as they stand (update retries on a newer version).
+    const routed = await locked('route', async () => {
+      let step = (await read($, steps)).find(s => s.id === tag)
+      if (!step) return undefined
+      if (step.group) {
+        const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
+        return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
+      }
+      // The router itself moved the step's rung (a try ended, or began): the agent's record of it follows, so no "the user changed" note.
+      let moved = false
+      // A finished step delegated again is a rerun: a fact the history counts as weak. One whose last run was cut short is not.
+      if (step.status === 'done') {
+        const key = step.historyKey
+        if (key && step.verdict !== 'cut-short') await editHistory($, h => h.map(x => (x.key === key ? { ...x, rerun: true } : x)))
+        moved = !!step.explored
+        await editStep($, step.id, freshRun)
+        step = (await read($, steps)).find(s => s.id === tag)!
+      }
+      // A helper step run through the Agent tool is the fallback: it is a subagent step now, and no helper ran it.
+      if (step.where === 'helper') {
+        await recordFallback($, step.id, 'no reason given')
+        step = (await read($, steps)).find(s => s.id === tag)!
+      }
 
-    const learnedNow = await learnedOf($)
-    const { model, effort } = runsOn(step, set, learnedNow)
-    await logEvent($, 'route', { id: step.id, model, effort, source: step.model || step.effort ? 'step' : baseRung(step, set, learnedNow).source })
+      const learnedNow = await learnedOf($)
+      const base = baseRung(step, set, learnedNow)
+      const past = set.autoExplore && learnedNow ? await read($, history) : undefined
+      const at = new Date().toISOString()
+      // The run starts with its first Agent call (N calls for a counted step). A try one rung below is decided on a run's first
+      // call, for a step with no pick of its own and one agent (never N), and pinned in the same write, so it is busy at once:
+      // its cost, its history entry and a rerun all see the rung it really ran on.
+      const tried: { rung?: Rung } = {}
+      await setSteps($, list =>
+        list.map(s => {
+          if (s.id !== step!.id) return s
+          const t = past && learnedNow && !s.model && !s.effort && (s.count ?? 1) <= 1 && s.status !== 'running' ? baseRung(s, set, exploreRungs(past, set, learnedNow, exploreBusy(list))) : undefined
+          tried.rung = t?.source === 'auto' && t.explore ? { model: t.model, effort: t.effort } : undefined
+
+          return { ...s, ...(tried.rung ? { ...tried.rung, explored: tried.rung } : {}), status: 'running', startedAt: s.status === 'running' && s.startedAt ? s.startedAt : at }
+        }),
+      )
+      await refreshStatus($)
+      const exploring = !!tried.rung
+      const { model, effort } = tried.rung ?? runsOn(step, set, learnedNow)
+      await logEvent($, 'route', { id: step.id, model, effort, source: exploring ? 'explore' : step.model || step.effort ? 'step' : base.source })
+      if (exploring || moved) await tellSteps($, [step.id])
+
+      return { step, model, effort }
+    })
+    if (!routed) return next(e)
+    if (routed.deny !== undefined) return { deny: routed.deny }
+    const { step, model, effort } = routed
     const prompt = set.tiers[step.tier].scopeNote ? `${e.prompt}\n\n${SCOPE_NOTE}` : e.prompt
-    const at = new Date().toISOString()
-    // The run starts with its first Agent call (N calls for a counted step).
-    await editStep($, step.id, s => ({ ...s, status: 'running', startedAt: s.status === 'running' && s.startedAt ? s.startedAt : at }))
     const ran = await next({ ...e, model: model as typeof e.model, effort, prompt })
     const resolved = ran.deny === undefined ? (ran.result as { resolvedModel?: string } | undefined)?.resolvedModel : undefined
     if (resolved) await editStep($, step.id, s => ({ ...s, resolvedModel: resolved }))
@@ -4310,7 +4601,9 @@ export const register: Register = on => {
     const pending = await read($, notes)
     // What the chat knows of helpers changed since the rules: one note with the whole helper rule (none when the rules go now).
     const helperChange = how.inChat ? await helperNote($) : undefined
-    const all = [...pending, ...(helperChange ? [helperChange] : []), ...changes.map(c => c.note)]
+    // Delegated steps that finished without a verdict: the plan tool is often not called again after the last step, so ask here (once per step).
+    const unjudged = await stepsMissingVerdict($, [])
+    const all = [...pending, ...(helperChange ? [helperChange] : []), ...changes.map(c => c.note), ...(unjudged.length ? [verdictRequest(unjudged)] : [])]
     if (all.length) extra.push(`Model router notes:\n${all.map(n => `- ${n}`).join('\n')}`)
 
     if (extra.length > 0) {
@@ -4320,6 +4613,10 @@ export const register: Register = on => {
         diag.appends += 1
         await update($, delivery, d => ({ ...d, inChat: true, planDue: false, rulesRow: how.inChat ? d.rulesRow : row.uuid }))
         await update($, notes, () => [])
+        if (unjudged.length) {
+          await markAsked($, unjudged)
+          await logEvent($, 'verdicts-asked', { ids: unjudged.map(s => s.id) })
+        }
         if (!how.inChat || helperChange) await helpersTold($)
         if (!how.inChat) await logEvent($, 'rules', { delivered: true, via: how.via ?? 'message', helpers: helperMode() })
         await tellSteps($, replan ? undefined : changes.map(c => c.id))

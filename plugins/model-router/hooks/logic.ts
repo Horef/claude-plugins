@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUN
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
 
-export const VERSION = '0.29.2'
+export const VERSION = '0.30.0'
 export const PANE = 'model-router'
 export const PLAN_TOOL = 'mcp__model-router__plan'
 export const STEP_TAG = /^\s*\[([^\]]+)\]/
@@ -105,12 +105,12 @@ export const prevRung = (r: Rung, set?: Ladder) => {
 export const rungLabel = (r: Rung) => `${r.model}/${r.effort}`
 
 /** Per kind, the rung auto mode runs it on, and from how many runs that was learned. */
-export type Learned = Record<string, { rung: Rung; n: number }>
+export type Learned = Record<string, { rung: Rung; n: number; explore?: Rung }>
 
 /** Where a step's rung comes from before the user's own picks: auto mode's learned rung, the kind's default, or the tier. */
-export const baseRung = (s: Step, set: Settings, learned?: Learned): Rung & { source: 'tier' | 'kind' | 'auto'; n?: number } => {
+export const baseRung = (s: Step, set: Settings, learned?: Learned): Rung & { source: 'tier' | 'kind' | 'auto'; n?: number; explore?: Rung } => {
   const auto = s.kind ? learned?.[s.kind] : undefined
-  if (auto) return { ...auto.rung, source: 'auto', n: auto.n }
+  if (auto) return { ...auto.rung, source: 'auto', n: auto.n, ...(auto.explore ? { explore: auto.explore } : {}) }
   const own = s.kind ? set.kinds?.[s.kind] : undefined
   if (own) return { model: own.model, effort: own.effort, source: 'kind' }
 
@@ -434,10 +434,12 @@ export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }
   autoRoute: stored?.autoRoute === true,
   autoMinRuns: wholeIn(stored?.autoMinRuns, 1, 1000) ?? DEFAULT_SETTINGS.autoMinRuns,
   autoOkPercent: wholeIn(stored?.autoOkPercent, 1, 100) ?? DEFAULT_SETTINGS.autoOkPercent,
+  autoExplore: stored?.autoExplore === true,
   models: Array.isArray(stored?.models) ? stored.models.filter(m => typeof m === 'string' && !MODELS.includes(m)) : [],
   prices: { ...(stored?.prices && typeof stored.prices === 'object' ? stored.prices : {}) },
   log: stored?.log !== false,
   herdrView: stored?.herdrView !== false,
+  updateCheck: stored?.updateCheck !== false,
 })
 
 // --- The pane's plain words, presets and views ----------------------------------------
@@ -507,9 +509,14 @@ export const hereNeeds = (s: Step, set: Settings, mainModel: Model | undefined):
 
 /** How a subagent step's rung came about, when it is not simply its tier's: auto mode, or its kind's default. */
 export const rungSource = (s: Step, set: Settings, learned?: Learned) => {
+  // A try one rung below is pinned on the step once it starts; it is still auto mode's pick, not the user's.
+  if (s.explored && s.model === s.explored.model && s.effort === s.explored.effort) {
+    const was = s.kind ? learned?.[s.kind]?.rung : undefined
+    return `auto: trying one rung below ${was ? rungLabel(was) : 'the learned rung'}`
+  }
   if (s.model && s.effort) return undefined
   const base = baseRung(s, set, learned)
-  if (base.source === 'auto') return `auto: learned, ${base.n} runs`
+  if (base.source === 'auto') return base.explore ? `auto: trying one rung below ${rungLabel(base.explore)} (${base.n} runs here so far)` : `auto: learned, ${base.n} runs`
   if (base.source === 'kind') return `${s.kind} default`
 
   return undefined
@@ -676,6 +683,10 @@ export const applyDraft = (s: Step, d: StepDraft | undefined): Step =>
         ...(d.tier !== undefined ? { tier: d.tier } : {}),
         ...('model' in d ? { model: d.model ?? undefined } : {}),
         ...('effort' in d ? { effort: d.effort ?? undefined } : {}),
+        // A change of model, effort or place ends a try one rung below: the step runs where the owner put it.
+        ...((d.where !== undefined && d.where !== s.where) || ('model' in d && (d.model ?? undefined) !== s.model) || ('effort' in d && (d.effort ?? undefined) !== s.effort)
+          ? { explored: undefined }
+          : {}),
       }
 
 /** An edit with the fields that equal the plan's own values removed (an edit put back is no edit); undefined when nothing is left. */
@@ -875,8 +886,15 @@ export const entryRung = (x: HistoryEntry) => (x.where === 'helper' ? (x.helper 
 
 // Facts weigh at least as much as verdicts: a rerun makes a run weak whatever its verdict said.
 const isWeak = (x: HistoryEntry) => x.rerun || x.verdict === 'weak'
-const isOk = (x: HistoryEntry) => !x.rerun && x.verdict === 'ok'
+// Auto mode counts overkill as passing: the rung was more than enough, which is no reason to leave it (the advice still weighs it).
+const isGood = (x: HistoryEntry) => !x.rerun && (x.verdict === 'ok' || x.verdict === 'overkill')
 const isOverkill = (x: HistoryEntry) => !x.rerun && x.verdict === 'overkill'
+
+/**
+ * The runs auto mode judges a rung by: a run with no verdict (and no rerun) says nothing either way, since the lead did not judge
+ * it, so it is left out instead of counting against the rung (0.29.4: with a third of runs unjudged, no rung could reach 90%).
+ */
+export const voicedRuns = (h: readonly HistoryEntry[]) => judgedRuns(h).filter(x => x.rerun || !!x.verdict)
 
 export type VerdictCounts = { ok: number; weak: number; overkill: number; none: number; cutShort: number }
 
@@ -983,15 +1001,15 @@ export const suggestions = (h: readonly HistoryEntry[], set: Settings): Suggesti
   return [...byTier, ...byKind]
 }
 
-/** Auto mode: per kind, the cheapest rung that did it well (ok in at least `autoOkPercent` of at least `autoMinRuns` runs there). */
+/** Auto mode: per kind, the cheapest rung that did it well (ok or overkill in at least `autoOkPercent` of at least `autoMinRuns` runs there). */
 export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned => {
   const out: Learned = {}
-  const runs = judgedRuns(h).filter(isAgentRun)
+  const runs = voicedRuns(h).filter(isAgentRun)
   for (const kind of kindsOf(runs, Infinity)) {
     const by = new Map<string, HistoryEntry[]>()
     for (const x of runs.filter(r => r.kind === kind)) by.set(entryRung(x), [...(by.get(entryRung(x)) ?? []), x])
     const good = [...by.values()]
-      .filter(xs => xs.length >= set.autoMinRuns && (xs.filter(isOk).length * 100) / xs.length >= set.autoOkPercent)
+      .filter(xs => xs.length >= set.autoMinRuns && (xs.filter(isGood).length * 100) / xs.length >= set.autoOkPercent)
       .map(xs => ({ rung: { model: xs[0]!.model!, effort: xs[0]!.effort! }, n: xs.length }))
       .filter(g => rank(g.rung, set) !== undefined)
       .sort((a, b) => rank(a.rung, set)! - rank(b.rung, set)!)
@@ -1000,6 +1018,38 @@ export const learnedRungs = (h: readonly HistoryEntry[], set: Settings): Learned
 
   return out
 }
+
+/** Auto mode's exploration: after this many runs on a learned rung since the last try below it, the next run tries the rung below. */
+export const EXPLORE = { every: 4 }
+
+/**
+ * Auto mode with `autoExplore`: per kind, the learned rung, or now and then the rung below it, so a cheaper rung can earn its place
+ * (auto mode alone only picks among rungs with history, so a kind that always ran on Sonnet never learns that Haiku would do).
+ * The rung below is tried while it has fewer than `autoMinRuns` voiced runs (and fewer than twice that in all, so unjudged tries
+ * end) and none of them weak; once it has enough and does well, `learnedRungs` picks it as the cheapest good rung, and the tries
+ * move one rung further down. `busy`: rungs a step of the kind is trying now, so parallel steps do not all try at once.
+ * `n` is the rung below's voiced runs. Only for routing an Agent call and the pane's hint: comparisons use `learnedRungs` alone.
+ */
+export const exploreRungs = (h: readonly HistoryEntry[], set: Settings, learned: Learned, busy: readonly { kind: string; rung: Rung }[] = []): Learned => {
+  const out: Learned = { ...learned }
+  const all = judgedRuns(h).filter(isAgentRun)
+  for (const [kind, got] of Object.entries(learned)) {
+    const below = prevRung(got.rung, set)
+    if (!below || busy.some(b => b.kind === kind && b.rung.model === below.model && b.rung.effort === below.effort)) continue
+    const mine = all.filter(x => x.kind === kind)
+    const low = mine.filter(x => sameRung(x, below))
+    const lowVoiced = voicedRuns(low)
+    if (lowVoiced.some(isWeak) || lowVoiced.length >= set.autoMinRuns || low.length >= 2 * set.autoMinRuns) continue
+    const last = low.map(x => x.at).sort().at(-1) ?? ''
+    if (mine.filter(x => sameRung(x, got.rung) && x.at > last).length < EXPLORE.every) continue
+    out[kind] = { rung: { model: below.model, effort: below.effort }, n: lowVoiced.length, explore: got.rung }
+  }
+
+  return out
+}
+
+/** The tries one rung below that steps are on now (started or pinned, not finished): the others of their kind stay on the learned rung. */
+export const exploreBusy = (list: readonly Step[]) => list.flatMap(s => (s.status !== 'done' && s.kind && s.explored ? [{ kind: s.kind, rung: s.explored }] : []))
 
 /** The strange-loop observation the lead is asked to record when a kind's advice first reaches its threshold. */
 export const genomeNote = (a: Suggestion, unit: string) => {
@@ -1306,13 +1356,13 @@ export const helperSuggestions = (h: readonly HistoryEntry[], set: Settings, cfg
   return out
 }
 
-/** Auto mode for helpers: per kind, the rungs that did it well (ok in at least `autoOkPercent` of at least `autoMinRuns` runs there), cheapest first within a provider. */
+/** Auto mode for helpers: per kind, the rungs that did it well (ok or overkill in at least `autoOkPercent` of at least `autoMinRuns` runs there), cheapest first within a provider. */
 export type HelperLearned = Record<string, (HelperChoice & { n: number })[]>
 
 export const learnedHelpers = (h: readonly HistoryEntry[], set: Settings, cfg: HelperConfig | undefined, cache?: ModelsCache): HelperLearned => {
   const out: HelperLearned = {}
   if (!cfg) return out
-  const runs = judgedRuns(h).filter(isHelperEntry)
+  const runs = voicedRuns(h).filter(isHelperEntry)
   for (const kind of kindsOf(runs, Infinity)) {
     const by = new Map<string, { choice: HelperChoice; xs: HistoryEntry[] }>()
     for (const x of runs.filter(r => r.kind === kind)) {
@@ -1322,7 +1372,7 @@ export const learnedHelpers = (h: readonly HistoryEntry[], set: Settings, cfg: H
       by.set(key, { choice, xs: [...(by.get(key)?.xs ?? []), x] })
     }
     const good = [...by.values()]
-      .filter(g => g.xs.length >= set.autoMinRuns && (g.xs.filter(isOk).length * 100) / g.xs.length >= set.autoOkPercent)
+      .filter(g => g.xs.length >= set.autoMinRuns && (g.xs.filter(isGood).length * 100) / g.xs.length >= set.autoOkPercent)
       .flatMap(g => {
         const at = helperLadder(cfg, g.choice.provider, cache).findIndex(r => r.model === g.choice.model && r.effort === g.choice.effort)
 
