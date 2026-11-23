@@ -45,7 +45,8 @@
     <div class="code"><pre>⇄ Router on · rules go out with your next message · /router for the pane</pre></div>
     After your first message it changes to <code>rules sent to opus</code> (or whichever model your chat uses).</li>
   <li>Type <code>/router</code> to open the pane. The first line, the <em>health line</em>, should read:
-    <div class="code"><pre>Router on · helpers off</pre></div></li>
+    <div class="code"><pre>Router on · helpers off</pre></div>
+    On a fresh install the pane also shows <em>New here? Three steps:</em> with a starter request and a <em>Guide ↗</em> link; press <em>Got it</em> to hide it (it also goes away after your first plan). <code>/router help</code> prints the same steps at any time.</li>
 </ol>
 <div class="note"><strong>"Helpers off" is normal.</strong> <em>Helpers</em> are an optional extra: running steps on your other subscriptions. Without them, every step runs as a Claude subagent, which needs no setup. You can ignore this word until you read <a href="#helpers">the Helpers card</a>.</div>
 
@@ -335,7 +336,7 @@
 <p>Mods do not update by themselves unless you switch that on. There are two ways. You only need one.</p>
 <ol class="steps">
   <li><strong>Turn on auto-update for the marketplace (once).</strong> In a chat, run <code>/plugin</code>, open the <em>Marketplaces</em> tab, pick <code>horef-claude-plugins</code> and turn auto-update on. After that Claude Code refreshes it at the start of each session.</li>
-  <li><strong>Or update when the mod tells you.</strong> When a newer version exists the mod shows an <em>Update</em> notice. The <em>Update</em> button fills the chat box with a request for Claude to run the update for you, and you press Enter. You can also type <code>/router update</code> to check now.</li>
+  <li><strong>Or update when the mod tells you.</strong> When a newer version exists the mod shows an <em>Update</em> notice. The <em>Update</em> button fills the chat box with a request for Claude to run the update for you, and you press Enter. You can also type <code>/router update</code> to check now. The notice's <em>×</em> hides that version; to stop the daily check, switch off Settings → Diagnostics → <em>Check for updates</em>.</li>
 </ol>
 <p>Either way, finish with <code>/reload-plugins</code> in chats that are already open. If you use more than one Claude account, each account updates on its own. Full steps: <a href="updating.html">Updating</a>.</p>
 

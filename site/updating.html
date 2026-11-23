@@ -48,6 +48,7 @@
 <p>Paste this into a chat, changing the plugin name if it is not model-router:</p>
 <div class="code"><pre>Please update my model-router plugin: run `claude plugin marketplace update horef-claude-plugins` and then `claude plugin update model-router@horef-claude-plugins`, tell me what version I have now, and remind me to type /reload-plugins in my open chats.</pre></div>
 <p>When a mod finds a newer version it shows an <strong>Update</strong> notice. The <em>Update</em> button puts exactly this request in your chat box, and you press Enter. Both mods also have a command that checks now and prints the installed and latest versions: <code>/router update</code> and <code>/status-line update</code>.</p>
+<p class="small muted">The mods look for a new version on GitHub at most once a day, quietly; if it fails (offline, a blocked network) you see nothing. To stop it: in model-router, Settings → Diagnostics → <em>Check for updates</em>; in the status line, <code>/status-line update-check off</code>; for every mod at once, set the environment variable <code>CLAUDE_PLUGINS_NO_UPDATE_CHECK=1</code>.</p>
 
 <h3>B2. In the plugin panel</h3>
 <ol class="steps">
