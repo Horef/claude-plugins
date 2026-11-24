@@ -61,6 +61,32 @@ const lastRow = (rows: { appended: () => readonly unknown[] }) =>
 
 type Call = { tool: string; model?: string; effort?: string; prompt?: string }
 
+// The engine's side of an Agent call: it starts the subagent (agent.spawn, where the router sets the model and the scope
+// note) and sends the subagent's requests (turn.step, where it sets the effort). The tests' tool.call stand-ins record what
+// the subagent runs with, the call as it reached the engine beside it: since O8 the router leaves that call as the model
+// wrote it, because auto mode refuses an Agent call a hook changed after its review.
+const SESSION_EFFORT = 'max'
+let spawnedN = 0
+const spawnSeen: { prompt?: string; effort?: string | number } = {}
+const isSpawned = (e: unknown) => String((e as { agentId?: string }).agentId ?? '').startsWith('spawned-')
+type AgentCall = { tool: string; description?: string; prompt?: string; subagent_type?: string; model?: string; effort?: string }
+type Engine = { agent: { spawn: (x: never) => Promise<unknown> }; turn: { step: (x: never) => AsyncIterable<unknown> } }
+function spawnStub(on: (event: 'agent.spawn', hook: (_: unknown, e: unknown) => unknown) => void) {
+  on('agent.spawn', (_, e) => {
+    const x = e as { model?: string; prompt: string }
+    spawnSeen.prompt = x.prompt
+    return { model: x.model ?? 'inherit', agentId: `spawned-${++spawnedN}` }
+  })
+}
+async function runAgent($: Engine, e: AgentCall): Promise<Call & { asCalled: AgentCall }> {
+  spawnSeen.prompt = undefined
+  spawnSeen.effort = undefined
+  const got = (await $.agent.spawn({ prompt: e.prompt ?? '', description: e.description ?? '', ...(e.subagent_type ? { subagentType: e.subagent_type } : {}), ...(e.model ? { model: e.model } : {}) } as never)) as { model?: string; agentId?: string }
+  if (got.agentId) for await (const _ of $.turn.step({ turnId: `${got.agentId}-t`, index: 0, model: 'x', messageCount: 1, agentId: got.agentId, effort: e.effort ?? SESSION_EFFORT } as never)) void _
+  const effort = spawnSeen.effort === SESSION_EFFORT ? undefined : (spawnSeen.effort as string | undefined)
+  return { tool: e.tool, model: got.model === 'inherit' ? undefined : got.model, effort, prompt: spawnSeen.prompt, asCalled: e }
+}
+
 test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   const calls: Call[] = []
   const prompts: { text: string; context?: readonly string[] }[] = []
@@ -88,9 +114,11 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   on('turn.complete', (_, e) => ({ text: (e as { answer: string }).answer }))
   const usageFor: Record<string, unknown> = {}
   on('turn.step', async function* (_, e) {
-    const x = e as { turnId: string; index: number }
+    const x = e as { turnId: string; index: number; effort?: string | number }
+    if (isSpawned(e)) spawnSeen.effort = x.effort
     return { turnId: x.turnId, index: x.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: usageFor[x.turnId] ?? null } as never
   })
+  spawnStub(on as never)
   const step = async (turnId: string, usage: unknown, agentId?: string) => {
     usageFor[turnId] = usage
     const st = $.turn.step({ turnId, index: 0, model: 'x', messageCount: 1, ...(agentId ? { agentId } : {}) } as never)
@@ -101,8 +129,8 @@ test('plans, routes, prices, reruns and routes skills', async ($, on) => {
   const rows = mock.session(on)
   on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }))
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
-  on('tool.call', (_, e) => {
-    calls.push(e as Call)
+  on('tool.call', async (_, e) => {
+    calls.push((e as Call).tool === 'Agent' ? await runAgent($ as never, e as AgentCall) : (e as Call))
     return { result: { agentId: 'a1' } }
   })
 
@@ -386,18 +414,20 @@ const boot = async (
   on('agent.list', () => ({ value: agents.map(a => ({ ...a, type: 'general-purpose', status: 'running' })) }))
   on('turn.step', async function* (_, e) {
     const x = e as { turnId: string; index: number; effort?: string | number }
-    sent.push(x.effort)
+    if (isSpawned(e)) spawnSeen.effort = x.effort
+    else sent.push(x.effort)
     return { turnId: x.turnId, index: x.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: usageFor[x.turnId] ?? null } as never
   })
   const rows = mock.session(on)
   on('turn.start', (_, e) => ({ turnId: (e as { turnId: string }).turnId }))
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
-  on('tool.call', (_, e) => {
+  on('tool.call', async (_, e) => {
     // A test may answer the plan's approval question (the dialog is an AskUserQuestion call).
     if ((e as { tool: string }).tool === 'AskUserQuestion' && asker) return asker(e as never) as never
-    calls.push(e as Call)
+    calls.push((e as Call).tool === 'Agent' ? await runAgent($ as never, e as AgentCall) : (e as Call))
     return { result: { agentId: 'a1' } }
   })
+  spawnStub(on as never)
 
   // More mocks the test needs before the chat starts (helpers.py runs at the start). Without any, helpers.py, hc and the
   // Kiro, Copilot and Antigravity CLIs are all there, as on the owner's machine.
@@ -1813,6 +1843,23 @@ test('before approval a pane edit goes straight into the plan, which approval th
   await pressPick(pane, 'tier:s1')
   expect((await pane.find(SEND))?.text).toBe('Send changes (1)')
   await pane.unmount()
+})
+
+test('O8: a routed Agent call reaches the engine as the model wrote it; the subagent still runs on its rung, with the scope note', async ($, on) => {
+  const { calls } = await boot($, on, [['settings', { tiers: { standard: { model: 'sonnet', effort: 'medium', scopeNote: true } } }]], [{ id: 'x1', description: '[s1] survey' }])
+  await $.turn.start({ text: 'first', turnId: 't0' })
+  await $.tool.call({ tool: PLAN, steps: surveyPlan } as never)
+  await $.tool.call({ tool: 'Agent', description: '[s1] survey', prompt: 'go', subagent_type: 'general-purpose' })
+  const last = calls.at(-1) as Call & { asCalled: AgentCall }
+  // Auto mode reviewed this call: model, effort and prompt are untouched, so its verdict holds for the call that runs.
+  const { tool_use_id: _id, ...asCalled } = last.asCalled as AgentCall & { tool_use_id?: string }
+  expect(asCalled).toEqual({ tool: 'Agent', description: '[s1] survey', prompt: 'go', subagent_type: 'general-purpose' })
+  expect(last).toMatchObject({ model: 'sonnet', effort: 'medium' })
+  expect(last.prompt).toContain('go')
+  expect(last.prompt).toContain('Scope:')
+  // A fork, or a call with no step tag, starts as it was written.
+  await $.tool.call({ tool: 'Agent', description: 'other', prompt: 'go' })
+  expect(calls.at(-1)).toMatchObject({ model: undefined, effort: undefined, prompt: 'go' })
 })
 
 test('a plan posted anew drops the edits that were never sent; a rerun drops unsent model and thinking picks of its step', async ($, on) => {
