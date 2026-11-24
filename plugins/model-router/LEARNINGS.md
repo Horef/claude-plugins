@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O8 2026-11-24 [failure] Delegation in auto mode: an Agent call for a routed step (description '[r3.a] ...', no model/effort set by the lead) is refused twice with 'The server-side auto mode classifier gave no verdict for Agent: a hook changed this call's input after auto mode reviewed it' - the router's hook adds model and effort after the classifier ran, so auto mode cannot approve any routed subagent. An unrouted Agent call (no step-id prefix) in the same session launched fine. 24 Nov 2026, Claude Code auto mode, step r3.a (sonnet/high). Would help: set model/effort before the auto-mode review (e.g. a PreToolUse hook that runs first, or have the lead pass model/effort itself from the plan line), or document a fallback for auto mode. (simple_complex_v1)
 
 ## Resolved
 - O7 2026-11-22 [failure] auto mode: on a real history of 130 runs (since 2026-11-11) auto mode never learned a rung: 47 runs had no verdict and isOk counted them as failures (write-code on sonnet/medium: 34 ok of 67 = 51% < 90%), and it only picks among rungs with history, so a kind that always ran on Sonnet never tries Haiku; main chat $1487 vs subagents $201, saved $71 (claude-code desktop, owner's router review) → 0.29.4
