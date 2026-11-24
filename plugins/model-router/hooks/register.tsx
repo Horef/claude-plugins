@@ -1901,6 +1901,13 @@ const hereEffortRule = (set: Settings) =>
 const stepByAgent = new Map<string, string>()
 // Agents of a counted step whose run has been counted.
 const finishedAgents = new Set<string>()
+// The rung each routed step's latest Agent call was given, for its subagent's spawn and requests (O8).
+const routedRung = new Map<string, Rung>()
+
+/** The rung a routed step's subagent runs on: the one its Agent call was routed to, or (after a reload) the step's own. */
+async function rungOfStep($: EngineInterface, step: Step, set: Settings): Promise<Rung> {
+  return routedRung.get(step.id) ?? runsOn(step, set, await learnedOf($))
+}
 
 async function stepOfAgent($: EngineInterface, agentId: string) {
   let id = stepByAgent.get(agentId)
@@ -4449,8 +4456,10 @@ export const register: Register = on => {
     if (!routed) return next(e)
     if (routed.deny !== undefined) return { deny: routed.deny }
     const { step, model, effort } = routed
-    const prompt = set.tiers[step.tier].scopeNote ? `${e.prompt}\n\n${SCOPE_NOTE}` : e.prompt
-    const ran = await next({ ...e, model: model as typeof e.model, effort, prompt })
+    // The call goes on exactly as the model wrote it: auto mode judged that call, and refuses one a hook changed after
+    // its review (O8). The rung reaches the subagent at agent.spawn (model, scope note) and at its turn.step (effort).
+    routedRung.set(step.id, { model, effort })
+    const ran = await next(e)
     const resolved = ran.deny === undefined ? (ran.result as { resolvedModel?: string } | undefined)?.resolvedModel : undefined
     if (resolved) await editStep($, step.id, s => ({ ...s, resolvedModel: resolved }))
 
@@ -4461,10 +4470,33 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A routed step's subagent starts on its rung: the model, and the scope note when its tier asks for one. Set here, not on
+  // the Agent call, which auto mode has already reviewed as the model wrote it (O8).
+  on('agent.spawn', async ($, e, next) => {
+    const tag = STEP_TAG.exec(e.description)?.[1]
+    if (!tag || e.fork || e.resume || e.workflow || e.isTeammate) return next(e)
+    const step = (await read($, steps)).find(s => s.id === tag)
+    if (!step || step.group || step.where !== 'agent' || step.status !== 'running') return next(e)
+    const set = await read($, settings)
+    const { model } = await rungOfStep($, step, set)
+    const prompt = set.tiers[step.tier].scopeNote ? `${e.prompt}\n\n${SCOPE_NOTE}` : e.prompt
+    const ran = await next({ ...e, model, prompt })
+    if (ran.deny === undefined && ran.agentId) stepByAgent.set(ran.agentId, step.id)
+
+    return ran
+  }).catch(async ($, e, next) => {
+    await fault($, 'agent-spawn', next.error)
+
+    return next(e)
+  })
+
   // Money is counted per model response, as it arrives, so every view moves together.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId) {
-      const r = yield* next(e)
+      // A routed subagent thinks at its rung's level: set on each request, since the Agent call itself is left unchanged (O8).
+      const step = e.effort === undefined ? undefined : await stepOfAgent($, e.agentId)
+      const effort = step?.where === 'agent' ? (await rungOfStep($, step, await read($, settings))).effort : undefined
+      const r = yield* next(effort && effort !== e.effort ? { ...e, effort } : e)
       if (r.usage) await account($, usageOf(r.usage), r.usage.model, e.agentId)
       return r
     }
