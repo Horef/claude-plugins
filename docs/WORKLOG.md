@@ -2,6 +2,13 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-24: model-router 0.30.1, routed subagents run in auto mode (O8)
+Owner asked to fix O8, logged by another session: in auto mode every routed Agent call was refused with "a hook changed this call's input after auto mode reviewed it". The router's `tool.call` hook added `model`, `effort` and the scope note to the call after the server had reviewed the call as the model wrote it.
+- Change: the `tool.call` hook still routes (rung, try, status, log) but passes the call on unchanged; a new `agent.spawn` hook sets the subagent's model and scope note (the engine's documented place to pick a subagent's model); the `turn.step` hook sets a routed subagent's effort on each of its requests (`agent.spawn` has no effort). The rung chosen at the call is kept per step (`routedRung`), falling back to `runsOn` after a reload.
+- Tests: the two engine stand-ins for `tool.call` now do what the engine does under an Agent call (raise `agent.spawn`, then the subagent's first `turn.step`) and record what the subagent runs with; no assertion changed, and with the new stand-ins the 0.30.0 sources still pass all 172 old tests. One new test (the call reaches the engine as written, the subagent still runs on its rung with the scope note) fails on 0.30.0. Live case added to `evals/cases.md`.
+- Commands: `claude plugin test plugins/model-router` 173 pass; on 0.30.0 sources 172 pass, 1 fail (the new one); `claude plugin validate` passed; `tsc` adds no new kind of error (2 more of the existing `read($, settings)` typing noise).
+- Not verified: a real auto-mode chat (the live case); that the server accepts a model set at `agent.spawn` is from the engine's docs, not seen.
+
 ## 2026-11-23 (end): onboarding for newcomers shipped (D13), father's PR merged
 Owner request after his father's first install of model-router: a guide, links from the mods, and a way to update. Design reviewed by agy Gemini 4 Neon (high) before building; the same review covered the father's PR #128.
 - Merged: #128 model-router 0.29.4 (father's auto-mode change plus 8 review fixes pushed to his branch: route lock with the try decided inside the steps write, `learnedOf` pure again, overkill passes in auto mode, no tries for counted steps, stale `explored` cleared, display, `VERSION`); #129 session-status-line 0.14.0 (help, welcome, update check); #131 model-router 0.29.5 (missing verdicts asked at the next turn) and 0.30.0 (welcome, Guide link, help, update check); #130 the guide site, D13, root README pointer, AGENTS.md rule that a mod's guide page follows its user-visible changes.
