@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-25 (later): model-router 0.30.3, Show all button on the glance (O10)
+Owner request: ctrl+x tab is hard to type on the phone. The glance now ends with *Show all ▾* (a plain Button; `$.state` atom `glanceOpen`) that draws the whole pane unfocused; on a short inline seat the whole pane has *Show less ▴* at its top and end.
+- Commands: `claude plugin test plugins/model-router` 175 pass (1 new); `claude plugin validate` passed; pty 48x32 with `--plugin-dir`: an SGR mouse click on Show all opened the whole pane, one on Show less brought back the glance and the band.
+- One existing test edited: the glance test looks for "or ctrl+x tab" in place of the old hint text.
+- Not verified: whether the Herdr phone app sends a tap as a mouse click.
+
 ## 2026-11-25: session-status-line 0.14.1 (ⓘ stays) and model-router 0.30.2 (glance on short terminals)
 Owner request: his father found that on the desktop app pressing ⓘ hid ⓘ itself, with no way to close the options; and on the owner's phone (Herdr synced, 48 columns) the status band was gone while the router pane was open.
 - Diagnosis: (1) the options row takes rows from the status lines; with few rows the drop order removed `warm`/`warmOff`, the segment holding ⓘ, and the × (a `role="dismiss"` Button at the end of the second options row) could be out of view. (2) Measured in a pty (pyte, `claude` at 48 columns): the inline pane takes a third of the rows and the engine leaves the band 0 rows at 40 rows, 2 at 50, 3 at 60; at 48x90 both show.
