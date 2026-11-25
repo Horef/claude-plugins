@@ -2,6 +2,9 @@
 
 Newest first. Entries are reconstructed from the conversation the mod was built in; dates are approximate. Later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.14.1 (2026-11-25)
+- ⓘ and a × on the options' first line stay in view while the options are open, however few rows the band has (O15)
+
 ## 0.14.0 (2026-11-23)
 - First-use help and an update check: /status-line help (a short tour), a one-time welcome toast on a fresh store, a quiet daily check for a newer release (one toast per version, /status-line update fills the prompt with an update request, update dismiss, update-check on|off, off for checkouts and with CLAUDE_PLUGINS_NO_UPDATE_CHECK=1); the installed version is read from plugin.json instead of a stale constant; README Start here
 

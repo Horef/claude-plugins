@@ -401,7 +401,7 @@ test("the options row's status wraps to the band's width between its parts, losi
     const texts = ((await ui.findAll({ type: 'Text' })) as any[]).map(t => String(t.text))
     await ui.unmount()
     const first = texts.findIndex(t => t.startsWith('Cache 59m left'))
-    return texts.slice(first, texts.indexOf('Warmer', first))
+    return texts.slice(first, texts.indexOf('Warmer', first)).filter(t => t !== '×') // the close mark sits on the first line
   }
   const parts = ['Cache 59m left of 1h cache', 'warmer on until', 'next warm in 49m', '1 sent, last served 480k']
   expect((await statusAt(220)).length).toBe(1)
@@ -519,3 +519,37 @@ test('help lists the options', async ($, on) => {
   for (const word of ['now', 'for 8h', 'until 07:30', 'every 50m']) expect(said).toContain(word)
   await clock.advance(MIN) // let the start's background budget reads settle before the test ends
 })
+
+// O-desktop (owner's father, 2026-11-25): on the desktop app the band has few rows; opening the options
+// took rows from the status lines, which dropped the segment holding ⓘ, so nothing closed the options.
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: with few rows, ⓘ and the close button stay while the options are open`, async ($, on) => {
+    engine(on)
+    await $.session.start({ cwd: '/proj' } as any)
+    // A full band: context, both limits with resets and pace, cost, a turn, files.
+    await $.session.measure({ context: { tokens: 184_000, window: 200_000, percent: 92 }, rateLimits: [
+      { kind: 'five_hour', percentUsed: 71.5, resetsAt: '2026-11-21T22:10:00Z' },
+      { kind: 'seven_day', percentUsed: 81, resetsAt: '2026-11-24T16:00:00Z' },
+    ], cost: { usd: 12.34 }, changed: ['context', 'cost'] } as any)
+    await request($)
+    for (const [maxRows, cols] of [[3, 90], [4, 60], [5, 48], [6, 40]] as const) {
+      const mount = () => $.ui.mount({
+        plugin: 'session-status-line', surface, component: 'AbovePrompt',
+        props: { hasSurvey: false, isWorking: false, maxRows, bodyColumns: cols, scroll: { offset: 0, bodyRows: maxRows - 1 }, view: {} },
+      })
+      let ui = await mount()
+      await ui.press({ key: 'warmInfo' })
+      await ui.unmount()
+      ui = await mount()
+      const text = ((await ui.findAll({ type: 'Text' })) as any[]).map(t => t.text).join('')
+      expect(text).toContain('Every')
+      expect(text).toContain('ⓘ')
+      await ui.press({ key: 'w-close' })
+      await ui.unmount()
+      ui = await mount()
+      const after = ((await ui.findAll({ type: 'Text' })) as any[]).map(t => t.text).join('')
+      expect(after).not.toContain('Every')
+      await ui.unmount()
+    }
+  })
+}
