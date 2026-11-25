@@ -192,6 +192,7 @@ const showModelMap = atom({ plugin: 'model-router', key: 'showModelMap' } as con
 const editKindTags = atom({ plugin: 'model-router', key: 'editKindTags' } as const, '')
 const paneView = atom({ plugin: 'model-router', key: 'paneView' } as const, { toggled: {} })
 const showGlossary = atom({ plugin: 'model-router', key: 'showGlossary' } as const, false)
+const glanceOpen = atom({ plugin: 'model-router', key: 'glanceOpen' } as const, false)
 const showCostDetails = atom({ plugin: 'model-router', key: 'showCostDetails' } as const, false)
 const editOrder = atom({ plugin: 'model-router', key: 'editOrder' } as const, '')
 const picking = atom({ plugin: 'model-router', key: 'picking' } as const, '')
@@ -4020,11 +4021,19 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
   // Glance: on a short terminal, inline and not focused, the frame fits a few lines (the plan's progress and
   // the step at work), so the inline pane does not take the rows the band above the prompt needs. Focusing it
-  // (ctrl+x tab) draws the full pane, scrollable as always.
-  const glance =
-    tty && (e.props as { placement?: string }).placement === 'inline' && !site.isFocused && !isSettingsOpen &&
-    (e.viewport?.rows ?? Infinity) < GLANCE_BELOW_ROWS
-  if (glance) {
+  // (ctrl+x tab) or its Show all button (a tap on a phone, where ctrl+x is awkward) draws the full pane, scrollable
+  // as always; Show less returns to the glance.
+  const shortInline =
+    tty && (e.props as { placement?: string }).placement === 'inline' && (e.viewport?.rows ?? Infinity) < GLANCE_BELOW_ROWS
+  const allShown = await read($, glanceOpen)
+  const toggleGlance = () => void update($, glanceOpen, v => !v)
+  const showLess = (key: string) =>
+    shortInline && allShown ? (
+      <Button key={key} plain onPress={toggleGlance}>
+        <Text dimColor>Show less ▴</Text>
+      </Button>
+    ) : null
+  if (shortInline && !site.isFocused && !isSettingsOpen && !allShown) {
     const atWork = work.filter(s => s.status === 'running')
     const shown = (atWork.length > 0 ? atWork : work.filter(s => s.status === 'planned').slice(0, 1)).slice(0, 2)
     const head = list.length === 0 ? 'Router on · no plan yet' : `Plan · ${done} of ${work.length} done`
@@ -4044,13 +4053,19 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             <Box flexShrink={1}><Text wrap="truncate">{s.title}</Text></Box>
           </Box>
         ))}
-        <Text key="glance-hint" dimColor size="caption" wrap="truncate">ctrl+x tab: the full pane</Text>
+        <Box key="glance-foot" flexDirection="row" columnGap="sm">
+          <Button key="glance-open" plain onPress={toggleGlance}>
+            <Text>Show all ▾</Text>
+          </Button>
+          <Text dimColor size="caption" wrap="truncate">or ctrl+x tab</Text>
+        </Box>
       </Box>
     )
   }
 
   return (
     <Box flexDirection="column" rowGap={tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
+      {showLess('glance-close')}
       {healthRow}
       {modelsCard}
       {tty && (
@@ -4063,6 +4078,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       {isSettingsOpen ? settingsPanel : planSection}
       {isSettingsOpen ? null : costSection}
       {isSettingsOpen ? null : footer}
+      {showLess('glance-close-end')}
     </Box>
   )
 }

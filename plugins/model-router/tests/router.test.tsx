@@ -4840,7 +4840,7 @@ test('a short terminal shows the inline pane as a glance until it is focused; ta
   const phone = await at(34, 'inline')
   expect(await phone.find(text(/^Plan · 0 of 3 done/))).toBeTruthy()
   expect(await phone.find(text(/^Read the logs/))).toBeTruthy()
-  expect(await phone.find(text(/ctrl\+x tab: the full pane/))).toBeTruthy()
+  expect(await phone.find(text(/or ctrl\+x tab/))).toBeTruthy()
   expect(await phone.find(text(/^Write the fix/))).toBeFalsy() // only the step at work
   expect(await phone.find({ type: 'Button', key: 'expand-all' } as never)).toBeFalsy()
   expect(((await phone.findAll({ type: 'Text' } as never)) as unknown[]).length).toBeLessThan(12)
@@ -4853,4 +4853,30 @@ test('a short terminal shows the inline pane as a glance until it is focused; ta
     await whole.unmount()
   }
   await $.tool.call({ tool: PLAN, done: ['s1', 's2', 's3'] } as never)
+})
+
+// On the phone ctrl+x is awkward to type (owner, 2026-11-25): the glance has a Show all button, the full pane Show less.
+test('on a short terminal Show all draws the whole pane unfocused, and Show less returns to the glance', async ($, on) => {
+  await boot($, on, [])
+  await $.tool.call({ tool: PLAN, steps: [{ id: 's1', title: 'Read', tier: 'light', where: 'here' }, { id: 's2', title: 'Write', tier: 'standard', where: 'agent' }] } as never)
+  const at = (rows: number) => $.ui.mount({
+    ...PANE, surface: 'terminal',
+    props: { ...PANE.props, bodyColumns: 44, placement: 'inline', isFocused: false },
+    viewport: { columns: 48, rows, isFullscreen: false },
+  } as never)
+  const pane = await at(34)
+  expect(await pane.find({ type: 'Button', key: 'expand-all' } as never)).toBeFalsy()
+  await pane.press({ key: 'glance-open' })
+  expect(await pane.find({ type: 'Button', key: 'expand-all' } as never)).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'glance-close' } as never)).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'glance-close-end' } as never)).toBeTruthy()
+  await pane.press({ key: 'glance-close-end' })
+  expect(await pane.find({ type: 'Button', key: 'expand-all' } as never)).toBeFalsy()
+  expect(await pane.find({ type: 'Button', key: 'glance-open' } as never)).toBeTruthy()
+  await pane.unmount()
+  // A tall terminal has no glance, so no Show less either.
+  const tall = await at(60)
+  expect(await tall.find({ type: 'Button', key: 'glance-close' } as never)).toBeFalsy()
+  await tall.unmount()
+  await $.tool.call({ tool: PLAN, done: ['s1', 's2'] } as never)
 })
