@@ -2,6 +2,12 @@
 Newest first. Each entry: what changed, how it was verified, what's next. Never edit or delete past entries.
 Earlier months: `docs/worklog/YYYY-MM.md`.
 
+## 2026-11-25 (evening): model-router 0.30.4, ▲ Up / ▼ Down paging on short terminals (O11, O12)
+On the owner's phone Show all still showed only a third of the screen. Tried and dropped: re-opening the pane with `$.ui.open({ rows })` (a 48-column pty gave the same frame with rows: 30 as with none: 15 rows at 46, 10 at 32; the terminal has no full-screen overlay seat either). Found: SGR wheel events over the pane scroll it unfocused, so a phone app sending swipes as wheel events scrolls it (O11, passed to the owner for his father's app). Owner asked for arrows as well (O12).
+- Change: after Show all on a short inline seat the plan view is paged (`$.state` `glancePage`): a fixed top row (Show less ▴, ▲ Up, ▼ Down, n/m), then the pane from one block on: 0 the top, 1 the plan's head, one per step, cost, footer. Show less resets it; Settings keep scrolling.
+- Commands: `claude plugin test plugins/model-router` 176 pass (1 new); `claude plugin validate` passed; pty 48x32: taps on ▼ ▼ ▲ moved 1/4 → 3/4 → 2/4 with the top row in place.
+- Not verified: the taps on the real phone.
+
 ## 2026-11-25 (later): model-router 0.30.3, Show all button on the glance (O10)
 Owner request: ctrl+x tab is hard to type on the phone. The glance now ends with *Show all ▾* (a plain Button; `$.state` atom `glanceOpen`) that draws the whole pane unfocused; on a short inline seat the whole pane has *Show less ▴* at its top and end.
 - Commands: `claude plugin test plugins/model-router` 175 pass (1 new); `claude plugin validate` passed; pty 48x32 with `--plugin-dir`: an SGR mouse click on Show all opened the whole pane, one on Show less brought back the glance and the band.

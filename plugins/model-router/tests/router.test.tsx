@@ -4880,3 +4880,47 @@ test('on a short terminal Show all draws the whole pane unfocused, and Show less
   await tall.unmount()
   await $.tool.call({ tool: PLAN, done: ['s1', 's2'] } as never)
 })
+
+// Arrows in case a swipe does not scroll (owner, 2026-11-25): after Show all on a short terminal the pane is paged.
+test('after Show all on a short terminal ▲ ▼ page the pane a block at a time under a fixed row', async ($, on) => {
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Read the logs', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Write the fix', tier: 'standard', where: 'agent' },
+      { id: 's3', title: 'Review it', tier: 'deep', where: 'here' },
+    ],
+  } as never)
+  const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
+  const pane = await $.ui.mount({
+    ...PANE, surface: 'terminal',
+    props: { ...PANE.props, bodyColumns: 44, placement: 'inline', isFocused: false },
+    viewport: { columns: 48, rows: 34, isFullscreen: false },
+  } as never)
+  expect(await pane.find({ type: 'Button', key: 'page-down' } as never)).toBeFalsy() // the glance has none
+  await pane.press({ key: 'glance-open' })
+  expect(await pane.find(text(/^1\/7$/))).toBeTruthy() // top, plan head, 3 steps, cost, footer
+  expect(await pane.find(text(/^Plan · 0 of 3 done/))).toBeTruthy()
+  await pane.press({ key: 'page-down' })
+  await pane.press({ key: 'page-down' })
+  expect(await pane.find(text(/^3\/7$/))).toBeTruthy() // the first step
+  expect(await pane.find(text(/^Plan · 0 of 3 done/))).toBeFalsy()
+  expect(await pane.find(text(/^Read the logs/))).toBeTruthy()
+  await pane.press({ key: 'page-down' })
+  expect(await pane.find(text(/^Read the logs/))).toBeFalsy()
+  expect(await pane.find(text(/^Write the fix/))).toBeTruthy()
+  expect(await pane.find({ type: 'Button', key: 'glance-close' } as never)).toBeTruthy() // still on the fixed row
+  for (let i = 0; i < 9; i++) await pane.press({ key: 'page-down' })
+  expect(await pane.find(text(/^7\/7$/))).toBeTruthy()
+  expect(await pane.find(text(/^Review it/))).toBeFalsy()
+  await pane.press({ key: 'page-up' })
+  expect(await pane.find(text(/^6\/7$/))).toBeTruthy()
+  // Show less goes back to the glance; the next Show all starts at the top.
+  await pane.press({ key: 'glance-close' })
+  expect(await pane.find({ type: 'Button', key: 'page-down' } as never)).toBeFalsy()
+  await pane.press({ key: 'glance-open' })
+  expect(await pane.find(text(/^1\/7$/))).toBeTruthy()
+  await pane.unmount()
+  await $.tool.call({ tool: PLAN, done: ['s1', 's2', 's3'] } as never)
+})
