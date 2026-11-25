@@ -65,7 +65,7 @@ const CONFIG = {
     { name: 'claude', label: '', ids: ['head', 'ctx', 'ctxTokens', 'hint', 'limit5h', 'reset5h', 'pace5h', 'limit7d', 'reset7d', 'pace7d',
       'limitOther', 'resetOther', 'paceOther', 'extra'] },
     { name: 'helpers', label: 'helpers', ids: [] as string[] },
-    { name: 'session', label: 'session', ids: ['cost', 'lastTurn', 'files', 'compactions', 'session', 'warm', 'warmOff'] },
+    { name: 'session', label: 'session', ids: ['cost', 'lastTurn', 'files', 'compactions', 'session', 'warm', 'warmOff', 'warmOpen'] },
   ],
   // Dim separator between two budgets inside a group; between groups on one line: the `sep` icon.
   gap: ' │ ',
@@ -473,7 +473,8 @@ const buildSegments = (s: Stats, u: Usage, q: Quotas, isWorking: boolean, now: n
       ? { text: `${ic.warm}${w.count}`, color: CONFIG.colors.model, press: 'warm' }
       : { text: ic.warm, dim: true, press: 'warm' })
     pieces.push({ text: ' ' }, { text: ic.info, dim: !w.open, color: w.open ? CONFIG.colors.model : undefined, press: 'warmInfo' })
-    out.push({ id: w.on ? 'warm' : 'warmOff', pieces })
+    // While the options are open, ⓘ is the way back: its segment (`warmOpen`) is never dropped.
+    out.push({ id: w.open ? 'warmOpen' : w.on ? 'warm' : 'warmOff', pieces })
   }
 
   return out
@@ -1973,7 +1974,7 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const ic = e.surface !== 'terminal' && icons === CONFIG.icons ? { ...icons, ...CONFIG.desktopBar } : icons
     // The warmer's options row takes its rows first while it is open; the status rows get the rest.
-    const statusLines = w.open ? panelStatus(w, now, Math.max(10, e.props.bodyColumns - 1)) : []
+    const statusLines = w.open ? panelStatus(w, now, Math.max(10, e.props.bodyColumns - 3)) : [] // 2 cells for ×
     const panelRows = w.open ? CONFIG.warm.panelRows + statusLines.length : 0
     const lines = toLines(buildSegments(s, u, q, e.props.isWorking, now, ic, w), Math.max(10, e.props.bodyColumns - 1), mode, Math.max(1, e.props.maxRows - panelRows), e.surface === 'terminal')
     lastDraw = { surface: e.surface, bodyColumns: e.props.bodyColumns, maxRows: e.props.maxRows, widths: lines.map(piecesWidth) }
@@ -1996,7 +1997,13 @@ export const register: Register = on => {
     const ttl = ttlOf(w)
     const panel = !w.open ? null : (
       <Box key="warm-panel" flexDirection="column">
-        {statusLines.map((line, i) => <Text key={`warm-status-${i}`} wrap="wrap" dimColor>{line}</Text>)}
+        {/* × closes the options from their first line, near the top of the band whatever is scrolled or dropped. */}
+        {statusLines.map((line, i) => i > 0 ? <Text key={`warm-status-${i}`} wrap="wrap" dimColor>{line}</Text> : (
+          <Box key="warm-status-0" flexDirection="row" columnGap={1}>
+            <Box key="warm-status-text" flexGrow={1} flexShrink={1}><Text wrap="wrap" dimColor>{line}</Text></Box>
+            <Button key="w-close" plain onPress={toggleInfo}><Text dimColor>×</Text></Button>
+          </Box>
+        ))}
         <Box key="warm-row1" flexDirection="row" flexWrap="wrap" columnGap={1}>
           {label('w-l1', 'Warmer')}
           {choice('w-on', 'On', 'on', w.on)}
@@ -2019,7 +2026,6 @@ export const register: Register = on => {
             <Button key="w-skipc" plain onPress={() => warmCommand($, 'skip-compact')}><Text dimColor> Skip compaction</Text></Button>
           )}
           {label('w-l6', ' more: /status-line warm help')}
-          <Button key="w-close" plain role="dismiss" onPress={toggleInfo}><Text dimColor>×</Text></Button>
         </Box>
         <Box key="warm-row3" flexDirection="row" flexWrap="wrap" columnGap={1}>
           {label('w-l7', 'Every chat')}
