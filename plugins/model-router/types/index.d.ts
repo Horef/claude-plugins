@@ -432,6 +432,8 @@ declare module 'claude-code' {
       paneView: { all?: boolean; toggled: Record<string, boolean> }
       /** The `?` glossary under the plan header is open. */
       showGlossary: boolean
+      /** On a short terminal, the inline pane is drawn whole although unfocused (its Show all button). */
+      glanceOpen: boolean
       /** The cost section's Details (stat tiles, footnote, history tables) are open. */
       showCostDetails: boolean
       /** The tier whose helper order is being edited in Settings ('' for none). */
