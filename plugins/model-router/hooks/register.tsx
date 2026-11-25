@@ -193,6 +193,7 @@ const editKindTags = atom({ plugin: 'model-router', key: 'editKindTags' } as con
 const paneView = atom({ plugin: 'model-router', key: 'paneView' } as const, { toggled: {} })
 const showGlossary = atom({ plugin: 'model-router', key: 'showGlossary' } as const, false)
 const glanceOpen = atom({ plugin: 'model-router', key: 'glanceOpen' } as const, false)
+const glancePage = atom({ plugin: 'model-router', key: 'glancePage' } as const, 0)
 const showCostDetails = atom({ plugin: 'model-router', key: 'showCostDetails' } as const, false)
 const editOrder = atom({ plugin: 'model-router', key: 'editOrder' } as const, '')
 const picking = atom({ plugin: 'model-router', key: 'picking' } as const, '')
@@ -2146,6 +2147,14 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const past = await read($, history)
   const seen = await read($, seenSkills)
   const isSettingsOpen = await read($, showSettings)
+  // A short terminal (a phone) seats the pane inline at about a third of the screen, whatever it asks for. There
+  // the pane is a glance until Show all (or focus); after Show all the plan view is paged: a fixed row with
+  // Show less and ▲ ▼ on top, then the pane from one block on (the top, the plan's head, each step, the cost,
+  // the footer), so a tap moves it where a swipe or ctrl+x may not (owner's phone, 2026-11-25).
+  const shortInline =
+    tty && (e.props as { placement?: string }).placement === 'inline' && (e.viewport?.rows ?? Infinity) < GLANCE_BELOW_ROWS
+  const allShown = await read($, glanceOpen)
+  const paged = shortInline && allShown && !isSettingsOpen
   const pathOpen = await read($, showHelperPath)
   const checksOpen = await read($, showChecks)
   const note = await read($, inputNote)
@@ -2875,9 +2884,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   ]
   // Only a fresh start: no plan, no history, no plan ever posted, and not dismissed. Whoever has used the router never sees it.
   const showWelcome = !welcomed && past.length === 0 && life.plans === 0 && life.steps === 0
-  const planSection = (
+  // Paged blocks: 0 the top (health, new models, hint), 1 the plan's head, then one per step, then cost, then footer.
+  const pageCount = 2 + list.length + 2
+  const page = paged ? Math.min(Math.max(0, await read($, glancePage)), pageCount - 1) : 0
+  const stepFrom = Math.max(0, page - 2)
+  const planHeadShown = page <= 1
+  const planShown = page <= 1 + list.length
+  const costShown = page <= 2 + list.length
+  const planSection = !planShown ? null : (
     <Box key="section:plan" flexDirection="column" rowGap="xs">
-      {list.length === 0 && showWelcome ? (
+      {!planHeadShown ? null : list.length === 0 && showWelcome ? (
         <Box key="welcome" flexDirection="column">
           <Text key="welcome-title" weight="semibold">New here? Three steps:</Text>
           <Text key="welcome-1" size="footnote" wrap="wrap">1. Ask for something with several steps (e.g. "In three steps: find the five largest files here, summarize each, and pick the one most worth cleaning up").</Text>
@@ -2929,7 +2945,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           )}
         </Box>
       )}
-      {glossaryOpen && list.length > 0 && (
+      {planHeadShown && glossaryOpen && list.length > 0 && (
         <Box key="glossary-list" flexDirection="column" paddingLeft={2}>
           {/* The terminal gives each term its own line and indents what it means, so the list scans as a list. */}
           {GLOSSARY.map(([term, what]) =>
@@ -2949,7 +2965,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           )}
         </Box>
       )}
-      {heldCount > 0 && (
+      {planHeadShown && heldCount > 0 && (
         <Box key="draft-bar" flexDirection="row" flexWrap="wrap" columnGap="sm" rowGap="xs" alignItems="center">
           <Button key="draft-send" variant="primary" onPress={() => void sendDraft($)}>
             {`Send changes (${heldCount})`}
@@ -2962,7 +2978,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       )}
       {/* In the terminal a blank row between steps: without it the rows read as one block of text. */}
       <Box flexDirection="column" rowGap="xs">
-        {list.map(row)}
+        {list.slice(stepFrom).map(row)}
       </Box>
       {list.length > 0 && (
         <Box flexDirection="row">
@@ -4023,10 +4039,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   // the step at work), so the inline pane does not take the rows the band above the prompt needs. Focusing it
   // (ctrl+x tab) or its Show all button (a tap on a phone, where ctrl+x is awkward) draws the full pane, scrollable
   // as always; Show less returns to the glance.
-  const shortInline =
-    tty && (e.props as { placement?: string }).placement === 'inline' && (e.viewport?.rows ?? Infinity) < GLANCE_BELOW_ROWS
-  const allShown = await read($, glanceOpen)
-  const toggleGlance = () => void update($, glanceOpen, v => !v)
+  const toggleGlance = () =>
+    void (async () => {
+      await update($, glanceOpen, v => !v)
+      await update($, glancePage, () => 0)
+    })()
   const showLess = (key: string) =>
     shortInline && allShown ? (
       <Button key={key} plain onPress={toggleGlance}>
@@ -4065,10 +4082,23 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
 
   return (
     <Box flexDirection="column" rowGap={tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>
-      {showLess('glance-close')}
-      {healthRow}
-      {modelsCard}
-      {tty && (
+      {paged ? (
+        <Box key="page-nav" flexDirection="row" columnGap="sm" alignItems="center">
+          {showLess('glance-close')}
+          <Button key="page-up" plain dimColor={page === 0} onPress={() => void update($, glancePage, v => Math.max(0, Math.min(v, pageCount - 1) - 1))}>
+            ▲ Up
+          </Button>
+          <Button key="page-down" plain dimColor={page >= pageCount - 1} onPress={() => void update($, glancePage, v => Math.min(pageCount - 1, v + 1))}>
+            ▼ Down
+          </Button>
+          <Text key="page-at" dimColor size="caption">{`${page + 1}/${pageCount}`}</Text>
+        </Box>
+      ) : (
+        showLess('glance-close')
+      )}
+      {page === 0 && healthRow}
+      {page === 0 && modelsCard}
+      {page === 0 && tty && (
         <Text dimColor size="caption" wrap="wrap">
           {site.isFocused
             ? '↑↓ scroll · Tab buttons · Esc back to the prompt'
@@ -4076,7 +4106,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         </Text>
       )}
       {isSettingsOpen ? settingsPanel : planSection}
-      {isSettingsOpen ? null : costSection}
+      {isSettingsOpen || !costShown ? null : costSection}
       {isSettingsOpen ? null : footer}
       {showLess('glance-close-end')}
     </Box>

@@ -434,6 +434,8 @@ declare module 'claude-code' {
       showGlossary: boolean
       /** On a short terminal, the inline pane is drawn whole although unfocused (its Show all button). */
       glanceOpen: boolean
+      /** The block the paged pane starts at after Show all on a short terminal (0: the top). */
+      glancePage: number
       /** The cost section's Details (stat tiles, footnote, history tables) are open. */
       showCostDetails: boolean
       /** The tier whose helper order is being edited in Settings ('' for none). */

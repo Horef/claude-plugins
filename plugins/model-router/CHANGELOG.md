@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.30.4 (2026-11-25)
+- After Show all on a short terminal the pane is paged: a fixed top row with Show less, ▲ Up, ▼ Down and n/m, then the pane from one block on (top, plan head, each step, cost, footer) (O12)
+
 ## 0.30.3 (2026-11-25)
 - The glance has a Show all button (a tap or click; ctrl+x tab still works) and the full pane on a short terminal a Show less button, at its top and end (O10)
 
