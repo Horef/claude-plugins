@@ -5,6 +5,7 @@ One line each: `- O<n> <date> [<kind>] <section>: <what happened, what would hav
 Kinds: failure, friction, misled, missing, workaround, win, wish. ` ×N` = seen N times; ` → <version>` = resolved there.
 
 ## Open
+- O11 2026-11-25 [misled] pane, inline seat: $.ui.open({ rows }) does not make the inline pane taller than about a third of the terminal: in a 48-column pty (main screen) rows: 30 gave the same frame as no rows (15 rows at 46, 10 at 32), on a first open and on a re-open, so Show all on a phone cannot enlarge the pane. Mouse-wheel events (SGR 64/65) over the pane do scroll it, unfocused: a phone app that sends a swipe as wheel events scrolls the pane with a finger (claude-code, owner's phone through Herdr, 2026-11-25)
 
 ## Resolved
 - O10 2026-11-25 [wish] pane, glance: On the phone, ctrl+x tab (the only way from the glance to the full pane) is hard to type; owner asked for a small button that opens the full pane (claude-code, owner request 2026-11-25, Herdr on a phone) → 0.30.3
