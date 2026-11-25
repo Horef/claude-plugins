@@ -2100,6 +2100,9 @@ async function writeReport($: EngineInterface): Promise<string | undefined> {
 
 const TIER_COLOR: Record<Tier, string> = { light: 'success', standard: 'suggestion', deep: 'claude' }
 const STATUS_COLOR: Record<Step['status'], string> = { planned: 'inactive', running: 'warning', done: 'success' }
+// A terminal shorter than this (a phone, a small split) seats the inline pane as a glance until it is focused,
+// so the band above the prompt keeps rows of its own (the owner's phone, 2026-11-25).
+const GLANCE_BELOW_ROWS = 50
 
 type Option = { value: string; label: string }
 
@@ -4014,6 +4017,37 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
       </Box>
     </Box>
   )
+
+  // Glance: on a short terminal, inline and not focused, the frame fits a few lines (the plan's progress and
+  // the step at work), so the inline pane does not take the rows the band above the prompt needs. Focusing it
+  // (ctrl+x tab) draws the full pane, scrollable as always.
+  const glance =
+    tty && (e.props as { placement?: string }).placement === 'inline' && !site.isFocused && !isSettingsOpen &&
+    (e.viewport?.rows ?? Infinity) < GLANCE_BELOW_ROWS
+  if (glance) {
+    const atWork = work.filter(s => s.status === 'running')
+    const shown = (atWork.length > 0 ? atWork : work.filter(s => s.status === 'planned').slice(0, 1)).slice(0, 2)
+    const head = list.length === 0 ? 'Router on · no plan yet' : `Plan · ${done} of ${work.length} done`
+    return (
+      <Box flexDirection="column">
+        <Box key="glance-head" flexDirection="row" columnGap="sm">
+          <Text key="glance-plan" weight={list.length > 0 ? 'semibold' : undefined} wrap="truncate">
+            {head}
+            {status === 'pending' ? <Text color="warning">{' · awaiting approval'}</Text> : null}
+          </Text>
+        </Box>
+        {!health.ok && <Text key="glance-health" color="warning" size="footnote" wrap="truncate">{health.text}</Text>}
+        {shown.map(s => (
+          <Box key={`glance:${s.id}`} flexDirection="row" columnGap="sm">
+            <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
+            <Box flexShrink={0}><Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text></Box>
+            <Box flexShrink={1}><Text wrap="truncate">{s.title}</Text></Box>
+          </Box>
+        ))}
+        <Text key="glance-hint" dimColor size="caption" wrap="truncate">ctrl+x tab: the full pane</Text>
+      </Box>
+    )
+  }
 
   return (
     <Box flexDirection="column" rowGap={tty ? 'sm' : 'md'} padding={tty ? undefined : 'sm'}>

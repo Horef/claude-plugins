@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.30.2 (2026-11-25)
+- On a terminal under 50 rows the inline pane is a glance (plan progress, the step at work) until focused, leaving the band above the prompt its rows (O9)
+
 ## 0.30.1 (2026-11-24)
 - routed subagents run in auto mode: the Agent call is left as written; model and scope note set at agent.spawn, effort at the subagent's turn.step (O8)
 

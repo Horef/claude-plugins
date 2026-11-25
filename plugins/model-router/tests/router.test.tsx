@@ -4816,3 +4816,41 @@ test('update.ts: only a folder under plugins/cache is an installed copy; the req
   expect(shouldAnnounce({ latest: '0.30.1' }, '0.30.0')).toBe(true)
   expect(shouldAnnounce({ latest: '0.30.1', dismissed: '0.30.1' }, '0.30.0')).toBe(false)
 })
+
+// A phone (the owner's, through Herdr, 2026-11-25): a short terminal seats the pane inline above the prompt, where a
+// third of the screen left the status band no rows. There the pane is a glance until it is focused.
+test('a short terminal shows the inline pane as a glance until it is focused; tall, docked and focused draw it whole', async ($, on) => {
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Read the logs', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Write the fix', tier: 'standard', where: 'agent' },
+      { id: 's3', title: 'Review it', tier: 'deep', where: 'here' },
+    ],
+  } as never)
+  await $.tool.call({ tool: PLAN, start: ['s1'] } as never)
+  const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
+  const at = (rows: number, placement: 'inline' | 'dock', isFocused = false) => $.ui.mount({
+    ...PANE, surface: 'terminal',
+    props: { ...PANE.props, bodyColumns: 44, placement, isFocused },
+    viewport: { columns: 48, rows, isFullscreen: false },
+  } as never)
+
+  const phone = await at(34, 'inline')
+  expect(await phone.find(text(/^Plan · 0 of 3 done/))).toBeTruthy()
+  expect(await phone.find(text(/^Read the logs/))).toBeTruthy()
+  expect(await phone.find(text(/ctrl\+x tab: the full pane/))).toBeTruthy()
+  expect(await phone.find(text(/^Write the fix/))).toBeFalsy() // only the step at work
+  expect(await phone.find({ type: 'Button', key: 'expand-all' } as never)).toBeFalsy()
+  expect(((await phone.findAll({ type: 'Text' } as never)) as unknown[]).length).toBeLessThan(12)
+  await phone.unmount()
+
+  for (const [rows, placement, focused] of [[34, 'inline', true], [60, 'inline', false], [34, 'dock', false]] as const) {
+    const whole = await at(rows, placement, focused)
+    expect(await whole.find({ type: 'Button', key: 'expand-all' } as never)).toBeTruthy()
+    expect(await whole.find(text(/^Write the fix/))).toBeTruthy()
+    await whole.unmount()
+  }
+  await $.tool.call({ tool: PLAN, done: ['s1', 's2', 's3'] } as never)
+})
