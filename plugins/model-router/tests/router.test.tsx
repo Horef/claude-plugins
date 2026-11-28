@@ -5246,3 +5246,75 @@ test('O13 job health checks: off by default; per-project override batches ids, p
   expect(failed.result).toContain('stale')
   expect(failed.result).toContain('ssh: connection timed out')
 })
+
+test('O13 pane, 48-col glance and Herdr snapshot: renders plan name, Plans drawer, links/deps/jobs in details, and gate alert in glance', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+  await $.tool.call({
+    tool: PLAN,
+    name: 'v1-sweep',
+    steps: [
+      { id: 's1', title: 'Run sweep', tier: 'standard', where: 'helper', links: { branch: 'feat/v1', helper: 't21', jobs: ['482910'], report: '.scratch/REPORT.md', refs: ['R14'] } },
+      { id: 's2', title: 'Merge PR', tier: 'deep', where: 'here', dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+  } as never)
+
+  const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
+  // Full pane: plan name in header, Plans drawer, blocked/gated badges, layer-2 details
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await desk.find(text(/Plan: v1-sweep/))).toBeTruthy()
+  expect(await desk.find({ type: 'Button', key: 'plans-toggle' } as never)).toBeTruthy()
+  expect(await desk.find(text(/waits: s1/))).toBeTruthy()
+  expect(await desk.find(text(/t21/))).toBeTruthy()
+  // Open s1 details to see full links
+  await desk.press({ key: 'open:s1' })
+  expect(await desk.find(text(/Branch: feat\/v1/))).toBeTruthy()
+  expect(await desk.find(text(/Report: \.scratch\/REPORT\.md/))).toBeTruthy()
+  await desk.unmount()
+
+  // 48x32 phone glance: stays compact (<12 Text nodes) and surfaces gated step alert
+  const phone = await $.ui.mount({
+    ...PANE,
+    surface: 'terminal',
+    props: { ...PANE.props, bodyColumns: 44, placement: 'inline', isFocused: false },
+    viewport: { columns: 48, rows: 32, isFullscreen: false },
+  } as never)
+  expect(await phone.find(text(/Plan: v1-sweep/))).toBeTruthy()
+  expect(await phone.find(text(/◇ s2/))).toBeTruthy()
+  expect(((await phone.findAll({ type: 'Text' } as never)) as unknown[]).length).toBeLessThan(12)
+  await phone.unmount()
+
+  // Herdr snapshot carries planName and step link/gate notes
+  const snap = buildSnapshot({
+    router: VERSION,
+    chat: 'c1',
+    cwd: '/work/v1',
+    at: new Date('2026-11-28T10:00:00Z'),
+    status: 'approved',
+    health: { ok: true, text: 'Router on' },
+    planName: 'v1-sweep',
+    list: [
+      { ...newStep('s1', 'Run sweep', 'standard', 'helper'), links: { helper: 't21', jobs: ['482910'] } },
+      { ...newStep('s2', 'Merge PR', 'deep', 'here'), dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+    set: DEFAULT_SETTINGS,
+    main: { cost: 0 },
+    planBaseCost: 0,
+    totals: { mainCost: 0, agentCost: 0, mainEquivalent: 0, steps: 0, helper: EMPTY_HELPER },
+  })
+  expect(snap.planName).toBe('v1-sweep')
+  expect(snap.steps[0]!.notes.join(' ')).toContain('t21')
+  expect(snap.steps[1]!.notes.join(' ')).toContain('gate')
+})

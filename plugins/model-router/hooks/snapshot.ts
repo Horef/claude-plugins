@@ -1,6 +1,7 @@
 // The state file the Herdr view reads: the plan and the money as short display strings, built by a pure function.
 import type { HelperTotals, Settings, Step, Totals } from '../types'
 import { cardModelLine, fmtCost, fmtUsd, helperLine, helperName, helperTotalsOf, isDelegated, isHelperRun, leavesOf, rollupOf, runsOn, depthOf, pickSource, whereLabel } from './logic'
+import { gatePrompt, isBlocked, isGated, unmetDeps } from './plans'
 import type { Learned, NewModelsCard } from './logic'
 
 /** Days a state file is kept after its last write. */
@@ -32,6 +33,8 @@ export type RouterState = {
   at: string
   status: 'none' | 'pending' | 'approved'
   statusText: string
+  /** Active named persistent plan, if any (O13). */
+  planName?: string
   health: { ok: boolean; text: string }
   steps: StateStep[]
   cost: { plan: string[]; chat: string[] }
@@ -44,6 +47,7 @@ export type SnapshotInput = {
   cwd?: string
   at: Date
   status: RouterState['status']
+  planName?: string
   health: { ok: boolean; text: string }
   list: readonly Step[]
   set: Settings
@@ -97,6 +101,11 @@ const stepOf = (list: readonly Step[], s: Step, set: Settings, learned?: Learned
     s.kind ?? '',
     s.reruns > 0 ? `rerun ${s.reruns}×` : '',
     s.setupHeavy ? 'start-up heavy' : '',
+    isBlocked(list, s) ? `waits: ${unmetDeps(list, s).join(', ')}` : '',
+    isGated(s) ? `gate: ${gatePrompt(s.gate)}` : '',
+    s.links?.helper ?? '',
+    s.links?.jobs?.length ? `jobs ${s.links.jobs.join(',')}` : '',
+    s.links?.refs?.length ? s.links.refs.join(',') : '',
   ].filter(Boolean)
 
   return {
@@ -153,6 +162,7 @@ export const buildSnapshot = (i: SnapshotInput): RouterState => {
     at: i.at.toISOString(),
     status: i.status,
     statusText: textOfStatus(i.status, list),
+    ...(i.planName ? { planName: i.planName } : {}),
     health: i.health,
     steps: list.map(s => stepOf(list, s, set, i.learned)),
     cost: {

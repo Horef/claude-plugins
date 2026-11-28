@@ -86,8 +86,9 @@ export default class ModelRouter extends View {
     // The same order and words as the pane in Claude Code: health line, plan header, rows of two lines, then cost.
     const leaves = state.steps.filter((s) => !s.group);
     const done = leaves.filter((s) => s.status === "done").length;
+    const planLabel = state.planName ? `Plan: ${state.planName}` : "Plan";
     const planHead = state.steps.length === 0 ? "" :
-      `Plan · ${done} of ${leaves.length} done${state.status === "pending" ? " · awaiting your approval" : ""}`;
+      `${planLabel} · ${done} of ${leaves.length} done${state.status === "pending" ? " · awaiting your approval" : ""}`;
 
     const head = v_flex().gap(2).p(10).border_b(1).border_color(t.border)
       .child(div().text_color(state.health.ok ? t.foreground : t.blocked).child(state.health.text))

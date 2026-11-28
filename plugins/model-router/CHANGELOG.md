@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.35.0 (2026-11-28)
+- plan pane links/gates/Plans drawer, 48-col glance, Herdr snapshot, docs (O13)
+
 ## 0.34.0 (2026-11-28)
 - per-project cluster job health checks with squeue parsing (O13)
 

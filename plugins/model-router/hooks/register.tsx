@@ -143,7 +143,7 @@ import {
 import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
 import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
-import { activeJobIds, asDeps, asGate, cleanLinks, effectiveJobCheck, extractHcLinks, formatJobSummary, gatePrompt, isGated, mergeLinks, mergePersistedSteps, normPlanName, parseJobOutput, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
+import { activeJobIds, asDeps, asGate, cleanLinks, effectiveJobCheck, extractHcLinks, formatJobSummary, gatePrompt, isBlocked, isGated, mergeLinks, mergePersistedSteps, normPlanName, parseJobOutput, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
@@ -357,6 +357,7 @@ async function publishState($: EngineInterface) {
       cwd: state.cwd,
       at: new Date(),
       status: await read($, planStatus),
+      planName: (await read($, planName)) || undefined,
       health: { ok: health.ok, text: health.text },
       list: await read($, steps),
       set,
@@ -2525,6 +2526,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const up = await read($, updates)
   const updateText = await read($, updateNote)
   const welcomed = await read($, welcomeSeen)
+  const activePlanName = await read($, planName)
+  const savedPlans = await read($, openPlans)
+  const plansOpen = await read($, showPlans)
+  const jobsState = await read($, jobHealth)
+  const jobIds = activeJobIds(list)
+  const jobCheckCfg = effectiveJobCheck(set, projectInfo.key)
 
   // Groups are the sum of their parts: counted once, through the parts.
   const work = leavesOf(list)
@@ -3077,18 +3084,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   )
   // Line 1 of a row: the opener, status, id and the title, which alone wraps (the id never breaks: "s14." over "a").
   // Tags (kind, count, a group's progress) go on line 2, so a narrow pane gives the title its whole width.
-  const rowHead = (s: Step) => (
-    <Box flexDirection="row" columnGap="sm" alignItems="flex-start">
-      {opener(s)}
-      <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-      <Box flexShrink={0}>
-        <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+  const rowHead = (s: Step) => {
+    const gated = isGated(s)
+    const blocked = !gated && isBlocked(list, s)
+    const glyph = gated ? '◇' : blocked ? '◌' : STATUS_GLYPH[s.status]
+    const glyphColor = gated ? 'warning' : blocked ? undefined : STATUS_COLOR[s.status]
+
+    return (
+      <Box flexDirection="row" columnGap="sm" alignItems="flex-start">
+        {opener(s)}
+        <Text color={glyphColor} dimColor={blocked}>{glyph}</Text>
+        <Box flexShrink={0}>
+          <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+        </Box>
+        <Box flexShrink={1}>
+          <Text weight={s.group ? 'semibold' : 'medium'} wrap="wrap" dimColor={s.status === 'done' || blocked}>{s.title}</Text>
+        </Box>
       </Box>
-      <Box flexShrink={1}>
-        <Text weight={s.group ? 'semibold' : 'medium'} wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
-      </Box>
-    </Box>
-  )
+    )
+  }
   // A finished step's line 2 says where it ran, in quiet text: its pickers would change nothing now.
   const ranOn = (s: Step) => {
     const now = runsOn(s, set, learned)
@@ -3155,11 +3169,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {needs && <Text color="warning" size="footnote">{`⚠ rated for ${needs}`}</Text>}
           {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
           {changeNoted(s) && <Text key={`noted:${s.id}`} color="suggestion" size="footnote">change noted, applies from the next turn</Text>}
+          {isBlocked(list, s) && <Text key={`waits:${s.id}`} dimColor size="footnote">{`waits: ${unmetDeps(list, s).join(', ')}`}</Text>}
+          {isGated(s) && <Text key={`gate:${s.id}`} color="warning" size="footnote">{`gate: ${gatePrompt(s.gate)}`}</Text>}
           {isGated(s) && (
             <Button key={`gate-approve:${s.id}`} variant="primary" onPress={() => void approveGate($, s.id)}>
               Approve
             </Button>
           )}
+          {s.links?.helper && <Text key={`lhelp:${s.id}`} dimColor size="footnote">{s.links.helper}</Text>}
+          {s.links?.jobs?.[0] && (() => {
+            const jid = s.links!.jobs![0]!
+            const jst = jobsState.jobs[jid]
+            const extra = s.links!.jobs!.length > 1 ? ` +${s.links!.jobs!.length - 1}` : ''
+            return (
+              <Text key={`ljob:${s.id}`} color={jst?.bad ? 'error' : jst?.badge === 'R' ? 'success' : undefined} dimColor={!jst || (!jst.bad && jst.badge !== 'R')} size="footnote">
+                {`job ${jid}${jst ? ` ${jst.badge}` : ''}${extra}`}
+              </Text>
+            )
+          })()}
+          {s.links?.refs?.[0] && <Text key={`lref:${s.id}`} dimColor size="footnote">{s.links.refs[0]}</Text>}
           {up && (
             <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
               {`↑ Rerun on ${rungLabel(up)}`}
@@ -3206,6 +3234,34 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             {verdictText(s)}
             {s.fallback ? <Text key={`fallback:${s.id}`} dimColor size="footnote" wrap="wrap">{`ran as a Claude agent: ${s.fallback}`}</Text> : null}
             {s.setupHeavy && <Text color="warning" size="footnote" wrap="wrap">Mostly start-up cost: a step this small is cheaper done here.</Text>}
+            {s.dependsOn?.length ? (
+              <Text key={`deps-detail:${s.id}`} dimColor size="footnote" wrap="wrap">
+                {`Depends on: ${s.dependsOn.map(id => `${id} (${STATUS_GLYPH[list.find(x => x.id === id)?.status ?? 'planned']})`).join(', ')}`}
+              </Text>
+            ) : null}
+            {s.gate ? (
+              <Text key={`gate-detail:${s.id}`} color={s.gateApproved ? undefined : 'warning'} dimColor={!!s.gateApproved} size="footnote" wrap="wrap">
+                {`Gate: ${gatePrompt(s.gate)} (${s.gateApproved ? 'approved' : 'waiting'})`}
+              </Text>
+            ) : null}
+            {(s.links?.branch || s.links?.worktree) && (
+              <Text key={`lbr:${s.id}`} dimColor size="footnote" wrap="wrap">
+                {[s.links.branch ? `Branch: ${s.links.branch}` : '', s.links.worktree ? `Worktree: ${s.links.worktree}` : ''].filter(Boolean).join(' · ')}
+              </Text>
+            )}
+            {s.links?.helper && <Text key={`lhdet:${s.id}`} dimColor size="footnote" wrap="wrap">{`Helper: ${s.links.helper}`}</Text>}
+            {s.links?.jobs?.length ? (
+              <Text key={`ljdet:${s.id}`} dimColor size="footnote" wrap="wrap">
+                {`Jobs: ${s.links.jobs
+                  .map(id => {
+                    const st = jobsState.jobs[id]
+                    return st ? `${id} ${st.state}${st.elapsed ? ` ${st.elapsed}` : ''}${st.reason ? ` (${st.reason})` : ''}` : id
+                  })
+                  .join(' · ')}${jobsState.stale ? ' (stale)' : ''}`}
+              </Text>
+            ) : null}
+            {s.links?.report && <Text key={`lrep:${s.id}`} dimColor size="footnote" wrap="wrap">{`Report: ${s.links.report}`}</Text>}
+            {s.links?.refs?.length ? <Text key={`lrefs:${s.id}`} dimColor size="footnote" wrap="wrap">{`Refs: ${s.links.refs.join(', ')}`}</Text> : null}
           </Box>
         )}
       </Box>
@@ -3277,10 +3333,20 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         <Box flexDirection="column" rowGap="xs">
           <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
             <Text key="plan-head" weight="semibold" wrap="wrap">
-              {`Plan · ${done} of ${work.length} done`}
+              {`${activePlanName ? `Plan: ${activePlanName}` : 'Plan'} · ${done} of ${work.length} done`}
               {status === 'pending' ? <Text color="warning">{' · awaiting your approval'}</Text> : null}
             </Text>
             <Box flexDirection="row" columnGap="sm">
+              {jobIds.length > 0 && jobCheckCfg.command.trim() ? (
+                <Button key="check-jobs" plain onPress={() => void runJobCheck($, true)}>
+                  ↻ Jobs
+                </Button>
+              ) : null}
+              {savedPlans.length > 0 ? (
+                <Button key="plans-toggle" plain onPress={() => void update($, showPlans, v => !v)}>
+                  {plansOpen ? 'Plans ▴' : 'Plans ▾'}
+                </Button>
+              ) : null}
               <Button key="glossary" plain onPress={() => void update($, showGlossary, v => !v)}>
                 {glossaryOpen ? '? ▾' : '?'}
               </Button>
@@ -3305,6 +3371,30 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             </Text>
           )}
         </Box>
+      )}
+      {planHeadShown && plansOpen && savedPlans.length > 0 && (
+        <Box key="plans-drawer" flexDirection="column" paddingLeft={2}>
+          {savedPlans.map(p => (
+            <Box key={`plan-item:${p.name}`} flexDirection="row" columnGap="sm" alignItems="center">
+              <Text weight={p.name === activePlanName ? 'semibold' : undefined} size="footnote">
+                {`${p.name} · ${p.done}/${p.total}`}
+              </Text>
+              {p.name !== activePlanName && (
+                <Button key={`plan-open:${p.name}`} plain onPress={() => void openNamedPlan($, p.name)}>
+                  Open
+                </Button>
+              )}
+              <Button key={`plan-close:${p.name}`} plain dimColor onPress={() => void closeNamedPlan($, p.name)}>
+                Close
+              </Button>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {planHeadShown && jobsState.error && (
+        <Text key="job-check-err" color="warning" size="footnote" wrap="wrap">
+          {`✗ Job check failed: ${jobsState.error}`}
+        </Text>
       )}
       {planHeadShown && glossaryOpen && list.length > 0 && (
         <Box key="glossary-list" flexDirection="column" paddingLeft={2}>
@@ -4413,8 +4503,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ) : null
   if (shortInline && !site.isFocused && !isSettingsOpen && !allShown) {
     const atWork = work.filter(s => s.status === 'running')
-    const shown = (atWork.length > 0 ? atWork : work.filter(s => s.status === 'planned').slice(0, 1)).slice(0, 2)
-    const head = list.length === 0 ? 'Router on · no plan yet' : `Plan · ${done} of ${work.length} done`
+    const gatedStep = work.find(isGated)
+    const badJob = Object.values(jobsState.jobs).find(j => j.bad)
+    const alert = gatedStep ? `◇ ${gatedStep.id} gate: ${gatePrompt(gatedStep.gate)}` : badJob ? `✗ job ${badJob.id} ${badJob.badge}` : ''
+    const shown = (atWork.length > 0 ? atWork : work.filter(s => s.status === 'planned').slice(0, 1)).slice(0, alert ? 1 : 2)
+    const head =
+      list.length === 0
+        ? 'Router on · no plan yet'
+        : activePlanName
+          ? `Plan: ${activePlanName} · ${done}/${work.length}`
+          : `Plan · ${done} of ${work.length} done`
     return (
       <Box flexDirection="column">
         <Box key="glance-head" flexDirection="row" columnGap="sm">
@@ -4424,6 +4522,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Text>
         </Box>
         {!health.ok && <Text key="glance-health" color="warning" size="footnote" wrap="truncate">{health.text}</Text>}
+        {alert ? <Text key="glance-alert" color={badJob && !gatedStep ? 'error' : 'warning'} size="footnote" wrap="truncate">{alert}</Text> : null}
         {shown.map(s => (
           <Box key={`glance:${s.id}`} flexDirection="row" columnGap="sm">
             <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>

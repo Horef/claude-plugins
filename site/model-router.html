@@ -333,6 +333,23 @@
 </div>
 </details>
 
+<details class="card" id="workstreams">
+<summary><span class="t">Multi-day plans, links, gates and cluster jobs</span><span class="d">Persistent plans per project, artifact links, human gates and Slurm checks</span></summary>
+<div class="card-body">
+<h4>What it is</h4>
+<p>A named plan (<code>name: "v1-sweep"</code>) persists per project across sessions and git worktrees under <code>~/.config/model-router/plans/</code>, with a <strong>Plans ▾</strong> switcher in the pane and <code>/router plans</code>. Each step can carry artifact links (branch, worktree, helper terminal, cluster job ids, report path, <code>R</code>/<code>D</code>/<code>PR</code> refs), wait on other steps (<code>dependsOn</code>), or pause at a human approval gate (<code>gate</code>) that blocks delegation until you click <strong>Approve</strong>. Helper messages (<code>&lt;hc from="tXX"&gt;</code>) passively fill missing links, and an optional per-project <code>jobCheck</code> command batches active job ids to show live Slurm badges (<code>R</code>, <code>PD</code>, <code>OOM</code>, <code>FAIL</code>).</p>
+<h4>Do you need it?</h4>
+<p>Useful for multi-day workstreams with several branches, helpers and cluster jobs. Unnamed plans stay single-session and ephemeral as before.</p>
+<h4>Turn it on</h4>
+<ol class="steps">
+  <li>Ask Claude to create a named plan (e.g. <code>name: "v1-sweep"</code>) or save an existing one with <code>plan: {action: "save", name: "…"}</code>.</li>
+  <li>For cluster job checks, set <code>jobCheck.command</code> (or per-project <code>jobCheckByProject</code>) in <code>~/.config/model-router/settings.json</code>; leave it empty to keep job checks off.</li>
+</ol>
+<h4>Check it works</h4>
+<p>The pane header reads <code>Plan: v1-sweep · 2 of 5 done</code> with <strong>Plans ▾</strong> (and <strong>↻ Jobs</strong> when jobs and a check command are set). A new session in the same repo auto-loads a single open plan with a one-line note.</p>
+</div>
+</details>
+
 <h2 id="update">7. Keeping it updated</h2>
 <p>Mods do not update by themselves unless you switch that on. There are two ways. You only need one.</p>
 <ol class="steps">
