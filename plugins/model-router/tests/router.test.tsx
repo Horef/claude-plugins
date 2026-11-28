@@ -5187,3 +5187,62 @@ test('O13 <hc> link capture: extracts jobs, report, refs, branch from helper mes
   expect(res.result).toContain('branch feat/review-fix')
   expect(res.result).not.toContain('999999')
 })
+
+test('O13 job health checks: off by default; per-project override batches ids, parses squeue, handles failure as stale', async ($, on) => {
+  const ran: string[][] = []
+  let failNext = false
+  const projKey = projectKeyOf('default')
+  await boot(
+    $,
+    on,
+    [
+      [
+        'settings',
+        {
+          ...DEFAULT_SETTINGS,
+          jobCheck: { command: 'global-squeue -j {ids}', intervalSec: 0, timeoutMs: 15_000 },
+          jobCheckByProject: { [projKey]: { command: 'proj-squeue -j {ids}' } },
+        },
+      ],
+    ],
+    [],
+    new Map(),
+    () => {
+      on('process.run', (_, e) => {
+        const argv = (e as { argv: string[] }).argv
+        ran.push(argv)
+        if (failNext) return { value: { exitCode: 255, stdout: '', stderr: 'ssh: connection timed out\ndetail' } }
+        return {
+          value: {
+            exitCode: 0,
+            stdout: '482910 RUNNING 12:34 node01\n482911 OUT_OF_MEMORY 05:00\n',
+            stderr: '',
+          },
+        }
+      })
+    },
+  )
+
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Sweep', tier: 'standard', where: 'helper', links: { jobs: ['482910', '482911', '482912', 'bad;rm -rf'] } },
+    ],
+  } as never)
+
+  // On-demand check batches valid ids into one command using the per-project override (rejects bad id)
+  const res = (await $.tool.call({ tool: PLAN, checkJobs: true } as never)) as { result: string }
+  const jobRuns = ran.filter(a => a.some(x => x.includes('proj-squeue')))
+  expect(jobRuns.length).toBe(1)
+  expect(jobRuns[0]!.join(' ')).toContain('482910,482911,482912')
+  expect(jobRuns[0]!.join(' ')).not.toContain('rm -rf')
+  expect(res.result).toContain('482910 R')
+  expect(res.result).toContain('482911 OOM')
+  expect(res.result).toContain('482912 gone')
+
+  // Failure keeps last known states as stale and reports first stderr line
+  failNext = true
+  const failed = (await $.tool.call({ tool: PLAN, checkJobs: true } as never)) as { result: string }
+  expect(failed.result).toContain('stale')
+  expect(failed.result).toContain('ssh: connection timed out')
+})

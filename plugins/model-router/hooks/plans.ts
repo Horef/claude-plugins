@@ -1,5 +1,5 @@
 // Pure logic for O13: step artifact links, dependencies, approval gates, persistence, <hc> capture, and job health.
-import type { PersistedPlan, PlanSummary, Step, StepLinks } from '../types'
+import type { JobCheckConfig, JobHealthState, JobStatus, PersistedPlan, PlanSummary, Settings, Step, StepLinks } from '../types'
 
 const trimStr = (v: unknown, max = 240): string | undefined => {
   if (typeof v !== 'string') return undefined
@@ -366,4 +366,92 @@ export const extractHcLinks = (
   const changed = JSON.stringify(prev) !== JSON.stringify(next)
 
   return { stepId: target.id, from, links: next, changed }
+}
+
+// --- Cluster job health checks (O13) ----------------------------------------------
+
+const JOB_ID_RE = /^[A-Za-z0-9._-]{1,32}$/
+
+export const validJobId = (id: string): boolean => JOB_ID_RE.test(id)
+
+/** Effective jobCheck config: per-project override over global default; command '' means off. */
+export const effectiveJobCheck = (set: Settings, projectKey: string): JobCheckConfig => {
+  const base = set.jobCheck ?? { command: '', intervalSec: 0, timeoutMs: 15_000 }
+  const proj = projectKey ? set.jobCheckByProject?.[projectKey] : undefined
+
+  return {
+    command: (proj?.command !== undefined ? proj.command : base.command) ?? '',
+    intervalSec: proj?.intervalSec ?? base.intervalSec ?? 0,
+    timeoutMs: proj?.timeoutMs ?? base.timeoutMs ?? 15_000,
+  }
+}
+
+/** Unique valid job ids across non-done steps of the plan. */
+export const activeJobIds = (list: readonly Step[]): string[] => {
+  const out: string[] = []
+  for (const s of list) {
+    if (s.group || s.status === 'done') continue
+    for (const id of s.links?.jobs ?? []) {
+      if (validJobId(id) && !out.includes(id)) out.push(id)
+    }
+  }
+
+  return out
+}
+
+const SLURM_BADGE: Record<string, { badge: string; bad?: boolean }> = {
+  RUNNING: { badge: 'R' },
+  R: { badge: 'R' },
+  PENDING: { badge: 'PD' },
+  PD: { badge: 'PD' },
+  CONFIGURING: { badge: 'CF' },
+  CF: { badge: 'CF' },
+  COMPLETING: { badge: 'CG' },
+  CG: { badge: 'CG' },
+  COMPLETED: { badge: 'CD' },
+  CD: { badge: 'CD' },
+  FAILED: { badge: 'FAIL', bad: true },
+  F: { badge: 'FAIL', bad: true },
+  OUT_OF_MEMORY: { badge: 'OOM', bad: true },
+  OOM: { badge: 'OOM', bad: true },
+  TIMEOUT: { badge: 'TO', bad: true },
+  TO: { badge: 'TO', bad: true },
+  CANCELLED: { badge: 'CA', bad: true },
+  CA: { badge: 'CA', bad: true },
+  NODE_FAIL: { badge: 'NF', bad: true },
+  NF: { badge: 'NF', bad: true },
+  PREEMPTED: { badge: 'PR', bad: true },
+}
+
+/** Parses `squeue -h -o '%i %T %M %R'` (or `<id> <STATE> [elapsed] [reason...]`) lines. */
+export const parseJobOutput = (stdout: string, queried: readonly string[]): Record<string, JobStatus> => {
+  const out: Record<string, JobStatus> = {}
+  for (const raw of stdout.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const cols = line.split(/\s+/)
+    const id = cols[0]
+    const st = cols[1]?.toUpperCase()
+    if (!id || !st || !validJobId(id)) continue
+    const mapped = SLURM_BADGE[st] ?? { badge: st.slice(0, 6) }
+    const elapsed = cols[2]
+    const reason = cols.slice(3).join(' ') || undefined
+    out[id] = { id, state: st, badge: mapped.badge, ...(elapsed ? { elapsed } : {}), ...(reason ? { reason } : {}), ...(mapped.bad ? { bad: true } : {}) }
+  }
+  for (const id of queried) {
+    if (!out[id]) out[id] = { id, state: 'GONE', badge: 'gone' }
+  }
+
+  return out
+}
+
+export const formatJobSummary = (health: JobHealthState, ids: readonly string[]): string => {
+  const items = ids.map(id => {
+    const st = health.jobs[id]
+    return st ? `${id} ${st.badge}${st.elapsed ? ` (${st.elapsed})` : ''}` : `${id} ?`
+  })
+  const head = health.stale ? 'Jobs (stale)' : 'Jobs'
+  const err = health.error ? ` · error: ${health.error}` : ''
+
+  return `${head}: ${items.join(', ')}${err}`
 }

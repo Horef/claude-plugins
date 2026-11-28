@@ -209,6 +209,35 @@ export type Settings = {
   herdrView: boolean
   /** Look for a newer release once a day (a quiet request for the published plugin.json), and say so in the pane. */
   updateCheck: boolean
+  /** Global default for cluster job health checks (O13); off when command is empty. */
+  jobCheck?: JobCheckConfig
+  /** Per-project overrides for cluster job health checks, keyed by projectKey (O13). */
+  jobCheckByProject?: Record<string, Partial<JobCheckConfig>>
+}
+
+export type JobCheckConfig = {
+  /** Shell command template with {ids} placeholder (comma-separated), e.g. `squeue -h -j {ids} -o '%i %T %M %R'`. Empty = off. */
+  command: string
+  /** Periodic check interval in seconds (0 = on-demand only). */
+  intervalSec: number
+  /** Subprocess timeout in ms (default 15000). */
+  timeoutMs: number
+}
+
+export type JobStatus = {
+  id: string
+  state: string
+  badge: string
+  elapsed?: string
+  reason?: string
+  bad?: boolean
+}
+
+export type JobHealthState = {
+  checkedAt?: string
+  stale?: boolean
+  error?: string
+  jobs: Record<string, JobStatus>
 }
 
 export type HereEffortSettings = {
@@ -501,6 +530,8 @@ declare module 'claude-code' {
       openPlans: PlanSummary[]
       /** The Plans ▾ drawer under the plan header is open (O13). */
       showPlans: boolean
+      /** Last cluster job health check result (O13). */
+      jobHealth: JobHealthState
     }
   }
 }

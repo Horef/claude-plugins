@@ -441,6 +441,27 @@ export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }
   log: stored?.log !== false,
   herdrView: stored?.herdrView !== false,
   updateCheck: stored?.updateCheck !== false,
+  jobCheck: {
+    command: typeof stored?.jobCheck?.command === 'string' ? stored.jobCheck.command : DEFAULT_SETTINGS.jobCheck!.command,
+    intervalSec: wholeIn(stored?.jobCheck?.intervalSec, 0, 86_400) ?? DEFAULT_SETTINGS.jobCheck!.intervalSec,
+    timeoutMs: wholeIn(stored?.jobCheck?.timeoutMs, 1000, 120_000) ?? DEFAULT_SETTINGS.jobCheck!.timeoutMs,
+  },
+  jobCheckByProject:
+    stored?.jobCheckByProject && typeof stored.jobCheckByProject === 'object'
+      ? Object.fromEntries(
+          Object.entries(stored.jobCheckByProject).flatMap(([k, v]) => {
+            if (!v || typeof v !== 'object') return []
+            const patch: Partial<{ command: string; intervalSec: number; timeoutMs: number }> = {}
+            if (typeof v.command === 'string') patch.command = v.command
+            const intv = wholeIn(v.intervalSec, 0, 86_400)
+            if (intv !== undefined) patch.intervalSec = intv
+            const to = wholeIn(v.timeoutMs, 1000, 120_000)
+            if (to !== undefined) patch.timeoutMs = to
+
+            return Object.keys(patch).length ? [[k, patch]] : []
+          }),
+        )
+      : {},
 })
 
 // --- The pane's plain words, presets and views ----------------------------------------

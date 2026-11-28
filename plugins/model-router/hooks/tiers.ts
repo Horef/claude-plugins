@@ -41,6 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
   log: true,
   updateCheck: true,
   herdrView: true,
+  jobCheck: { command: '', intervalSec: 0, timeoutMs: 15_000 },
+  jobCheckByProject: {},
 }
 
 // Spend presets: the three tiers' model and effort in one choice (Settings → Basics). Balanced is the shipped default;

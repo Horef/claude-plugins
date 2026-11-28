@@ -143,7 +143,7 @@ import {
 import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
 import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
-import { asDeps, asGate, cleanLinks, extractHcLinks, gatePrompt, isGated, mergeLinks, mergePersistedSteps, normPlanName, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
+import { activeJobIds, asDeps, asGate, cleanLinks, effectiveJobCheck, extractHcLinks, formatJobSummary, gatePrompt, isGated, mergeLinks, mergePersistedSteps, normPlanName, parseJobOutput, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
@@ -213,7 +213,9 @@ const planName = atom({ plugin: 'model-router', key: 'planName' } as const, '')
 const planRevision = atom({ plugin: 'model-router', key: 'planRevision' } as const, 0)
 const openPlans = atom({ plugin: 'model-router', key: 'openPlans' } as const, [])
 const showPlans = atom({ plugin: 'model-router', key: 'showPlans' } as const, false)
+const jobHealth = atom({ plugin: 'model-router', key: 'jobHealth' } as const, { jobs: {} })
 const projectInfo = { key: '', root: '' }
+let jobCheckBusy = false
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews', welcome: 'welcomeSeen', update: 'update' }
 const EFFORT_LOG_CAP = 200
@@ -990,6 +992,50 @@ async function discoverProjectPlans($: EngineInterface) {
     await update($, notes, n => [...n, `Open plans in this project: ${summary.join(', ')}. Call ${PLAN_TOOL} with plan: {action: "open", name} to resume one.`])
   } catch {
     // Never abort session.start if fs or env is unavailable.
+  }
+}
+
+/** Runs the configured cluster job health check (batched across active job ids). */
+async function runJobCheck($: EngineInterface, force = false): Promise<{ ran: boolean; text: string }> {
+  const set = await read($, settings)
+  const cfg = effectiveJobCheck(set, projectInfo.key)
+  if (!cfg.command.trim()) return { ran: false, text: 'Job health check is not configured.' }
+  const ids = activeJobIds(await read($, steps))
+  if (ids.length === 0) return { ran: false, text: 'No active cluster jobs in the plan.' }
+  const prev = await read($, jobHealth)
+  if (!force) {
+    if (cfg.intervalSec <= 0) return { ran: false, text: '' }
+    const last = prev.checkedAt ? Date.parse(prev.checkedAt) : 0
+    if (last && Date.now() - last < cfg.intervalSec * 1000) return { ran: false, text: '' }
+  }
+  if (jobCheckBusy) return { ran: false, text: 'Job health check already running.' }
+  jobCheckBusy = true
+  try {
+    const joined = ids.join(',')
+    const cmd = cfg.command.includes('{ids}') ? cfg.command.replace(/\{ids\}/g, joined) : `${cfg.command} ${joined}`
+    const r = await $.process.run(['sh', '-c', cmd], { timeoutMs: cfg.timeoutMs })
+    const checkedAt = new Date().toISOString()
+    if (r.exitCode !== 0) {
+      const err = firstLine(r.stderr || r.stdout || `exit ${r.exitCode}`)
+      const next = { ...prev, checkedAt, stale: true, error: err }
+      await update($, jobHealth, () => next)
+      await logEvent($, 'job-check-error', { ids: ids.length, error: err })
+      return { ran: true, text: formatJobSummary(next, ids) }
+    }
+    const parsed = parseJobOutput(r.stdout, ids)
+    const next = { checkedAt, stale: false, error: undefined, jobs: { ...prev.jobs, ...parsed } }
+    await update($, jobHealth, () => next)
+    await logEvent($, 'job-check', { ids: ids.length })
+    return { ran: true, text: formatJobSummary(next, ids) }
+  } catch (err) {
+    const checkedAt = new Date().toISOString()
+    const msg = firstLine(String(err))
+    const next = { ...prev, checkedAt, stale: true, error: msg }
+    await update($, jobHealth, () => next)
+    await logEvent($, 'job-check-error', { ids: ids.length, error: msg })
+    return { ran: true, text: formatJobSummary(next, ids) }
+  } finally {
+    jobCheckBusy = false
   }
 }
 
@@ -2005,6 +2051,7 @@ async function registerPlanTool($: EngineInterface) {
           },
           required: ['action'],
         },
+        checkJobs: { type: 'boolean', description: 'Run the configured cluster job health check now for all active job ids in the plan' },
         steps: { type: 'array', items: stepSchema(wheres, PARTS_DEPTH) },
         done,
         ...start,
@@ -2324,6 +2371,7 @@ type PlanInput = {
   models?: unknown
   name?: string
   plan?: PlanAction
+  checkJobs?: boolean
   steps?: PlanNode[]
   done?: DoneRef[]
   start?: StartRef[]
@@ -4690,7 +4738,11 @@ export const register: Register = on => {
     // Notes and proposals about models work on their own, or beside steps.
     if (input.models !== undefined) {
       modelsText = await acceptModels($, input.models)
-      if (!input.steps && !input.done && !input.start && !input.update && !input.plan) return { result: modelsText }
+      if (!input.steps && !input.done && !input.start && !input.update && !input.plan && !input.checkJobs) return { result: modelsText }
+    }
+    if (input.checkJobs) {
+      const checked = await runJobCheck($, true)
+      if (!input.steps && !input.done && !input.start && !input.update && !input.plan) return withNotes(checked.text)
     }
     if (input.plan && typeof input.plan === 'object') {
       const act = input.plan.action
@@ -5095,6 +5147,8 @@ export const register: Register = on => {
         await logEvent($, 'link-from-hc', { id: hit.stepId, from: hit.from })
       }
     }
+    // Optional periodic cluster job health check (fire-and-forget, never blocks the turn).
+    void runJobCheck($, false)
     const extra: string[] = []
     // Rules the chat no longer holds go out again. A compaction is told by session.compact, but on a Team or
     // Enterprise account Claude Code's sec-default sends that event past every person's mod: the row that
