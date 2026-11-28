@@ -1,6 +1,7 @@
 // Pure helpers for model-router: prices, the escalation ladder, history statistics, text formatting.
-import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelNews, ModelNote, ModelsCache, ModelTag, ModelsReport, PlanNode, Proposal, Price, Rung, Settings, Step, StepDraft, StepKnown, Tier, Usage, Verdict, Where } from '../types'
+import type { Effort, HelperChoice, HelperConfig, HelperPick, HelperRuns, HelperState, HelperTotals, HelperUsage, HistoryEntry, Model, ModelNews, ModelNote, ModelsCache, ModelTag, ModelsReport, PlanNode, Proposal, Price, Rung, Settings, Step, StepDraft, StepKnown, StepLinks, Tier, Usage, Verdict, Where } from '../types'
 import { TAGS, findNote, normId } from './notes'
+import { asDeps, asGate, cleanLinks, stepMetaText } from './plans'
 import { DEFAULT_SETTINGS, EFFORTS, FUSION, LADDER, LEARN, MODELS, NEW_MODEL_RUNGS, PRESETS, PRICES, SETUP_HEAVY, TIER_ORDER } from './tiers'
 
 // Pure helpers: no engine, no state. The hooks module owns everything that touches `$`.
@@ -440,6 +441,27 @@ export const mergeSettings = (stored: (Partial<Settings> & { compact?: boolean }
   log: stored?.log !== false,
   herdrView: stored?.herdrView !== false,
   updateCheck: stored?.updateCheck !== false,
+  jobCheck: {
+    command: typeof stored?.jobCheck?.command === 'string' ? stored.jobCheck.command : DEFAULT_SETTINGS.jobCheck!.command,
+    intervalSec: wholeIn(stored?.jobCheck?.intervalSec, 0, 86_400) ?? DEFAULT_SETTINGS.jobCheck!.intervalSec,
+    timeoutMs: wholeIn(stored?.jobCheck?.timeoutMs, 1000, 120_000) ?? DEFAULT_SETTINGS.jobCheck!.timeoutMs,
+  },
+  jobCheckByProject:
+    stored?.jobCheckByProject && typeof stored.jobCheckByProject === 'object'
+      ? Object.fromEntries(
+          Object.entries(stored.jobCheckByProject).flatMap(([k, v]) => {
+            if (!v || typeof v !== 'object') return []
+            const patch: Partial<{ command: string; intervalSec: number; timeoutMs: number }> = {}
+            if (typeof v.command === 'string') patch.command = v.command
+            const intv = wholeIn(v.intervalSec, 0, 86_400)
+            if (intv !== undefined) patch.intervalSec = intv
+            const to = wholeIn(v.timeoutMs, 1000, 120_000)
+            if (to !== undefined) patch.timeoutMs = to
+
+            return Object.keys(patch).length ? [[k, patch]] : []
+          }),
+        )
+      : {},
 })
 
 // --- The pane's plain words, presets and views ----------------------------------------
@@ -543,17 +565,18 @@ export const planText = (list: readonly Step[], set: Settings, mainModel?: Model
   list
     .map(s => {
       const indent = '  '.repeat(depthOf(list, s))
+      const meta = stepMetaText(list, s)
       if (s.group) {
         const r = rollupOf(list, s)
 
-        return `${indent}[${s.id}] ${s.title}: ${s.tier} (rates the group), ${r.done} of ${r.total} parts done, ${s.status}`
+        return `${indent}[${s.id}] ${s.title}: ${s.tier} (rates the group), ${r.done} of ${r.total} parts done, ${s.status}${meta}`
       }
       const parallel = s.count && s.count > 1 ? `, ×${s.count} in parallel` : ''
       const kind = s.kind ? `, kind ${s.kind}` : ''
       const status = s.count && s.count > 1 && s.status === 'running' && (s.runs ?? 0) > 0 ? `running (${s.runs} of ${s.count} finished)` : s.status
       const verdict = s.verdict ? ` (verdict ${s.verdict})` : ''
 
-      return `${indent}[${s.id}] ${s.title}: ${s.tier}, ${placeOf(s, set, mainModel, learned)}${parallel}${kind}, ${status}${verdict}`
+      return `${indent}[${s.id}] ${s.title}: ${s.tier}, ${placeOf(s, set, mainModel, learned)}${parallel}${kind}, ${status}${verdict}${meta}`
     })
     .join('\n')
 
@@ -608,7 +631,7 @@ export const expandIds = (list: readonly Step[], ids: readonly string[]) =>
 
 /** The plan tool's steps as a flat list in reading order, parts after their parent, with hierarchical ids. */
 export const flattenPlan = (nodes: readonly PlanNode[]) => {
-  const out: { id: string; title: string; tier: Tier; where: Where; parent?: string; group: boolean; count?: number; kind?: string }[] = []
+  const out: { id: string; title: string; tier: Tier; where: Where; parent?: string; group: boolean; count?: number; kind?: string; dependsOn?: string[]; gate?: boolean | string; links?: StepLinks }[] = []
   const dropped: string[] = []
   const seen = new Set<string>()
   const walk = (list: readonly PlanNode[], up?: { id: string; tier: Tier }) => {
@@ -624,7 +647,22 @@ export const flattenPlan = (nodes: readonly PlanNode[]) => {
       const parts = Array.isArray(n.parts) ? n.parts : []
       const count = !parts.length && typeof n.count === 'number' && n.count >= 2 ? Math.floor(n.count) : undefined
       const kind = parts.length ? undefined : normKind(n.kind)
-      out.push({ id, title: n.title, tier, where: n.where ?? 'agent', ...(up ? { parent: up.id } : {}), group: parts.length > 0, ...(count ? { count } : {}), ...(kind ? { kind } : {}) })
+      const dependsOn = asDeps(n.dependsOn)
+      const gate = asGate(n.gate)
+      const links = cleanLinks(n.links)
+      out.push({
+        id,
+        title: n.title,
+        tier,
+        where: n.where ?? 'agent',
+        ...(up ? { parent: up.id } : {}),
+        group: parts.length > 0,
+        ...(count ? { count } : {}),
+        ...(kind ? { kind } : {}),
+        ...(dependsOn ? { dependsOn } : {}),
+        ...(gate !== undefined ? { gate } : {}),
+        ...(links ? { links } : {}),
+      })
       if (parts.length) walk(parts, { id, tier })
     }
   }

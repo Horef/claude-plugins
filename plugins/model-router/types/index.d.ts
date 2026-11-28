@@ -209,6 +209,35 @@ export type Settings = {
   herdrView: boolean
   /** Look for a newer release once a day (a quiet request for the published plugin.json), and say so in the pane. */
   updateCheck: boolean
+  /** Global default for cluster job health checks (O13); off when command is empty. */
+  jobCheck?: JobCheckConfig
+  /** Per-project overrides for cluster job health checks, keyed by projectKey (O13). */
+  jobCheckByProject?: Record<string, Partial<JobCheckConfig>>
+}
+
+export type JobCheckConfig = {
+  /** Shell command template with {ids} placeholder (comma-separated), e.g. `squeue -h -j {ids} -o '%i %T %M %R'`. Empty = off. */
+  command: string
+  /** Periodic check interval in seconds (0 = on-demand only). */
+  intervalSec: number
+  /** Subprocess timeout in ms (default 15000). */
+  timeoutMs: number
+}
+
+export type JobStatus = {
+  id: string
+  state: string
+  badge: string
+  elapsed?: string
+  reason?: string
+  bad?: boolean
+}
+
+export type JobHealthState = {
+  checkedAt?: string
+  stale?: boolean
+  error?: string
+  jobs: Record<string, JobStatus>
 }
 
 export type HereEffortSettings = {
@@ -290,13 +319,54 @@ export type Step = {
   priorOutput?: number
   /** Some of the step's tokens ran on a model with no price: its cost is incomplete and it is left out of savings. */
   unpriced?: boolean
+  /** Step or group ids this step waits on before starting (O13). */
+  dependsOn?: string[]
+  /** Human approval gate: true or a short prompt; step cannot be delegated/started until gateApproved is true (O13). */
+  gate?: boolean | string
+  gateApproved?: boolean
+  /** Short quote of the person's approval in chat when approved via the plan tool (O13). */
+  gateApprovedBy?: string
+  /** Artifact links attached to this step: branch, worktree, helper terminal, cluster jobs, report path, RESULTS/D/PR refs (O13). */
+  links?: StepLinks
+}
+
+/** Artifact links attached to a plan step (O13). */
+export type StepLinks = {
+  branch?: string
+  worktree?: string
+  helper?: string
+  jobs?: string[]
+  report?: string
+  refs?: string[]
+}
+
+/** A named plan persisted per project under ~/.config/model-router/plans/<projectKey>/<name>.json (O13). */
+export type PersistedPlan = {
+  version: 1
+  name: string
+  project: string
+  status: 'open' | 'closed'
+  createdAt: string
+  updatedAt: string
+  revision: number
+  planStatus: PlanStatus
+  steps: Step[]
+}
+
+/** Summary of a persisted plan for the pane switcher and list action (O13). */
+export type PlanSummary = {
+  name: string
+  status: 'open' | 'closed'
+  done: number
+  total: number
+  updatedAt: string
 }
 
 /** Pane edits to a step of a running plan, held back until sent: only the fields changed. model/effort null = the tier's own. */
 export type StepDraft = { where?: Where; tier?: Tier; model?: Model | null; effort?: Effort | null }
 
 /** A plan step as the plan tool takes it: a step with optional parts, recursively. */
-export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; count?: number; kind?: string; parts?: PlanNode[] }
+export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; count?: number; kind?: string; dependsOn?: string[]; gate?: boolean | string; links?: StepLinks; parts?: PlanNode[] }
 
 /** What a helper used on its own subscription, in that provider's unit; never converted to money. */
 export type HelperUsage = { provider: string; amount: number; unit: string }
@@ -455,6 +525,15 @@ declare module 'claude-code' {
       updateNote: string
       /** The first-use welcome was dismissed or a plan was posted (true until the remembered state is loaded, so it never flashes for an existing user). */
       welcomeSeen: boolean
+      /** Active named persistent plan in this session ('' for an ephemeral plan) and its last-known revision (O13). */
+      planName: string
+      planRevision: number
+      /** Persisted plans known for this project, for the Plans ▾ switcher (O13). */
+      openPlans: PlanSummary[]
+      /** The Plans ▾ drawer under the plan header is open (O13). */
+      showPlans: boolean
+      /** Last cluster job health check result (O13). */
+      jobHealth: JobHealthState
     }
   }
 }

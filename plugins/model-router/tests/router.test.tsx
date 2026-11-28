@@ -7,6 +7,7 @@ import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, set
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
 import { SEED_NOTES, checkNote, findNote, mergeNotes, parseNotesFile } from '../hooks/notes'
+import { projectKeyOf } from '../hooks/plans'
 import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from '../hooks/snapshot'
 import { DEFAULT_SETTINGS, KIND_TAGS, LADDER } from '../hooks/tiers'
 import { EXPLORE, VERSION, exploreRungs } from '../hooks/logic'
@@ -4923,4 +4924,431 @@ test('after Show all on a short terminal ▲ ▼ page the pane a block at a time
   expect(await pane.find(text(/^1\/7$/))).toBeTruthy()
   await pane.unmount()
   await $.tool.call({ tool: PLAN, done: ['s1', 's2', 's3'] } as never)
+})
+
+// --- O13: links, dependencies, gates, persistence, <hc> capture, job checks ---
+
+test('O13 links, dependsOn and update: steps carry artifact links and dependencies; unknown/cyclic deps warn', async ($, on) => {
+  await boot($, on, [])
+  const posted = (await $.tool.call({
+    tool: PLAN,
+    steps: [
+      {
+        id: 's1',
+        title: 'Run sweep',
+        tier: 'standard',
+        where: 'agent',
+        links: { branch: 'feat/sweep', worktree: '../sc-sweep', helper: 't21', jobs: ['482910'] },
+      },
+      {
+        id: 's2',
+        title: 'Analyze results',
+        tier: 'deep',
+        where: 'here',
+        dependsOn: ['s1', 'missing-id'],
+      },
+      {
+        id: 's3',
+        title: 'Cyclic A',
+        tier: 'light',
+        where: 'here',
+        dependsOn: ['s4'],
+      },
+      {
+        id: 's4',
+        title: 'Cyclic B',
+        tier: 'light',
+        where: 'here',
+        dependsOn: ['s3'],
+      },
+    ],
+  } as never)) as { result: string }
+  expect(posted.result).toContain('branch feat/sweep')
+  expect(posted.result).toContain('helper t21')
+  expect(posted.result).toContain('jobs 482910')
+  expect(posted.result).toContain('waits on s1')
+  expect(posted.result).toContain('missing-id')
+  expect(posted.result).toContain('cycle')
+
+  // Incremental update patches links without re-posting the plan
+  const updated = (await $.tool.call({
+    tool: PLAN,
+    update: [{ id: 's1', links: { report: '.scratch/REPORT.md', refs: ['R14', 'D22'] } }],
+  } as never)) as { result: string }
+  expect(updated.result).toContain('report .scratch/REPORT.md')
+  expect(updated.result).toContain('refs R14, D22')
+  expect(updated.result).toContain('branch feat/sweep') // preserved
+
+  // Links on done also attach
+  const finished = (await $.tool.call({
+    tool: PLAN,
+    done: [{ id: 's1', verdict: 'ok', why: 'clean', links: { refs: ['R14', 'D22', 'PR#112'] } }],
+  } as never)) as { result: string }
+  expect(finished.result).toContain('PR#112')
+  expect(finished.result).not.toContain('waits on s1') // s1 is done, s2 unblocked
+})
+
+test('O13 gates: unapproved gate hard-denies Agent and start; Approve button unblocks and queues note', async ($, on) => {
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { output: 'ran' } }))
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Prep', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Merge PR', tier: 'standard', where: 'agent', dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+  } as never)
+
+  // Unapproved gate denies Agent delegation
+  const deniedAgent = (await $.tool.call({ tool: 'Agent', description: '[s2] Merge PR', prompt: 'do it' } as never)) as { deny?: string }
+  expect(deniedAgent.deny).toMatch(/gated/i)
+
+  // Unapproved gate also refuses start
+  const started = (await $.tool.call({ tool: PLAN, start: ['s2'] } as never)) as { result: string }
+  expect(started.result).toMatch(/gated/i)
+  expect(started.result).toContain('planned')
+
+  // Finish s1, then approve gate from the pane
+  await $.tool.call({ tool: PLAN, done: ['s1'] } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  const btn = await pane.find({ type: 'Button', key: 'gate-approve:s2' } as never)
+  expect(btn).toBeTruthy()
+  await pane.press({ key: 'gate-approve:s2' })
+  await pane.unmount()
+
+  // Now Agent delegation succeeds
+  const allowedAgent = (await $.tool.call({ tool: 'Agent', description: '[s2] Merge PR', prompt: 'do it' } as never)) as { deny?: string; result?: unknown }
+  expect(allowedAgent.deny).toBeUndefined()
+  expect(allowedAgent.result).toBeTruthy()
+})
+
+test('O13 persistence: named plans save, list, open, close per project and auto-load single open plan on session start', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+
+  // Create a named plan
+  const created = (await $.tool.call({
+    tool: PLAN,
+    name: 'v1-sweep',
+    steps: [
+      { id: 's1', title: 'Run sweep', tier: 'standard', where: 'agent', links: { branch: 'feat/v1', jobs: ['100001'] } },
+      { id: 's2', title: 'Merge', tier: 'deep', where: 'here', dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+  } as never)) as { result: string }
+  expect(created.result).toContain('v1-sweep')
+
+  // Verify persisted file exists under ~/.config/model-router/plans/<projectKey>/v1-sweep.json
+  const planPath = [...files.keys()].find(k => k.includes('/.config/model-router/plans/') && k.endsWith('/v1-sweep.json'))
+  expect(planPath).toBeTruthy()
+
+  // Update step s1 done and verify list
+  await $.tool.call({ tool: PLAN, done: [{ id: 's1', verdict: 'ok' }] } as never)
+  const listed = (await $.tool.call({ tool: PLAN, plan: { action: 'list' } } as never)) as { result: string }
+  expect(listed.result).toContain('v1-sweep')
+  expect(listed.result).toContain('open')
+
+  // Close the plan clears active steps, then reopen brings them back
+  const closed = (await $.tool.call({ tool: PLAN, plan: { action: 'close' } } as never)) as { result: string }
+  expect(closed.result).toMatch(/closed/i)
+  const reopened = (await $.tool.call({ tool: PLAN, plan: { action: 'open', name: 'v1-sweep' } } as never)) as { result: string }
+  expect(reopened.result).toContain('Run sweep')
+  expect(reopened.result).toContain('branch feat/v1')
+  expect(reopened.result).toContain('done')
+})
+
+test('O13 persistence: concurrent revision merge preserves edits from another session without clobbering', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+  await $.tool.call({
+    tool: PLAN,
+    name: 'multi-session',
+    steps: [
+      { id: 's1', title: 'Step one', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Step two', tier: 'light', where: 'here' },
+    ],
+  } as never)
+
+  // Simulate another session marking s1 done and bumping revision on disk
+  const planPath = [...files.keys()].find(k => k.endsWith('/multi-session.json'))!
+  const disk = JSON.parse(files.get(planPath)!)
+  disk.revision += 1
+  disk.steps[0].status = 'done'
+  disk.steps[0].links = { report: '.scratch/OTHER.md' }
+  files.set(planPath, JSON.stringify(disk))
+
+  // This session marks s2 done: merge must keep s1 done + its report AND s2 done
+  const res = (await $.tool.call({ tool: PLAN, done: ['s2'] } as never)) as { result: string }
+  expect(res.result).toContain('report .scratch/OTHER.md')
+  const merged = JSON.parse(files.get(planPath)!)
+  expect(merged.steps.find((s: { id: string }) => s.id === 's1').status).toBe('done')
+  expect(merged.steps.find((s: { id: string }) => s.id === 's2').status).toBe('done')
+  expect(merged.revision).toBeGreaterThan(disk.revision)
+})
+
+test('O13 persistence: session start auto-loads a single open plan with a one-line note', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  // Seed one open plan before session starts
+  const saved = {
+    version: 1,
+    name: 'workstream-a',
+    project: 'default',
+    status: 'open',
+    createdAt: '2026-11-28T08:00:00Z',
+    updatedAt: '2026-11-28T09:00:00Z',
+    revision: 2,
+    planStatus: 'approved',
+    steps: [
+      { id: 's1', title: 'Already done', tier: 'light', where: 'here', status: 'done', usage: EMPTY_USAGE, cost: 0, mainCost: 0, reruns: 0 },
+      { id: 's2', title: 'Next step', tier: 'standard', where: 'agent', status: 'planned', usage: EMPTY_USAGE, cost: 0, mainCost: 0, reruns: 0 },
+    ],
+  }
+  files.set(`${HOME}/.config/model-router/plans/${projectKeyOf('default')}/workstream-a.json`, JSON.stringify(saved))
+  const { rows } = await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+  await $.turn.start({ text: 'continue', turnId: 't1' })
+  const noteText = lastRow(rows)
+  expect(noteText).toContain('Loaded open plan')
+  expect(noteText).toContain('workstream-a')
+  expect(noteText).toContain('(1/2 done)')
+  const current = (await $.tool.call({ tool: PLAN } as never)) as { result: string }
+  expect(current.result).toContain('workstream-a')
+  expect(current.result).toContain('Next step')
+})
+
+test('O13 <hc> link capture: extracts jobs, report, refs, branch from helper messages without overwriting lead scalars', async ($, on) => {
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Sweep', tier: 'standard', where: 'helper', links: { helper: 't21', branch: 'lead-branch' } },
+      { id: 's2', title: 'Review', tier: 'deep', where: 'helper' },
+    ],
+  } as never)
+
+  // Message from t21 matches s1 via links.helper; extracts job, report, refs, and does NOT overwrite lead-branch
+  await $.turn.start({
+    text: '<hc from="t21">Submitted batch job 482910 on cluster. branch: helper-branch. report: .scratch/REPORT.md. Added R14 and D22.</hc>',
+    turnId: 't-hc1',
+  })
+  // Message from t22 cites [s2] explicitly; binds helper t22 and extracts PR#115
+  await $.turn.start({
+    text: '<hc from="t22">Done with [s2]: opened PR#115 on branch: feat/review-fix</hc>',
+    turnId: 't-hc2',
+  })
+  // Unmatched sender with no step id touches nothing
+  await $.turn.start({
+    text: '<hc from="t99">Submitted batch job 999999</hc>',
+    turnId: 't-hc3',
+  })
+
+  const res = (await $.tool.call({ tool: PLAN } as never)) as { result: string }
+  expect(res.result).toContain('jobs 482910')
+  expect(res.result).toContain('report .scratch/REPORT.md')
+  expect(res.result).toContain('refs R14, D22')
+  expect(res.result).toContain('branch lead-branch') // preserved!
+  expect(res.result).not.toContain('helper-branch')
+  expect(res.result).toContain('helper t22')
+  expect(res.result).toContain('PR#115')
+  expect(res.result).toContain('branch feat/review-fix')
+  expect(res.result).not.toContain('999999')
+})
+
+test('O13 job health checks: off by default; per-project override batches ids, parses squeue, handles failure as stale', async ($, on) => {
+  const ran: string[][] = []
+  let failNext = false
+  const projKey = projectKeyOf('default')
+  await boot(
+    $,
+    on,
+    [
+      [
+        'settings',
+        {
+          ...DEFAULT_SETTINGS,
+          jobCheck: { command: 'global-squeue -j {ids}', intervalSec: 0, timeoutMs: 15_000 },
+          jobCheckByProject: { [projKey]: { command: 'proj-squeue -j {ids}' } },
+        },
+      ],
+    ],
+    [],
+    new Map(),
+    () => {
+      on('process.run', (_, e) => {
+        const argv = (e as { argv: string[] }).argv
+        ran.push(argv)
+        if (failNext) return { value: { exitCode: 255, stdout: '', stderr: 'ssh: connection timed out\ndetail' } }
+        return {
+          value: {
+            exitCode: 0,
+            stdout: '482910 RUNNING 12:34 node01\n482911 OUT_OF_MEMORY 05:00\n',
+            stderr: '',
+          },
+        }
+      })
+    },
+  )
+
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Sweep', tier: 'standard', where: 'helper', links: { jobs: ['482910', '482911', '482912', 'bad;rm -rf'] } },
+    ],
+  } as never)
+
+  // On-demand check batches valid ids into one command using the per-project override (rejects bad id)
+  const res = (await $.tool.call({ tool: PLAN, checkJobs: true } as never)) as { result: string }
+  const jobRuns = ran.filter(a => a.some(x => x.includes('proj-squeue')))
+  expect(jobRuns.length).toBe(1)
+  expect(jobRuns[0]!.join(' ')).toContain('482910,482911,482912')
+  expect(jobRuns[0]!.join(' ')).not.toContain('rm -rf')
+  expect(res.result).toContain('482910 R')
+  expect(res.result).toContain('482911 OOM')
+  expect(res.result).toContain('482912 gone')
+
+  // Failure keeps last known states as stale and reports first stderr line
+  failNext = true
+  const failed = (await $.tool.call({ tool: PLAN, checkJobs: true } as never)) as { result: string }
+  expect(failed.result).toContain('stale')
+  expect(failed.result).toContain('ssh: connection timed out')
+})
+
+test('O13 pane, 48-col glance and Herdr snapshot: renders plan name, Plans drawer, links/deps/jobs in details, and gate alert in glance', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+  await $.tool.call({
+    tool: PLAN,
+    name: 'v1-sweep',
+    steps: [
+      { id: 's1', title: 'Run sweep', tier: 'standard', where: 'helper', links: { branch: 'feat/v1', helper: 't21', jobs: ['482910'], report: '.scratch/REPORT.md', refs: ['R14'] } },
+      { id: 's2', title: 'Merge PR', tier: 'deep', where: 'here', dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+  } as never)
+
+  const text = (re: RegExp) => ({ type: 'Text', text: re }) as never
+  // Full pane: plan name in header, Plans drawer, blocked/gated badges, layer-2 details
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect(await desk.find(text(/Plan: v1-sweep/))).toBeTruthy()
+  expect(await desk.find({ type: 'Button', key: 'plans-toggle' } as never)).toBeTruthy()
+  expect(await desk.find(text(/waits: s1/))).toBeTruthy()
+  expect(await desk.find(text(/t21/))).toBeTruthy()
+  // Open s1 details to see full links
+  await desk.press({ key: 'open:s1' })
+  expect(await desk.find(text(/Branch: feat\/v1/))).toBeTruthy()
+  expect(await desk.find(text(/Report: \.scratch\/REPORT\.md/))).toBeTruthy()
+  await desk.unmount()
+
+  // 48x32 phone glance: stays compact (<12 Text nodes) and surfaces gated step alert
+  const phone = await $.ui.mount({
+    ...PANE,
+    surface: 'terminal',
+    props: { ...PANE.props, bodyColumns: 44, placement: 'inline', isFocused: false },
+    viewport: { columns: 48, rows: 32, isFullscreen: false },
+  } as never)
+  expect(await phone.find(text(/Plan: v1-sweep/))).toBeTruthy()
+  expect(await phone.find(text(/◇ s2/))).toBeTruthy()
+  expect(((await phone.findAll({ type: 'Text' } as never)) as unknown[]).length).toBeLessThan(12)
+  await phone.unmount()
+
+  // Herdr snapshot carries planName and step link/gate notes
+  const snap = buildSnapshot({
+    router: VERSION,
+    chat: 'c1',
+    cwd: '/work/v1',
+    at: new Date('2026-11-28T10:00:00Z'),
+    status: 'approved',
+    health: { ok: true, text: 'Router on' },
+    planName: 'v1-sweep',
+    list: [
+      { ...newStep('s1', 'Run sweep', 'standard', 'helper'), links: { helper: 't21', jobs: ['482910'] } },
+      { ...newStep('s2', 'Merge PR', 'deep', 'here'), dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+    set: DEFAULT_SETTINGS,
+    main: { cost: 0 },
+    planBaseCost: 0,
+    totals: { mainCost: 0, agentCost: 0, mainEquivalent: 0, steps: 0, helper: EMPTY_HELPER },
+  })
+  expect(snap.planName).toBe('v1-sweep')
+  expect(snap.steps[0]!.notes.join(' ')).toContain('t21')
+  expect(snap.steps[1]!.notes.join(' ')).toContain('gate')
+})
+
+test('O13 gates: tool gateApproved requires approvedBy quote, shows it in details and queues a note', async ($, on) => {
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { output: 'ran' } }))
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [{ id: 's1', title: 'Deploy', tier: 'standard', where: 'agent', gate: 'OK to deploy?' }],
+  } as never)
+
+  // Setting gateApproved without approvedBy is refused and gate stays unapproved
+  const refused = (await $.tool.call({
+    tool: PLAN,
+    update: [{ id: 's1', gateApproved: true }],
+  } as never)) as { result: string }
+  expect(refused.result).toMatch(/approvedBy/i)
+  const stillDenied = (await $.tool.call({ tool: 'Agent', description: '[s1] Deploy', prompt: 'go' } as never)) as { deny?: string }
+  expect(stillDenied.deny).toMatch(/gated/i)
+
+  // Setting gateApproved with approvedBy succeeds, queues note, and shows quote in step details
+  const ok = (await $.tool.call({
+    tool: PLAN,
+    update: [{ id: 's1', gateApproved: true, approvedBy: 'yes, go ahead and deploy' }],
+  } as never)) as { result: string }
+  expect(ok.result).toContain('Gate [s1] approved from chat: yes, go ahead and deploy')
+
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await desk.press({ key: 'open:s1' })
+  expect(await desk.find({ type: 'Text', text: /yes, go ahead and deploy/ } as never)).toBeTruthy()
+  await desk.unmount()
+
+  const allowed = (await $.tool.call({ tool: 'Agent', description: '[s1] Deploy', prompt: 'go' } as never)) as { deny?: string; result?: unknown }
+  expect(allowed.deny).toBeUndefined()
+  expect(allowed.result).toBeTruthy()
 })

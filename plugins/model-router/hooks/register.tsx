@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, Effort, EffortSwitch, HelperChoice, HelperPick, HelperState, HelperTotals, HelperUsage, HistoryEntry, Lifetime, ModelNews, ModelNote, ModelsReport, PlanNode, Proposal, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HelperChoice, HelperPick, HelperState, HelperTotals, HelperUsage, HistoryEntry, Lifetime, ModelNews, ModelNote, ModelsReport, PersistedPlan, PlanNode, PlanSummary, Proposal, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
 import {
   EMPTY_HELPER,
   EMPTY_USAGE,
@@ -143,6 +143,7 @@ import {
 import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
 import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
+import { activeJobIds, asDeps, asGate, cleanLinks, effectiveJobCheck, extractHcLinks, formatJobSummary, gatePrompt, isBlocked, isGated, mergeLinks, mergePersistedSteps, normPlanName, parseJobOutput, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
@@ -207,6 +208,14 @@ const updates = atom({ plugin: 'model-router', key: 'updates' } as const, { dev:
 const updateNote = atom({ plugin: 'model-router', key: 'updateNote' } as const, '')
 // True until the remembered state says otherwise, so the welcome never flashes for someone who has used the router.
 const welcomeSeen = atom({ plugin: 'model-router', key: 'welcomeSeen' } as const, true)
+// Active named persistent plan ('' = ephemeral) and per-project plan switcher state (O13).
+const planName = atom({ plugin: 'model-router', key: 'planName' } as const, '')
+const planRevision = atom({ plugin: 'model-router', key: 'planRevision' } as const, 0)
+const openPlans = atom({ plugin: 'model-router', key: 'openPlans' } as const, [])
+const showPlans = atom({ plugin: 'model-router', key: 'showPlans' } as const, false)
+const jobHealth = atom({ plugin: 'model-router', key: 'jobHealth' } as const, { jobs: {} })
+const projectInfo = { key: '', root: '' }
+let jobCheckBusy = false
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews', welcome: 'welcomeSeen', update: 'update' }
 const EFFORT_LOG_CAP = 200
@@ -348,6 +357,7 @@ async function publishState($: EngineInterface) {
       cwd: state.cwd,
       at: new Date(),
       status: await read($, planStatus),
+      planName: (await read($, planName)) || undefined,
       health: { ok: health.ok, text: health.text },
       list: await read($, steps),
       set,
@@ -773,7 +783,7 @@ async function summary($: EngineInterface) {
   const running = work.find(s => s.status === 'running')
   const cost = list.reduce((n, s) => n + s.cost, 0)
   const saved = list.reduce((n, s) => n + Math.max(0, s.mainCost - s.cost), 0)
-  const dots = work.map(s => STATUS_GLYPH[s.status]).join('')
+  const dots = work.map(s => (isGated(s) ? '◇' : isBlocked(list, s) ? '◌' : STATUS_GLYPH[s.status])).join('')
   const head = status === 'pending' ? 'plan awaiting approval' : `${done}/${work.length} done`
   const now = running ? ` · ${running.id} on ${rungLabel(runsOn(running, set, await learnedOf($)))}` : ''
   const money = cost > 0 ? ` · plan agents ≈${fmtUsd(cost)}${saved > 0 ? `, saved ≈${fmtUsd(saved)}` : ''}` : ''
@@ -802,7 +812,232 @@ async function clearPlan($: EngineInterface) {
   await update($, paneView, v => ({ ...v, toggled: {} }))
   await update($, draft, () => ({}))
   await update($, planStatus, () => 'none')
+  await update($, planName, () => '')
+  await update($, planRevision, () => 0)
   await refreshStatus($)
+}
+
+// --- Persistent named plans per project (O13) -------------------------------------
+
+async function resolveProject($: EngineInterface, cwd?: string) {
+  const dir = (cwd ?? state.cwd ?? '').replace(/[\\/]+$/, '')
+  let root = dir
+  if (dir) {
+    try {
+      const r = await $.process.run(['git', '-C', dir, 'rev-parse', '--git-common-dir'], { timeoutMs: 3000 })
+      const out = r.exitCode === 0 ? r.stdout.trim() : ''
+      if (out && out !== '.git') {
+        const abs = out.startsWith('/') ? out : `${dir}/${out}`
+        root = abs.replace(/[\\/]+\.git$/, '')
+      }
+    } catch {
+      // Fall back to cwd when git is unavailable or cwd is not a git repo.
+    }
+  }
+  projectInfo.root = root
+  projectInfo.key = projectKeyOf(root || 'default')
+}
+
+async function plansDir($: EngineInterface) {
+  try {
+    const base = await configBase($)
+    if (!base) return undefined
+    if (!projectInfo.key) await resolveProject($)
+
+    return `${base}/model-router/plans/${projectInfo.key}`
+  } catch {
+    return undefined
+  }
+}
+
+async function listProjectPlans($: EngineInterface): Promise<PersistedPlan[]> {
+  const dir = await plansDir($)
+  if (!dir) return []
+  let names: string[] = []
+  try {
+    names = (await $.fs.list(dir)).filter(x => x.kind === 'file' && x.name.endsWith('.json')).map(x => x.name)
+  } catch {
+    return []
+  }
+  const found: PersistedPlan[] = []
+  for (const file of names) {
+    const raw = await readText($, `${dir}/${file}`)
+    const parsed = raw ? parsePersistedPlan(raw) : undefined
+    if (parsed) found.push(parsed)
+  }
+
+  return found.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+}
+
+async function refreshOpenPlans($: EngineInterface) {
+  const all = await listProjectPlans($)
+  const open = all.filter(p => p.status === 'open').map(planSummaryOf)
+  await update($, openPlans, () => open)
+
+  return all
+}
+
+async function saveActivePlan($: EngineInterface, overrideStatus?: 'open' | 'closed') {
+  const name = await read($, planName)
+  if (!name) return
+  const dir = await plansDir($)
+  if (!dir) return
+  const path = `${dir}/${name}.json`
+  await locked(`plan:${name}`, async () => {
+    const raw = await readText($, path)
+    const disk = raw ? parsePersistedPlan(raw) : undefined
+    const localRev = await read($, planRevision)
+    let current = await read($, steps)
+    if (disk && disk.revision > localRev && overrideStatus !== 'closed') {
+      current = settleGroups(mergePersistedSteps(disk.steps, current))
+      await update($, steps, () => current)
+    }
+    const now = new Date().toISOString()
+    const nextRev = Math.max(disk?.revision ?? 0, localRev) + 1
+    const doc: PersistedPlan = {
+      version: 1,
+      name,
+      project: projectInfo.root || disk?.project || '',
+      status: overrideStatus ?? (disk?.status === 'closed' ? 'open' : 'open'),
+      createdAt: disk?.createdAt ?? now,
+      updatedAt: now,
+      revision: nextRev,
+      planStatus: await read($, planStatus),
+      steps: current,
+    }
+    await $.fs.write(path, `${JSON.stringify(doc, null, 2)}\n`)
+    await update($, planRevision, () => nextRev)
+  })
+  await refreshOpenPlans($)
+}
+
+async function syncActivePlan($: EngineInterface) {
+  const name = await read($, planName)
+  if (!name) return
+  const dir = await plansDir($)
+  if (!dir) return
+  const raw = await readText($, `${dir}/${name}.json`)
+  const disk = raw ? parsePersistedPlan(raw) : undefined
+  if (!disk) return
+  const localRev = await read($, planRevision)
+  if (disk.revision <= localRev) return
+  await update($, steps, () => settleGroups(disk.steps))
+  await update($, planStatus, () => disk.planStatus)
+  await update($, planRevision, () => disk.revision)
+  await refreshStatus($)
+}
+
+async function openNamedPlan($: EngineInterface, rawName: string): Promise<{ ok: boolean; text: string }> {
+  const name = normPlanName(rawName)
+  if (!name) return { ok: false, text: `Invalid plan name "${rawName}". Use lowercase letters, digits, dots, underscores or hyphens.` }
+  const dir = await plansDir($)
+  if (!dir) return { ok: false, text: 'Cannot resolve plans directory (HOME not set).' }
+  const raw = await readText($, `${dir}/${name}.json`)
+  const disk = raw ? parsePersistedPlan(raw) : undefined
+  if (!disk) return { ok: false, text: `No saved plan named "${name}" in this project.` }
+  await update($, steps, () => settleGroups(disk.steps))
+  await update($, planName, () => disk.name)
+  await update($, planRevision, () => disk.revision)
+  await update($, planStatus, () => 'approved')
+  await update($, draft, () => ({}))
+  await update($, showPlans, () => false)
+  if (disk.status === 'closed') await saveActivePlan($, 'open')
+  else await refreshOpenPlans($)
+  await refreshStatus($)
+  const s = planSummaryOf(disk)
+
+  return { ok: true, text: `Opened plan "${disk.name}" (${s.done}/${s.total} done).` }
+}
+
+async function closeNamedPlan($: EngineInterface, rawName?: string): Promise<{ ok: boolean; text: string }> {
+  const active = await read($, planName)
+  const target = rawName ? normPlanName(rawName) : active
+  if (!target) return { ok: false, text: 'No active named plan to close.' }
+  const dir = await plansDir($)
+  if (!dir) return { ok: false, text: 'Cannot resolve plans directory (HOME not set).' }
+  const path = `${dir}/${target}.json`
+  if (target === active) {
+    await saveActivePlan($, 'closed')
+    await clearPlan($)
+  } else {
+    const raw = await readText($, path)
+    const disk = raw ? parsePersistedPlan(raw) : undefined
+    if (!disk) return { ok: false, text: `No saved plan named "${target}" in this project.` }
+    const doc: PersistedPlan = { ...disk, status: 'closed', updatedAt: new Date().toISOString(), revision: disk.revision + 1 }
+    await $.fs.write(path, `${JSON.stringify(doc, null, 2)}\n`)
+    await refreshOpenPlans($)
+  }
+
+  return { ok: true, text: `Closed plan "${target}".` }
+}
+
+async function discoverProjectPlans($: EngineInterface) {
+  try {
+    const all = await refreshOpenPlans($)
+    const open = all.filter(p => p.status === 'open')
+    if (open.length === 0 || (await read($, steps)).length > 0) return
+    if (open.length === 1) {
+      const p = open[0]!
+      const s = planSummaryOf(p)
+      await update($, steps, () => settleGroups(p.steps))
+      await update($, planName, () => p.name)
+      await update($, planRevision, () => p.revision)
+      await update($, planStatus, () => 'approved')
+      await update($, notes, n => [...n, `Loaded open plan "${p.name}" (${s.done}/${s.total} done).`])
+      return
+    }
+    const summary = open.map(p => {
+      const s = planSummaryOf(p)
+      return `${s.name} (${s.done}/${s.total})`
+    })
+    await update($, notes, n => [...n, `Open plans in this project: ${summary.join(', ')}. Call ${PLAN_TOOL} with plan: {action: "open", name} to resume one.`])
+  } catch {
+    // Never abort session.start if fs or env is unavailable.
+  }
+}
+
+/** Runs the configured cluster job health check (batched across active job ids). */
+async function runJobCheck($: EngineInterface, force = false): Promise<{ ran: boolean; text: string }> {
+  const set = await read($, settings)
+  const cfg = effectiveJobCheck(set, projectInfo.key)
+  if (!cfg.command.trim()) return { ran: false, text: 'Job health check is not configured.' }
+  const ids = activeJobIds(await read($, steps))
+  if (ids.length === 0) return { ran: false, text: 'No active cluster jobs in the plan.' }
+  const prev = await read($, jobHealth)
+  if (!force) {
+    if (cfg.intervalSec <= 0) return { ran: false, text: '' }
+    const last = prev.checkedAt ? Date.parse(prev.checkedAt) : 0
+    if (last && Date.now() - last < cfg.intervalSec * 1000) return { ran: false, text: '' }
+  }
+  if (jobCheckBusy) return { ran: false, text: 'Job health check already running.' }
+  jobCheckBusy = true
+  try {
+    const joined = ids.join(',')
+    const cmd = cfg.command.includes('{ids}') ? cfg.command.replace(/\{ids\}/g, joined) : `${cfg.command} ${joined}`
+    const r = await $.process.run(['sh', '-c', cmd], { timeoutMs: cfg.timeoutMs })
+    const checkedAt = new Date().toISOString()
+    if (r.exitCode !== 0) {
+      const err = firstLine(r.stderr || r.stdout || `exit ${r.exitCode}`)
+      const next = { ...prev, checkedAt, stale: true, error: err }
+      await update($, jobHealth, () => next)
+      await logEvent($, 'job-check-error', { ids: ids.length, error: err })
+      return { ran: true, text: formatJobSummary(next, ids) }
+    }
+    const parsed = parseJobOutput(r.stdout, ids)
+    const next = { checkedAt, stale: false, error: undefined, jobs: { ...prev.jobs, ...parsed } }
+    await update($, jobHealth, () => next)
+    await logEvent($, 'job-check', { ids: ids.length })
+    return { ran: true, text: formatJobSummary(next, ids) }
+  } catch (err) {
+    const checkedAt = new Date().toISOString()
+    const msg = firstLine(String(err))
+    const next = { ...prev, checkedAt, stale: true, error: msg }
+    await update($, jobHealth, () => next)
+    await logEvent($, 'job-check-error', { ids: ids.length, error: msg })
+    return { ran: true, text: formatJobSummary(next, ids) }
+  } finally {
+    jobCheckBusy = false
+  }
 }
 
 /**
@@ -893,6 +1128,7 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
   const before = await read($, steps)
   const targets = expandIds(before, named.map(n => n.id))
   const usage = new Map(named.flatMap(n => (typeof n.ref === 'object' && asHelperUsage(n.ref.usage) ? [[n.id, asHelperUsage(n.ref.usage)!] as const] : [])))
+  const doneLinks = new Map(named.flatMap(n => (typeof n.ref === 'object' && n.ref.links ? [[n.id, n.ref.links] as const] : [])))
   const verdicts = new Map<string, { verdict: Verdict; why?: string }>()
   for (const n of named) {
     const v = typeof n.ref === 'object' ? asVerdict(n.ref.verdict) : undefined
@@ -909,6 +1145,7 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
       const next: Step = { ...s, status: 'done' }
       if (first && isHelperRun(s)) next.endedAt = now
       if (reported && !s.helperUsage) next.helperUsage = reported
+      if (doneLinks.has(s.id)) next.links = mergeLinks(s.links, doneLinks.get(s.id))
       const judged = isDelegated(s) ? verdicts.get(s.id) : undefined
       if (judged) {
         next.verdict = judged.verdict
@@ -1032,10 +1269,26 @@ async function markStarted($: EngineInterface, all: { id: string; ref: StartRef 
   for (const f of fallbacks) await recordFallback($, f.id, f.reason)
   const named = all.filter(n => !fallbacks.some(f => f.id === n.id))
   if (named.length === 0) return
-  const targets = expandIds(await read($, steps), named.map(n => n.id))
+  const before = await read($, steps)
+  const targets = expandIds(before, named.map(n => n.id))
+  const gatedIds = new Set<string>()
+  const gateNotes: string[] = []
+  const depNotes: string[] = []
+  for (const s of before) {
+    if (s.group || !targets.has(s.id) || s.status === 'done') continue
+    if (s.gate && !s.gateApproved) {
+      gatedIds.add(s.id)
+      gateNotes.push(`Step [${s.id}] is gated (${gatePrompt(s.gate)}): ask the person or have them click Approve in the pane before starting.`)
+    } else {
+      const unmet = unmetDeps(before, s)
+      if (unmet.length) depNotes.push(`Note: step [${s.id}] started while waiting on ${unmet.join(', ')}.`)
+    }
+  }
+  if (gateNotes.length || depNotes.length) await update($, notes, n => [...n, ...gateNotes, ...depNotes])
   const launched = new Map(
     named.flatMap(n => (typeof n.ref === 'object' && (n.ref.helper || n.ref.model || n.ref.effort) ? [[n.id, n.ref] as const] : [])),
   )
+  const startLinks = new Map(named.flatMap(n => (typeof n.ref === 'object' && n.ref.links ? [[n.id, n.ref.links] as const] : [])))
   // The thinking level shown beside the model: what the lead reported, else what the helper's template sets.
   const efforts = new Map<string, string | undefined>()
   for (const [id, ref] of launched) {
@@ -1048,13 +1301,16 @@ async function markStarted($: EngineInterface, all: { id: string; ref: StartRef 
   await setSteps($, list =>
     list.map(s => {
       if (s.group) return s
-      if (!targets.has(s.id) || s.status === 'done') return s.where === 'here' && s.status === 'running' ? { ...s, status: 'planned' } : s
+      if (!targets.has(s.id) || s.status === 'done' || gatedIds.has(s.id)) {
+        return s.where === 'here' && s.status === 'running' && [...targets].some(id => !gatedIds.has(id) && list.find(x => x.id === id)?.where === 'here') ? { ...s, status: 'planned' } : s
+      }
       const on = launched.get(s.id)
       const next: Step = { ...s, status: 'running' }
       if (on?.helper) next.helper = on.helper.trim()
       if (on?.model) next.helperModel = on.model.trim()
       if (efforts.has(s.id)) next.helperEffort = efforts.get(s.id)
       if (on || s.where === 'helper') next.startedAt = s.startedAt ?? now
+      if (startLinks.has(s.id)) next.links = mergeLinks(s.links, startLinks.get(s.id))
 
       return next
     }),
@@ -1062,8 +1318,68 @@ async function markStarted($: EngineInterface, all: { id: string; ref: StartRef 
   const mode = helperMode()
   for (const s of await read($, steps)) {
     const on = launched.get(s.id)
-    if (on?.helper && targets.has(s.id)) await logEvent($, 'helper-start', { id: s.id, template: s.helper, model: s.helperModel, effort: s.helperEffort, mode })
+    if (on?.helper && targets.has(s.id) && !gatedIds.has(s.id)) await logEvent($, 'helper-start', { id: s.id, template: s.helper, model: s.helperModel, effort: s.helperEffort, mode })
   }
+}
+
+/** Patches existing steps in place (links, dependsOn, gate, gateApproved, title) without re-posting the plan. */
+async function applyUpdates($: EngineInterface, items: UpdateRef[]) {
+  const byId = new Map(items.filter(x => x && typeof x.id === 'string' && x.id).map(x => [x.id!, x]))
+  if (byId.size === 0) return
+  let warnings: string[] = []
+  const extraNotes: string[] = []
+  const approvedLog: string[] = []
+  await setSteps($, list => {
+    const patched = list.map(s => {
+      const u = byId.get(s.id)
+      if (!u) return s
+      const next: Step = { ...s }
+      if (typeof u.title === 'string' && u.title.trim()) next.title = u.title.trim()
+      if (u.links !== undefined) next.links = mergeLinks(s.links, u.links)
+      if (u.dependsOn !== undefined) next.dependsOn = asDeps(u.dependsOn)
+      if (u.gate !== undefined) {
+        next.gate = asGate(u.gate)
+        if (!next.gate) {
+          next.gateApproved = undefined
+          next.gateApprovedBy = undefined
+        }
+      }
+      if (u.gateApproved === true) {
+        const quote = typeof u.approvedBy === 'string' ? u.approvedBy.trim().slice(0, 120) : ''
+        if (!quote) {
+          extraNotes.push(
+            `Refused gateApproved for [${s.id}]: gates are the person's — pass approvedBy with a short quote of their approval in this chat, or have them click Approve in the pane.`,
+          )
+        } else {
+          next.gateApproved = true
+          next.gateApprovedBy = quote
+          extraNotes.push(`Gate [${s.id}] approved from chat: ${quote}`)
+          approvedLog.push(s.id)
+        }
+      } else if (u.gateApproved === false) {
+        next.gateApproved = undefined
+        next.gateApprovedBy = undefined
+      }
+
+      return next
+    })
+    const checked = validateDeps(patched)
+    warnings = checked.warnings
+
+    return checked.steps
+  })
+  if (warnings.length || extraNotes.length) await update($, notes, n => [...n, ...warnings, ...extraNotes])
+  for (const id of approvedLog) await logEvent($, 'gate-approved', { id, via: 'chat' })
+}
+
+/** Approves a gated step from the pane and queues a note so the lead knows it may proceed. */
+async function approveGate($: EngineInterface, id: string) {
+  const step = (await read($, steps)).find(s => s.id === id)
+  if (!step || !step.gate || step.gateApproved) return
+  await editStep($, id, s => ({ ...s, gateApproved: true }))
+  await saveActivePlan($)
+  await update($, notes, n => [...n, `Gate approved for step [${id}] ("${step.title}"): you may proceed.`])
+  await logEvent($, 'gate-approved', { id, via: 'pane' })
 }
 
 /** The pane's "cut short?": marks a finished delegated run cut short (it then says nothing about the model), or puts back the verdict it had. */
@@ -1649,6 +1965,18 @@ async function registerPlanTool($: EngineInterface) {
   const wheres = helpersOn ? ['agent', 'here', 'helper'] : ['agent', 'here']
   const hereOn = set.hereEffort.enabled
   const id = { type: 'string', description: 'Step id' }
+  const linksSchema = {
+    type: 'object',
+    description: 'Artifact links for a step: branch, worktree, helper terminal (e.g. t21), cluster job ids, report path, RESULTS/D/PR refs',
+    properties: {
+      branch: { type: 'string' },
+      worktree: { type: 'string' },
+      helper: { type: 'string' },
+      jobs: { type: 'array', items: { type: 'string' } },
+      report: { type: 'string' },
+      refs: { type: 'array', items: { type: 'string' } },
+    },
+  }
   // Offered only while here-step effort or helpers are on, so with both off the schema is as before.
   const start =
     hereOn || helpersOn
@@ -1667,6 +1995,7 @@ async function registerPlanTool($: EngineInterface) {
                         model: { type: 'string', description: 'The model the helper reports on its screen' },
                         effort: { type: 'string', description: 'The thinking level the helper reports on its screen, if it shows one (e.g. high)' },
                         fallback: { type: 'string', description: 'Instead of helper: the helper step runs as a subagent, for this short reason (e.g. "no Herdr terminal", "picker found nothing", "out of quota")' },
+                        links: linksSchema,
                       },
                       required: ['id'],
                     },
@@ -1693,6 +2022,7 @@ async function registerPlanTool($: EngineInterface) {
               description: 'For a delegated step: ok = result used as returned or with small edits; weak = it needed a rerun, you redid part of it, or review found a substantive error; overkill = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier; cut-short = the run was stopped by something outside the model (lost connection, quota or rate limit, a crash, the person stopping it): it says nothing about the model',
             },
             why: { type: 'string', description: 'A few words on the verdict' },
+            links: linksSchema,
             ...(helpersOn
               ? {
                   usage: {
@@ -1710,6 +2040,29 @@ async function registerPlanTool($: EngineInterface) {
     },
     description: 'Step ids now done, with your verdict on each delegated step; a group id marks its unfinished parts done too',
   }
+  const updateSchema = {
+    type: 'array',
+    description: 'Patch existing steps (links, dependsOn, gate, gateApproved, title) without re-posting the plan',
+    items: {
+      type: 'object',
+      properties: {
+        id,
+        title: { type: 'string' },
+        links: linksSchema,
+        dependsOn: { type: 'array', items: { type: 'string' } },
+        gate: { anyOf: [{ type: 'boolean' }, { type: 'string' }] },
+        gateApproved: {
+          type: 'boolean',
+          description: 'Set to true ONLY when the person explicitly approved the gate in this chat; requires approvedBy quoting their words (refused without it)',
+        },
+        approvedBy: {
+          type: 'string',
+          description: 'Short quote of the person\'s approval in this chat (required when setting gateApproved: true)',
+        },
+      },
+      required: ['id'],
+    },
+  }
   await $.tool.register({
     name: 'plan',
     description:
@@ -1717,9 +2070,21 @@ async function registerPlanTool($: EngineInterface) {
     inputSchema: {
       type: 'object',
       properties: {
+        name: { type: 'string', description: 'Optional persistent plan name (slug, e.g. v1-sweep) to save across sessions for this project' },
+        plan: {
+          type: 'object',
+          description: 'Manage persistent named plans for this project: list, open, close, or save the current unnamed plan',
+          properties: {
+            action: { type: 'string', enum: ['list', 'open', 'close', 'save'] },
+            name: { type: 'string', description: 'Plan name (required for open and save; optional for close)' },
+          },
+          required: ['action'],
+        },
+        checkJobs: { type: 'boolean', description: 'Run the configured cluster job health check now for all active job ids in the plan' },
         steps: { type: 'array', items: stepSchema(wheres, PARTS_DEPTH) },
         done,
         ...start,
+        update: updateSchema,
         status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
         models: {
           type: 'object',
@@ -1792,6 +2157,20 @@ function stepSchema(wheres: string[], levels: number): Record<string, unknown> {
       where: { type: 'string', enum: wheres },
       kind: { type: 'string', description: 'Short label for the kind of work (e.g. code-review, summarize, search, write-code, figure); reuse a kind the rules list' },
       count: { type: 'integer', minimum: 2, description: 'N identical agents with this id, run in parallel (a step without parts)' },
+      dependsOn: { type: 'array', items: { type: 'string' }, description: 'Step or group ids this step waits on' },
+      gate: { anyOf: [{ type: 'boolean' }, { type: 'string' }], description: 'Human approval gate (true or short prompt); blocks start/delegation until approved' },
+      links: {
+        type: 'object',
+        description: 'Artifact links: branch, worktree, helper terminal, cluster jobs, report path, RESULTS/D/PR refs',
+        properties: {
+          branch: { type: 'string' },
+          worktree: { type: 'string' },
+          helper: { type: 'string' },
+          jobs: { type: 'array', items: { type: 'string' } },
+          report: { type: 'string' },
+          refs: { type: 'array', items: { type: 'string' } },
+        },
+      },
       ...(levels > 0
         ? {
             parts: {
@@ -2012,14 +2391,20 @@ const usageOf = (u: ModelUsage): Usage => ({
   output: u.output_tokens,
 })
 
-type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string; fallback?: string }
-type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown }
+type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string; fallback?: string; links?: unknown }
+type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown; links?: unknown }
+type UpdateRef = { id?: string; title?: string; links?: unknown; dependsOn?: unknown; gate?: unknown; gateApproved?: boolean; approvedBy?: unknown }
+type PlanAction = { action: 'list' | 'open' | 'close' | 'save'; name?: string }
 type PlanInput = {
   status?: boolean
   models?: unknown
+  name?: string
+  plan?: PlanAction
+  checkJobs?: boolean
   steps?: PlanNode[]
   done?: DoneRef[]
   start?: StartRef[]
+  update?: UpdateRef[]
 }
 
 const idOfRef = (r: StartRef | DoneRef) => (typeof r === 'string' ? r : r?.id)
@@ -2169,6 +2554,12 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   const up = await read($, updates)
   const updateText = await read($, updateNote)
   const welcomed = await read($, welcomeSeen)
+  const activePlanName = await read($, planName)
+  const savedPlans = await read($, openPlans)
+  const plansOpen = await read($, showPlans)
+  const jobsState = await read($, jobHealth)
+  const jobIds = activeJobIds(list)
+  const jobCheckCfg = effectiveJobCheck(set, projectInfo.key)
 
   // Groups are the sum of their parts: counted once, through the parts.
   const work = leavesOf(list)
@@ -2721,18 +3112,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
   )
   // Line 1 of a row: the opener, status, id and the title, which alone wraps (the id never breaks: "s14." over "a").
   // Tags (kind, count, a group's progress) go on line 2, so a narrow pane gives the title its whole width.
-  const rowHead = (s: Step) => (
-    <Box flexDirection="row" columnGap="sm" alignItems="flex-start">
-      {opener(s)}
-      <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
-      <Box flexShrink={0}>
-        <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+  const rowHead = (s: Step) => {
+    const gated = isGated(s)
+    const blocked = !gated && isBlocked(list, s)
+    const glyph = gated ? '◇' : blocked ? '◌' : STATUS_GLYPH[s.status]
+    const glyphColor = gated ? 'warning' : blocked ? undefined : STATUS_COLOR[s.status]
+
+    return (
+      <Box flexDirection="row" columnGap="sm" alignItems="flex-start">
+        {opener(s)}
+        <Text color={glyphColor} dimColor={blocked}>{glyph}</Text>
+        <Box flexShrink={0}>
+          <Text color={TIER_COLOR[s.tier]} mono size="footnote">{s.id}</Text>
+        </Box>
+        <Box flexShrink={1}>
+          <Text weight={s.group ? 'semibold' : 'medium'} wrap="wrap" dimColor={s.status === 'done' || blocked}>{s.title}</Text>
+        </Box>
       </Box>
-      <Box flexShrink={1}>
-        <Text weight={s.group ? 'semibold' : 'medium'} wrap="wrap" dimColor={s.status === 'done'}>{s.title}</Text>
-      </Box>
-    </Box>
-  )
+    )
+  }
   // A finished step's line 2 says where it ran, in quiet text: its pickers would change nothing now.
   const ranOn = (s: Step) => {
     const now = runsOn(s, set, learned)
@@ -2799,6 +3197,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {needs && <Text color="warning" size="footnote">{`⚠ rated for ${needs}`}</Text>}
           {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
           {changeNoted(s) && <Text key={`noted:${s.id}`} color="suggestion" size="footnote">change noted, applies from the next turn</Text>}
+          {isBlocked(list, s) && <Text key={`waits:${s.id}`} dimColor size="footnote">{`· waits: ${unmetDeps(list, s).join(', ')}`}</Text>}
+          {isGated(s) && <Text key={`gate:${s.id}`} color="warning" size="footnote">{`· gate: ${gatePrompt(s.gate)}`}</Text>}
+          {isGated(s) && (
+            <Button key={`gate-approve:${s.id}`} variant="primary" onPress={() => void approveGate($, s.id)}>
+              Approve
+            </Button>
+          )}
+          {s.links?.helper && <Text key={`lhelp:${s.id}`} dimColor size="footnote">{`· ${s.links.helper}`}</Text>}
+          {s.links?.jobs?.[0] && (() => {
+            const jid = s.links!.jobs![0]!
+            const jst = jobsState.jobs[jid]
+            const extra = s.links!.jobs!.length > 1 ? ` +${s.links!.jobs!.length - 1}` : ''
+            return (
+              <Text key={`ljob:${s.id}`} color={jst?.bad ? 'error' : jst?.badge === 'R' ? 'success' : undefined} dimColor={!jst || (!jst.bad && jst.badge !== 'R')} size="footnote">
+                {`· job ${jid}${jst ? ` ${jst.badge}` : ''}${extra}`}
+              </Text>
+            )
+          })()}
+          {s.links?.refs?.[0] && <Text key={`lref:${s.id}`} dimColor size="footnote">{`· ${s.links.refs[0]}`}</Text>}
           {up && (
             <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
               {`↑ Rerun on ${rungLabel(up)}`}
@@ -2845,6 +3262,34 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             {verdictText(s)}
             {s.fallback ? <Text key={`fallback:${s.id}`} dimColor size="footnote" wrap="wrap">{`ran as a Claude agent: ${s.fallback}`}</Text> : null}
             {s.setupHeavy && <Text color="warning" size="footnote" wrap="wrap">Mostly start-up cost: a step this small is cheaper done here.</Text>}
+            {s.dependsOn?.length ? (
+              <Text key={`deps-detail:${s.id}`} dimColor size="footnote" wrap="wrap">
+                {`Depends on: ${s.dependsOn.map(id => `${id} (${STATUS_GLYPH[list.find(x => x.id === id)?.status ?? 'planned']})`).join(', ')}`}
+              </Text>
+            ) : null}
+            {s.gate ? (
+              <Text key={`gate-detail:${s.id}`} color={s.gateApproved ? undefined : 'warning'} dimColor={!!s.gateApproved} size="footnote" wrap="wrap">
+                {`Gate: ${gatePrompt(s.gate)} (${s.gateApproved ? (s.gateApprovedBy ? `approved from chat: "${s.gateApprovedBy}"` : 'approved') : 'waiting'})`}
+              </Text>
+            ) : null}
+            {(s.links?.branch || s.links?.worktree) && (
+              <Text key={`lbr:${s.id}`} dimColor size="footnote" wrap="wrap">
+                {[s.links.branch ? `Branch: ${s.links.branch}` : '', s.links.worktree ? `Worktree: ${s.links.worktree}` : ''].filter(Boolean).join(' · ')}
+              </Text>
+            )}
+            {s.links?.helper && <Text key={`lhdet:${s.id}`} dimColor size="footnote" wrap="wrap">{`Helper: ${s.links.helper}`}</Text>}
+            {s.links?.jobs?.length ? (
+              <Text key={`ljdet:${s.id}`} dimColor size="footnote" wrap="wrap">
+                {`Jobs: ${s.links.jobs
+                  .map(id => {
+                    const st = jobsState.jobs[id]
+                    return st ? `${id} ${st.state}${st.elapsed ? ` ${st.elapsed}` : ''}${st.reason ? ` (${st.reason})` : ''}` : id
+                  })
+                  .join(' · ')}${jobsState.stale ? ' (stale)' : ''}`}
+              </Text>
+            ) : null}
+            {s.links?.report && <Text key={`lrep:${s.id}`} dimColor size="footnote" wrap="wrap">{`Report: ${s.links.report}`}</Text>}
+            {s.links?.refs?.length ? <Text key={`lrefs:${s.id}`} dimColor size="footnote" wrap="wrap">{`Refs: ${s.links.refs.join(', ')}`}</Text> : null}
           </Box>
         )}
       </Box>
@@ -2916,10 +3361,20 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
         <Box flexDirection="column" rowGap="xs">
           <Box flexDirection="row" flexWrap="wrap" justifyContent="space-between" alignItems="center" columnGap="sm">
             <Text key="plan-head" weight="semibold" wrap="wrap">
-              {`Plan · ${done} of ${work.length} done`}
+              {`${activePlanName ? `Plan: ${activePlanName}` : 'Plan'} · ${done} of ${work.length} done`}
               {status === 'pending' ? <Text color="warning">{' · awaiting your approval'}</Text> : null}
             </Text>
             <Box flexDirection="row" columnGap="sm">
+              {jobIds.length > 0 && jobCheckCfg.command.trim() ? (
+                <Button key="check-jobs" plain onPress={() => void runJobCheck($, true)}>
+                  ↻ Jobs
+                </Button>
+              ) : null}
+              {savedPlans.length > 0 ? (
+                <Button key="plans-toggle" plain onPress={() => void update($, showPlans, v => !v)}>
+                  {plansOpen ? 'Plans ▴' : 'Plans ▾'}
+                </Button>
+              ) : null}
               <Button key="glossary" plain onPress={() => void update($, showGlossary, v => !v)}>
                 {glossaryOpen ? '? ▾' : '?'}
               </Button>
@@ -2944,6 +3399,30 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             </Text>
           )}
         </Box>
+      )}
+      {planHeadShown && plansOpen && savedPlans.length > 0 && (
+        <Box key="plans-drawer" flexDirection="column" paddingLeft={2}>
+          {savedPlans.map(p => (
+            <Box key={`plan-item:${p.name}`} flexDirection="row" columnGap="sm" alignItems="center">
+              <Text weight={p.name === activePlanName ? 'semibold' : undefined} size="footnote">
+                {`${p.name} · ${p.done}/${p.total}`}
+              </Text>
+              {p.name !== activePlanName && (
+                <Button key={`plan-open:${p.name}`} plain onPress={() => void openNamedPlan($, p.name)}>
+                  Open
+                </Button>
+              )}
+              <Button key={`plan-close:${p.name}`} plain dimColor onPress={() => void closeNamedPlan($, p.name)}>
+                Close
+              </Button>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {planHeadShown && jobsState.error && (
+        <Text key="job-check-err" color="warning" size="footnote" wrap="wrap">
+          {`✗ Job check failed: ${jobsState.error}`}
+        </Text>
       )}
       {planHeadShown && glossaryOpen && list.length > 0 && (
         <Box key="glossary-list" flexDirection="column" paddingLeft={2}>
@@ -4052,8 +4531,16 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
     ) : null
   if (shortInline && !site.isFocused && !isSettingsOpen && !allShown) {
     const atWork = work.filter(s => s.status === 'running')
-    const shown = (atWork.length > 0 ? atWork : work.filter(s => s.status === 'planned').slice(0, 1)).slice(0, 2)
-    const head = list.length === 0 ? 'Router on · no plan yet' : `Plan · ${done} of ${work.length} done`
+    const gatedStep = work.find(isGated)
+    const badJob = Object.values(jobsState.jobs).find(j => j.bad)
+    const alert = gatedStep ? `◇ ${gatedStep.id} gate: ${gatePrompt(gatedStep.gate)}` : badJob ? `✗ job ${badJob.id} ${badJob.badge}` : ''
+    const shown = (atWork.length > 0 ? atWork : work.filter(s => s.status === 'planned').slice(0, 1)).slice(0, alert ? 1 : 2)
+    const head =
+      list.length === 0
+        ? 'Router on · no plan yet'
+        : activePlanName
+          ? `Plan: ${activePlanName} · ${done}/${work.length}`
+          : `Plan · ${done} of ${work.length} done`
     return (
       <Box flexDirection="column">
         <Box key="glance-head" flexDirection="row" columnGap="sm">
@@ -4063,6 +4550,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           </Text>
         </Box>
         {!health.ok && <Text key="glance-health" color="warning" size="footnote" wrap="truncate">{health.text}</Text>}
+        {alert ? <Text key="glance-alert" color={badJob && !gatedStep ? 'error' : 'warning'} size="footnote" wrap="truncate">{alert}</Text> : null}
         {shown.map(s => (
           <Box key={`glance:${s.id}`} flexDirection="row" columnGap="sm">
             <Text color={STATUS_COLOR[s.status]}>{STATUS_GLYPH[s.status]}</Text>
@@ -4267,6 +4755,10 @@ export const register: Register = on => {
     await logEvent($, 'start', { version: VERSION, surface: surfaceNow, model: (await read($, main)).model })
     await pruneLogs($)
     await startState($, e as { cwd?: string; sessionId?: unknown })
+    projectInfo.key = ''
+    projectInfo.root = ''
+    await resolveProject($, (e as { cwd?: string }).cwd)
+    await discoverProjectPlans($)
     // The kinds the rules list are those of the history now, so the rules stay the same all chat.
     const kinds = kindsOf(await read($, history))
     await update($, ruleKinds, () => kinds)
@@ -4312,6 +4804,15 @@ export const register: Register = on => {
 
       return { text: path ? `Model router report written: ${path}. Send this file.` : `Model router report not written: ${await read($, reportNote)}` }
     }
+    if (arg === 'plans') {
+      const all = await listProjectPlans($)
+      if (all.length === 0) return { text: 'No saved plans in this project.' }
+      const lines = all.map(p => {
+        const s = planSummaryOf(p)
+        return `- ${s.name} [${s.status}] ${s.done}/${s.total} done (updated ${s.updatedAt.slice(0, 10)})`
+      })
+      return { text: `Saved plans in this project:\n${lines.join('\n')}` }
+    }
     await $.ui.open({ id: PANE, title: 'Model router' })
 
     return { text: 'Model router pane opened.' }
@@ -4334,8 +4835,10 @@ export const register: Register = on => {
     }
     const shown = async () => {
       await resolveHelperPicks($)
+      const pName = await read($, planName)
+      const body = planText(await read($, steps), await read($, settings), (await read($, main)).model, await learnedOf($))
 
-      return planText(await read($, steps), await read($, settings), (await read($, main)).model, await learnedOf($))
+      return pName ? `Plan "${pName}":\n${body}` : body
     }
 
     if (input.status) {
@@ -4362,12 +4865,48 @@ export const register: Register = on => {
     // Notes and proposals about models work on their own, or beside steps.
     if (input.models !== undefined) {
       modelsText = await acceptModels($, input.models)
-      if (!input.steps && !input.done && !input.start) return { result: modelsText }
+      if (!input.steps && !input.done && !input.start && !input.update && !input.plan && !input.checkJobs) return { result: modelsText }
     }
+    if (input.checkJobs) {
+      const checked = await runJobCheck($, true)
+      if (!input.steps && !input.done && !input.start && !input.update && !input.plan) return withNotes(checked.text)
+    }
+    if (input.plan && typeof input.plan === 'object') {
+      const act = input.plan.action
+      if (act === 'list') {
+        const all = await listProjectPlans($)
+        if (all.length === 0) return withNotes('No saved plans in this project.')
+        const lines = all.map(p => {
+          const s = planSummaryOf(p)
+          return `- ${s.name} (${s.status}): ${s.done}/${s.total} done, updated ${s.updatedAt}`
+        })
+        return withNotes(`Saved plans:\n${lines.join('\n')}`)
+      }
+      if (act === 'open') {
+        const res = await openNamedPlan($, input.plan.name ?? '')
+        return withNotes(res.ok ? `${res.text}\n${await shown()}` : res.text)
+      }
+      if (act === 'close') {
+        const res = await closeNamedPlan($, input.plan.name)
+        return withNotes(res.text)
+      }
+      if (act === 'save') {
+        const slug = normPlanName(input.plan.name)
+        if (!slug) return withNotes('Invalid plan name for save.')
+        if ((await read($, steps)).length === 0) return withNotes('No active plan steps to save.')
+        await update($, planName, () => slug)
+        await update($, planRevision, () => 0)
+        await saveActivePlan($, 'open')
+        return withNotes(`Saved plan as "${slug}".\n${await shown()}`)
+      }
+    }
+    const updates = Array.isArray(input.update) ? input.update : []
+    if (updates.length) await applyUpdates($, updates)
     const done = refs(input.done)
     if (done.length) await markDone($, done)
     const started = refs(input.start)
     if (started.length) await markStarted($, started)
+    if (updates.length || done.length || started.length) await saveActivePlan($)
     ask = await verdictsMissing($, done.map(d => d.id))
     await refreshStatus($)
     if (!input.steps) return withNotes(await shown())
@@ -4385,16 +4924,40 @@ export const register: Register = on => {
       // Ids repeat across plans: steps opened one by one in the last plan close again.
       await update($, paneView, v => ({ ...v, toggled: {} }))
     }
-    await setSteps($, () =>
-      flat.steps.map(s => {
+    let depWarnings: string[] = []
+    await setSteps($, () => {
+      const built = flat.steps.map(s => {
         const was = isNewPlan ? undefined : old.find(o => o.id === s.id)
         // With Helpers off, a helper step is a normal subagent step.
         const where: Where = s.where === 'helper' && !helpersLive(set) ? 'agent' : s.where
-        const shape = { parent: s.parent, group: s.group || undefined, count: s.count, kind: s.kind }
+        const shape = {
+          parent: s.parent,
+          group: s.group || undefined,
+          count: s.count,
+          kind: s.kind,
+          dependsOn: s.dependsOn,
+          gate: s.gate,
+          gateApproved: s.gate && was?.gate === s.gate ? was.gateApproved : undefined,
+          gateApprovedBy: s.gate && was?.gate === s.gate ? was.gateApprovedBy : undefined,
+          links: s.links ?? was?.links,
+        }
 
         return { ...(was ? { ...was, title: s.title, tier: s.tier, where } : newStep(s.id, s.title, s.tier, where)), ...shape }
-      }),
-    )
+      })
+      const checked = validateDeps(built)
+      depWarnings = checked.warnings
+
+      return checked.steps
+    })
+    if (depWarnings.length) await update($, notes, n => [...n, ...depWarnings])
+    const namedSlug = input.name !== undefined ? normPlanName(input.name) : undefined
+    if (namedSlug) {
+      if ((await read($, planName)) !== namedSlug) await update($, planRevision, () => 0)
+      await update($, planName, () => namedSlug)
+    } else if (isNewPlan && input.name === undefined) {
+      await update($, planName, () => '')
+      await update($, planRevision, () => 0)
+    }
     await logEvent($, 'plan', { new: isNewPlan, steps: flat.steps.map(x => ({ id: x.id, tier: x.tier, where: x.where, ...(x.kind ? { kind: x.kind } : {}), ...(x.group ? { group: true } : {}) })) })
     if (flat.dropped.length) {
       await update($, notes, n => [...n, `These step ids came up twice in the plan and the repeats were ignored: ${flat.dropped.join(', ')}. Every id must be unique.`])
@@ -4405,6 +4968,7 @@ export const register: Register = on => {
     if (await read($, autoApprove)) {
       if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
       await update($, planStatus, () => 'approved')
+      await saveActivePlan($, 'open')
       await refreshStatus($)
       return withNotes(`Plan auto-approved:\n${await shown()}`)
     }
@@ -4430,6 +4994,7 @@ export const register: Register = on => {
       if (answer === APPROVE_AUTO) await setAuto($, true)
       if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
       await update($, planStatus, () => 'approved')
+      await saveActivePlan($, 'open')
       await refreshStatus($)
       return withNotes(
         `Plan approved by the user (follow these tiers and places; they may differ from what you proposed. A "here" step's tier is a rating: do it in this chat as usual):\n${await shown()}`,
@@ -4486,11 +5051,19 @@ export const register: Register = on => {
     // other's tries one rung below. The lock alone is not enough: every read of one dispatch sees the moment it started, so
     // the try is decided inside the write itself, on the steps as they stand (update retries on a newer version).
     const routed = await locked('route', async () => {
-      let step = (await read($, steps)).find(s => s.id === tag)
+      const allSteps = await read($, steps)
+      let step = allSteps.find(s => s.id === tag)
       if (!step) return undefined
       if (step.group) {
-        const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
+        const parts = allSteps.filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
         return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
+      }
+      if (step.gate && !step.gateApproved) {
+        return { deny: `model-router: step [${step.id}] is gated (${gatePrompt(step.gate)}). Ask the person or have them click Approve in the pane before delegating.` }
+      }
+      const unmet = unmetDeps(allSteps, step)
+      if (unmet.length) {
+        await update($, notes, n => [...n, `Note: step [${step!.id}] delegated while waiting on ${unmet.join(', ')}.`])
       }
       // The router itself moved the step's rung (a try ended, or began): the agent's record of it follows, so no "the user changed" note.
       let moved = false
@@ -4691,6 +5264,19 @@ export const register: Register = on => {
     diag.turns += 1
     // Settings another session changed since this one last looked.
     await refreshShared($)
+    await syncActivePlan($)
+    // Passive link capture from Herdr <hc from="tXX"> helper messages (O13).
+    const turnText = (e as { text?: unknown }).text
+    if (typeof turnText === 'string' && turnText.includes('<hc ')) {
+      const hit = extractHcLinks(turnText, await read($, steps))
+      if (hit?.changed) {
+        await editStep($, hit.stepId, s => ({ ...s, links: hit.links }))
+        await saveActivePlan($)
+        await logEvent($, 'link-from-hc', { id: hit.stepId, from: hit.from })
+      }
+    }
+    // Optional periodic cluster job health check (fire-and-forget, never blocks the turn).
+    void runJobCheck($, false)
     const extra: string[] = []
     // Rules the chat no longer holds go out again. A compaction is told by session.compact, but on a Team or
     // Enterprise account Claude Code's sec-default sends that event past every person's mod: the row that

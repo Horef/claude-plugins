@@ -2,6 +2,24 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.35.1 (2026-11-28)
+- require approvedBy quote for chat gate approval; pty separator and status dot polish
+
+## 0.35.0 (2026-11-28)
+- plan pane links/gates/Plans drawer, 48-col glance, Herdr snapshot, docs (O13)
+
+## 0.34.0 (2026-11-28)
+- per-project cluster job health checks with squeue parsing (O13)
+
+## 0.33.0 (2026-11-28)
+- passive link capture from Herdr helper messages (O13)
+
+## 0.32.0 (2026-11-28)
+- persistent named plans per project with revision merge (O13)
+
+## 0.31.0 (2026-11-28)
+- step artifact links, dependsOn, and human approval gates (O13)
+
 ## 0.30.4 (2026-11-25)
 - After Show all on a short terminal the pane is paged: a fixed top row with Show less, ▲ Up, ▼ Down and n/m, then the pane from one block on (top, plan head, each step, cost, footer) (O12)
 
