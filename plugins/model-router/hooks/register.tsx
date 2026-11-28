@@ -143,7 +143,7 @@ import {
 import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
 import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
-import { asDeps, asGate, cleanLinks, gatePrompt, isGated, mergeLinks, mergePersistedSteps, normPlanName, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
+import { asDeps, asGate, cleanLinks, extractHcLinks, gatePrompt, isGated, mergeLinks, mergePersistedSteps, normPlanName, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
@@ -5085,6 +5085,16 @@ export const register: Register = on => {
     // Settings another session changed since this one last looked.
     await refreshShared($)
     await syncActivePlan($)
+    // Passive link capture from Herdr <hc from="tXX"> helper messages (O13).
+    const turnText = (e as { text?: unknown }).text
+    if (typeof turnText === 'string' && turnText.includes('<hc ')) {
+      const hit = extractHcLinks(turnText, await read($, steps))
+      if (hit?.changed) {
+        await editStep($, hit.stepId, s => ({ ...s, links: hit.links }))
+        await saveActivePlan($)
+        await logEvent($, 'link-from-hc', { id: hit.stepId, from: hit.from })
+      }
+    }
     const extra: string[] = []
     // Rules the chat no longer holds go out again. A compaction is told by session.compact, but on a Team or
     // Enterprise account Claude Code's sec-default sends that event past every person's mod: the row that

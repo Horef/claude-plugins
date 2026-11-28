@@ -5149,3 +5149,41 @@ test('O13 persistence: session start auto-loads a single open plan with a one-li
   expect(current.result).toContain('workstream-a')
   expect(current.result).toContain('Next step')
 })
+
+test('O13 <hc> link capture: extracts jobs, report, refs, branch from helper messages without overwriting lead scalars', async ($, on) => {
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Sweep', tier: 'standard', where: 'helper', links: { helper: 't21', branch: 'lead-branch' } },
+      { id: 's2', title: 'Review', tier: 'deep', where: 'helper' },
+    ],
+  } as never)
+
+  // Message from t21 matches s1 via links.helper; extracts job, report, refs, and does NOT overwrite lead-branch
+  await $.turn.start({
+    text: '<hc from="t21">Submitted batch job 482910 on cluster. branch: helper-branch. report: .scratch/REPORT.md. Added R14 and D22.</hc>',
+    turnId: 't-hc1',
+  })
+  // Message from t22 cites [s2] explicitly; binds helper t22 and extracts PR#115
+  await $.turn.start({
+    text: '<hc from="t22">Done with [s2]: opened PR#115 on branch: feat/review-fix</hc>',
+    turnId: 't-hc2',
+  })
+  // Unmatched sender with no step id touches nothing
+  await $.turn.start({
+    text: '<hc from="t99">Submitted batch job 999999</hc>',
+    turnId: 't-hc3',
+  })
+
+  const res = (await $.tool.call({ tool: PLAN } as never)) as { result: string }
+  expect(res.result).toContain('jobs 482910')
+  expect(res.result).toContain('report .scratch/REPORT.md')
+  expect(res.result).toContain('refs R14, D22')
+  expect(res.result).toContain('branch lead-branch') // preserved!
+  expect(res.result).not.toContain('helper-branch')
+  expect(res.result).toContain('helper t22')
+  expect(res.result).toContain('PR#115')
+  expect(res.result).toContain('branch feat/review-fix')
+  expect(res.result).not.toContain('999999')
+})

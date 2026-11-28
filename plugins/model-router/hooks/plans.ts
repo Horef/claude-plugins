@@ -303,3 +303,67 @@ export const mergePersistedSteps = (disk: readonly Step[], local: readonly Step[
 
   return merged
 }
+
+// --- Passive link capture from Herdr <hc from="tXX"> messages (O13) ---------------
+
+const HC_MSG = /<hc\s+from="([^"]+)">([\s\S]*?)<\/hc>/
+
+/**
+ * Best-effort extraction of artifact links from a helper's `<hc from="tXX">` message.
+ * Targets a unique step matching `links.helper === from` or an explicit `[stepId]` in the body.
+ * Never overwrites scalar links already set by the lead; appends unique jobs and refs.
+ */
+export const extractHcLinks = (
+  text: string,
+  list: readonly Step[],
+): { stepId: string; from: string; links: StepLinks; changed: boolean } | undefined => {
+  const m = HC_MSG.exec(text)
+  if (!m || list.length === 0) return undefined
+  const from = m[1]!.trim()
+  const body = m[2]!
+  if (!from) return undefined
+
+  const byHelper = list.filter(s => !s.group && s.links?.helper && (s.links.helper === from || s.links.helper.startsWith(`${from} `)))
+  let target: Step | undefined
+  if (byHelper.length === 1) {
+    target = byHelper[0]
+  } else {
+    const pool = byHelper.length > 1 ? byHelper : list.filter(s => !s.group)
+    const cited = new Set<string>()
+    for (const hit of body.matchAll(/\[([a-zA-Z0-9._-]+)\]/g)) cited.add(hit[1]!)
+    for (const hit of body.matchAll(/\bstep\s+([a-zA-Z0-9._-]+)\b/gi)) cited.add(hit[1]!)
+    const matched = pool.filter(s => cited.has(s.id))
+    if (matched.length === 1) target = matched[0]
+  }
+  if (!target) return undefined
+
+  const jobs: string[] = []
+  for (const hit of body.matchAll(/Submitted batch job (\d{5,9})\b/gi)) {
+    if (!jobs.includes(hit[1]!)) jobs.push(hit[1]!)
+  }
+  for (const hit of body.matchAll(/\bjob[:# ]+(\d{5,9})\b/gi)) {
+    if (!jobs.includes(hit[1]!)) jobs.push(hit[1]!)
+  }
+  const refs: string[] = []
+  for (const hit of body.matchAll(/\b(R\d+|D\d+|PR#\d+)\b/g)) {
+    if (!refs.includes(hit[1]!)) refs.push(hit[1]!)
+  }
+  const repMatch = /\breport[: ]+([\w./-]+\.md)\b/i.exec(body) ?? /(\.scratch\/REPORT\.md)\b/.exec(body)
+  const report = repMatch?.[1]?.replace(/[.,;:]+$/, '')
+  const brMatch = /\bbranch[: ]+([a-zA-Z0-9._/-]+)/i.exec(body)
+  const branch = brMatch?.[1]?.replace(/[.,;:]+$/, '')
+
+  const prev = target.links ?? {}
+  const next: StepLinks = { ...prev }
+  if (!next.helper) next.helper = from
+  if (!next.branch && branch) next.branch = branch
+  if (!next.report && report) next.report = report
+  const mergedJobs = unionArr(prev.jobs, jobs)
+  if (mergedJobs) next.jobs = mergedJobs
+  const mergedRefs = unionArr(prev.refs, refs)
+  if (mergedRefs) next.refs = mergedRefs
+
+  const changed = JSON.stringify(prev) !== JSON.stringify(next)
+
+  return { stepId: target.id, from, links: next, changed }
+}
