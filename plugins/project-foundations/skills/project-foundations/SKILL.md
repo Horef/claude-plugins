@@ -67,7 +67,7 @@ Use these unless the project's own rules or the user's defaults file say otherwi
 - Research projects (experiments module): label claims *established* (cited source or code you read), *plausible* (reasoned, untested) or *unresolved*; append-only results; external code and published models are read-only; units and species/conditions with every number.
 - Compute (compute module): ask before compute-heavy work; local runs stay within the `memory_budget` in `AGENTS.local.md`.
 - Environments: the exact interpreter or toolchain is the `python` key in `AGENTS.local.md` (for a Python project the interpreter; otherwise whatever runs the project's tests and tools); never the base interpreter. Give commands that work on macOS, Linux and Windows (`python tools/docmap.py ...` does).
-- Parallel agents: only once the user runs several at the same time - then one branch (or git worktree) per agent, a WORKLOG handoff note before merging, and the worktree removed right after (`docmap.py worktrees --remove`). Each branch may run `docmap.py update`; after a merge, `update` resolves conflicts inside generated content (map, README tables, indexes) by regenerating it and names any conflict in hand-written text.
+- Parallel agents: only once the user runs several at the same time - then one branch (or git worktree) per agent, a WORKLOG handoff note before merging, and the worktree removed right after (`docmap.py worktrees --remove`). Reserve numbered script prefixes with `docmap.py next <dir>` (`check` warns on duplicates). Each branch may run `docmap.py update`; after a merge, `update` resolves conflicts inside generated content (map, README tables, indexes) by regenerating it and names any conflict in hand-written text.
 
 ## Step 0 - Detect the mode and gather facts
 

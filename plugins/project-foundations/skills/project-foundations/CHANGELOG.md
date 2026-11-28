@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.18.0 (2026-11-28)
+- numbered scripts: check duplicate numeric prefixes and reserve with docmap.py next (O42)
+
 ## 5.17.2 (2026-11-22)
 - bare-id warnings skip the append-only logs (RESULTS, DECISIONS, run index, WORKLOG): their entries are history and cannot be fixed (O37)
 

@@ -1216,6 +1216,49 @@ def main() -> int:
         expect("See ../OLD.md." in (root / "docs/plans/p.md").read_text(encoding="utf-8") and "docs/plans/p.md:3:" in p.stdout,
                "P1: with --no-rewrite-paths a relative path mention is listed, not rewritten", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O42: numbered scripts: duplicate prefixes warn, `next` reserves a number
+        root = Path(tmp)
+        hdr = lambda s: f'"""{s}."""\n'
+        fixture(root, {
+            "cluster/README.md": "# cluster/\n\nCluster jobs.\n",
+            "cluster/44_foo.py": hdr("Foo"), "cluster/44_bar.sh": "# Bar.\n", "cluster/45_baz.py": hdr("Baz"),
+            "cluster/46_same.py": hdr("Same"), "cluster/46_same.sh": "# Same job, batch wrapper.\n",
+            "cluster/2026-11-01_a.py": hdr("A"), "cluster/2026-11-02_b.py": hdr("B"),
+            "other/README.md": "# other/\n\nOther.\n", "other/044_x.py": hdr("X"), "other/7_y.py": hdr("Y"),
+        })
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("cluster: 44_foo.py and 44_bar.sh share the number 44" in p.stdout or ("cluster" in p.stdout and "share the number 44" in p.stdout),
+               "O42: check warns when two files of a folder share a numeric prefix", p)
+        expect("number 45" not in p.stdout and "number 46" not in p.stdout and "number 2026" not in p.stdout,
+               "O42: distinct numbers, a script with its wrapper (same stem) and ISO dates are not collisions", p)
+        p = docmap(root, "next", "cluster")
+        expect(p.returncode == 0 and p.stdout.strip() == "47", "O42: next prints the next free number of a folder", p)
+        p = docmap(root, "next", "other/")
+        expect(p.returncode == 0 and p.stdout.strip() == "045", "O42: next keeps the folder's zero-padding (044 -> 045)", p)
+        (root / "docmap.toml").write_text("number_prefix_exempt = [\"cluster\"]\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("share the number" not in p.stdout, "O42: number_prefix_exempt silences a folder", p)
+        (root / "docmap.toml").write_text("number_prefix_check = false\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("share the number" not in p.stdout, "O42: number_prefix_check = false switches the warning off", p)
+        (root / "docmap.toml").unlink()
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "numbered")
+        sh(root, "git", "branch", "helper")
+        sh(root, "git", "checkout", "-q", "helper")
+        (root / "cluster/47_helper.py").write_text(hdr("Helper"), encoding="utf-8")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "helper job")
+        sh(root, "git", "checkout", "-q", "main")
+        p = docmap(root, "next", "cluster")
+        expect(p.returncode == 0 and p.stdout.strip() == "48", "O42: next also counts files on other local branches (parallel helpers)", p)
+        sh(root, "git", "worktree", "add", "-q", str(root.parent / (root.name + "_wt")), "-b", "wtbranch")
+        (root.parent / (root.name + "_wt") / "cluster/48_wt.py").write_text(hdr("Wt"), encoding="utf-8")
+        p = docmap(root, "next", "cluster")
+        expect(p.returncode == 0 and p.stdout.strip() == "49", "O42: next also counts uncommitted files in other worktrees", p)
+        sh(root, "git", "worktree", "remove", "--force", str(root.parent / (root.name + "_wt")))
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")

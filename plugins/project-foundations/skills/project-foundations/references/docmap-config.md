@@ -28,6 +28,8 @@ id_scan_exempt = ["docs/archive/*", "docs/worklog/*", "docs/WORKLOG.md", "backlo
 id_missing_exempt = []                # markdown whose citations are not checked against the index ("cites D57, which is not in DECISIONS.md"): legacy docs citing another ledger's D ids
 id_cite_exempt = []                   # ids that may be cited bare anywhere: exact ids or regexes that match a whole id, e.g. ["L\\d", "A1"],
                                       # or domain words that look like ledger ids: ["F[0-2]"] for harmonics (F1, F2), ["L[1-6]"] for cortical layers
+number_prefix_check = true            # warn when two files in a folder share a numeric prefix (44_foo.py, 44_bar.sh)
+number_prefix_exempt = []             # folders (globs) skipped by the numeric-prefix check
 
 [tool.docmap.facts]                   # generated docs/FACTS.md: one row per key value, read from its source
 "default cell" = { file = "configs/cell.json", key = "id", note = "D27" }      # key = dotted path in JSON/TOML

@@ -70,4 +70,5 @@ Update in the same commit as the change that requires it. A line tagged `[module
 - After committing: `git push origin <branch>` (run unpiped if the SSH key prompts; never ask for or store the passphrase). If you can't push, say so.
 - Never force-push, rewrite pushed history or amend pushed commits. Ask before anything destructive.
 - A separate worktree (`git worktree add ../<repo>_<topic> -b <branch>`) is for parallel work only. Removing it is part of the merge: right after merging, run `python tools/docmap.py worktrees --remove` (removes clean merged worktrees and their branches; keeps any with uncommitted changes). `docmap.py check` warns about a merged worktree and fails once it has sat idle a day.
+- Helpers on a branch: reserve a numbered script prefix with `python tools/docmap.py next <dir>` and report it (`check` warns on duplicate numeric prefixes in a folder).
 ```
