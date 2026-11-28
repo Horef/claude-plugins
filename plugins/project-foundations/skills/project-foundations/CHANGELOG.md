@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.19.0 (2026-11-28)
+- merges of generated files: docmap merge-fix, merge-driver --install, and helper branch rules (O41)
+
 ## 5.18.0 (2026-11-28)
 - numbered scripts: check duplicate numeric prefixes and reserve with docmap.py next (O42)
 

@@ -1259,6 +1259,51 @@ def main() -> int:
         expect(p.returncode == 0 and p.stdout.strip() == "49", "O42: next also counts uncommitted files in other worktrees", p)
         sh(root, "git", "worktree", "remove", "--force", str(root.parent / (root.name + "_wt")))
 
+    with tempfile.TemporaryDirectory() as tmp:  # O41: merge-fix and merge-driver --install
+        root = Path(tmp)
+        fixture(root, {})
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "base")
+        sh(root, "git", "checkout", "-q", "-b", "b1")
+        (root / "demo/b1.py").write_text('"""From b1."""\n', encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo\n\nBranch b1 line.\n", encoding="utf-8")
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "b1")
+        sh(root, "git", "checkout", "-q", "main")
+        (root / "demo/m1.py").write_text('"""From main."""\n', encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo\n\nMain line.\n", encoding="utf-8")
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "main")
+        sh(root, "git", "merge", "b1")  # conflicts on AGENTS.md, docs/MAP.md, demo/README.md
+        p = docmap(root, "merge-fix")
+        unmerged = sh(root, "git", "diff", "--name-only", "--diff-filter=U").stdout.splitlines()
+        map_text = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect(p.returncode == 0 and "docs/MAP.md" not in unmerged and "demo/README.md" not in unmerged
+               and "b1.py" in map_text and "m1.py" in map_text,
+               "O41: merge-fix resolves, regenerates and stages generated files", p)
+        expect("AGENTS.md" in unmerged and "AGENTS.md" in p.stdout and "<<<<<<< " in (root / "AGENTS.md").read_text(encoding="utf-8"),
+               "O41: merge-fix leaves hand-written conflicts untouched and names them", p)
+        sh(root, "git", "merge", "--abort")
+        p = docmap(root, "merge-driver", "--install")
+        attrs = (root / ".gitattributes").read_text(encoding="utf-8") if (root / ".gitattributes").exists() else ""
+        drv = sh(root, "git", "config", "--get", "merge.docmap.driver").stdout.strip()
+        expect(p.returncode == 0 and "docs/MAP.md merge=docmap" in attrs and "docs/FACTS.md merge=docmap" in attrs and drv == "true",
+               "O41: merge-driver --install configures .gitattributes and git config", p)
+        sh(root, "git", "add", ".gitattributes")
+        sh(root, "git", "commit", "-q", "-m", "driver")
+        (root / "AGENTS.md").write_text("# Demo\n\nA demo project.\n", encoding="utf-8")
+        sh(root, "git", "add", "AGENTS.md")
+        sh(root, "git", "commit", "-q", "-m", "clean agents")
+        sh(root, "git", "checkout", "-q", "b1")
+        sh(root, "git", "checkout", "main", "--", "AGENTS.md")
+        sh(root, "git", "commit", "-q", "-m", "align agents")
+        sh(root, "git", "checkout", "-q", "main")
+        m = sh(root, "git", "merge", "--no-edit", "b1")
+        expect(m.returncode == 0, "O41: merge-driver prevents conflict on docs/MAP.md", m)
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")

@@ -19,5 +19,6 @@ Templates: `agents.md` (steps 3 and 6b), `agents-local.md` (3a), `folder-readme.
    - Ids: `check` now prints one line per id family; for domain tokens that collide with ledger ids (harmonics F1, F2; cortical layers L1-L6) add `id_cite_exempt` regexes (`["F[0-2]"]`) instead of retagging prose.
    - STATUS: fix the tables `check` reports (a stray `|` splits a cell); move finished workstreams to a "Done" line; re-check `Works` rows older than `verify_max_days`; with the compute module, add the In-flight table (`templates/status.md`) and the session-start line that checks it (`templates/agents.md`, `[compute]`).
    - Maintenance table: the finish-a-line-of-work row, the long-job row (`[compute]`) and the archive step in the milestone row (`templates/agents.md`).
+   Since 5.18+: add the helper-branch rules under Git in `templates/agents.md` (helpers on a branch reserve numbered prefixes with `docmap.py next <dir>`, never edit STATUS/WORKLOG on a branch, and use `docmap.py merge-fix` on generated-file merge conflicts); optionally run `docmap.py merge-driver --install`.
 7. Fix what `check` finds in old docs (broken links: fix the link or exempt truly historical folders via `link_exempt`; never delete history to silence a check).
 8. WORKLOG entry with the before/after `check` summary; commit; push.
