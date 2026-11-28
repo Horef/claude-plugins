@@ -290,13 +290,30 @@ export type Step = {
   priorOutput?: number
   /** Some of the step's tokens ran on a model with no price: its cost is incomplete and it is left out of savings. */
   unpriced?: boolean
+  /** Step or group ids this step waits on before starting (O13). */
+  dependsOn?: string[]
+  /** Human approval gate: true or a short prompt; step cannot be delegated/started until gateApproved is true (O13). */
+  gate?: boolean | string
+  gateApproved?: boolean
+  /** Artifact links attached to this step: branch, worktree, helper terminal, cluster jobs, report path, RESULTS/D/PR refs (O13). */
+  links?: StepLinks
+}
+
+/** Artifact links attached to a plan step (O13). */
+export type StepLinks = {
+  branch?: string
+  worktree?: string
+  helper?: string
+  jobs?: string[]
+  report?: string
+  refs?: string[]
 }
 
 /** Pane edits to a step of a running plan, held back until sent: only the fields changed. model/effort null = the tier's own. */
 export type StepDraft = { where?: Where; tier?: Tier; model?: Model | null; effort?: Effort | null }
 
 /** A plan step as the plan tool takes it: a step with optional parts, recursively. */
-export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; count?: number; kind?: string; parts?: PlanNode[] }
+export type PlanNode = { id: string; title: string; tier: Tier; where?: Where; count?: number; kind?: string; dependsOn?: string[]; gate?: boolean | string; links?: StepLinks; parts?: PlanNode[] }
 
 /** What a helper used on its own subscription, in that provider's unit; never converted to money. */
 export type HelperUsage = { provider: string; amount: number; unit: string }

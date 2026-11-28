@@ -143,6 +143,7 @@ import {
 import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
 import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
+import { asDeps, asGate, cleanLinks, gatePrompt, isGated, mergeLinks, unmetDeps, validateDeps } from './plans'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
@@ -893,6 +894,7 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
   const before = await read($, steps)
   const targets = expandIds(before, named.map(n => n.id))
   const usage = new Map(named.flatMap(n => (typeof n.ref === 'object' && asHelperUsage(n.ref.usage) ? [[n.id, asHelperUsage(n.ref.usage)!] as const] : [])))
+  const doneLinks = new Map(named.flatMap(n => (typeof n.ref === 'object' && n.ref.links ? [[n.id, n.ref.links] as const] : [])))
   const verdicts = new Map<string, { verdict: Verdict; why?: string }>()
   for (const n of named) {
     const v = typeof n.ref === 'object' ? asVerdict(n.ref.verdict) : undefined
@@ -909,6 +911,7 @@ async function markDone($: EngineInterface, named: { id: string; ref: DoneRef }[
       const next: Step = { ...s, status: 'done' }
       if (first && isHelperRun(s)) next.endedAt = now
       if (reported && !s.helperUsage) next.helperUsage = reported
+      if (doneLinks.has(s.id)) next.links = mergeLinks(s.links, doneLinks.get(s.id))
       const judged = isDelegated(s) ? verdicts.get(s.id) : undefined
       if (judged) {
         next.verdict = judged.verdict
@@ -1032,10 +1035,26 @@ async function markStarted($: EngineInterface, all: { id: string; ref: StartRef 
   for (const f of fallbacks) await recordFallback($, f.id, f.reason)
   const named = all.filter(n => !fallbacks.some(f => f.id === n.id))
   if (named.length === 0) return
-  const targets = expandIds(await read($, steps), named.map(n => n.id))
+  const before = await read($, steps)
+  const targets = expandIds(before, named.map(n => n.id))
+  const gatedIds = new Set<string>()
+  const gateNotes: string[] = []
+  const depNotes: string[] = []
+  for (const s of before) {
+    if (s.group || !targets.has(s.id) || s.status === 'done') continue
+    if (s.gate && !s.gateApproved) {
+      gatedIds.add(s.id)
+      gateNotes.push(`Step [${s.id}] is gated (${gatePrompt(s.gate)}): ask the person or have them click Approve in the pane before starting.`)
+    } else {
+      const unmet = unmetDeps(before, s)
+      if (unmet.length) depNotes.push(`Note: step [${s.id}] started while waiting on ${unmet.join(', ')}.`)
+    }
+  }
+  if (gateNotes.length || depNotes.length) await update($, notes, n => [...n, ...gateNotes, ...depNotes])
   const launched = new Map(
     named.flatMap(n => (typeof n.ref === 'object' && (n.ref.helper || n.ref.model || n.ref.effort) ? [[n.id, n.ref] as const] : [])),
   )
+  const startLinks = new Map(named.flatMap(n => (typeof n.ref === 'object' && n.ref.links ? [[n.id, n.ref.links] as const] : [])))
   // The thinking level shown beside the model: what the lead reported, else what the helper's template sets.
   const efforts = new Map<string, string | undefined>()
   for (const [id, ref] of launched) {
@@ -1048,13 +1067,16 @@ async function markStarted($: EngineInterface, all: { id: string; ref: StartRef 
   await setSteps($, list =>
     list.map(s => {
       if (s.group) return s
-      if (!targets.has(s.id) || s.status === 'done') return s.where === 'here' && s.status === 'running' ? { ...s, status: 'planned' } : s
+      if (!targets.has(s.id) || s.status === 'done' || gatedIds.has(s.id)) {
+        return s.where === 'here' && s.status === 'running' && [...targets].some(id => !gatedIds.has(id) && list.find(x => x.id === id)?.where === 'here') ? { ...s, status: 'planned' } : s
+      }
       const on = launched.get(s.id)
       const next: Step = { ...s, status: 'running' }
       if (on?.helper) next.helper = on.helper.trim()
       if (on?.model) next.helperModel = on.model.trim()
       if (efforts.has(s.id)) next.helperEffort = efforts.get(s.id)
       if (on || s.where === 'helper') next.startedAt = s.startedAt ?? now
+      if (startLinks.has(s.id)) next.links = mergeLinks(s.links, startLinks.get(s.id))
 
       return next
     }),
@@ -1062,8 +1084,46 @@ async function markStarted($: EngineInterface, all: { id: string; ref: StartRef 
   const mode = helperMode()
   for (const s of await read($, steps)) {
     const on = launched.get(s.id)
-    if (on?.helper && targets.has(s.id)) await logEvent($, 'helper-start', { id: s.id, template: s.helper, model: s.helperModel, effort: s.helperEffort, mode })
+    if (on?.helper && targets.has(s.id) && !gatedIds.has(s.id)) await logEvent($, 'helper-start', { id: s.id, template: s.helper, model: s.helperModel, effort: s.helperEffort, mode })
   }
+}
+
+/** Patches existing steps in place (links, dependsOn, gate, gateApproved, title) without re-posting the plan. */
+async function applyUpdates($: EngineInterface, items: UpdateRef[]) {
+  const byId = new Map(items.filter(x => x && typeof x.id === 'string' && x.id).map(x => [x.id!, x]))
+  if (byId.size === 0) return
+  let warnings: string[] = []
+  await setSteps($, list => {
+    const patched = list.map(s => {
+      const u = byId.get(s.id)
+      if (!u) return s
+      const next: Step = { ...s }
+      if (typeof u.title === 'string' && u.title.trim()) next.title = u.title.trim()
+      if (u.links !== undefined) next.links = mergeLinks(s.links, u.links)
+      if (u.dependsOn !== undefined) next.dependsOn = asDeps(u.dependsOn)
+      if (u.gate !== undefined) {
+        next.gate = asGate(u.gate)
+        if (!next.gate) next.gateApproved = undefined
+      }
+      if (typeof u.gateApproved === 'boolean') next.gateApproved = u.gateApproved || undefined
+
+      return next
+    })
+    const checked = validateDeps(patched)
+    warnings = checked.warnings
+
+    return checked.steps
+  })
+  if (warnings.length) await update($, notes, n => [...n, ...warnings])
+}
+
+/** Approves a gated step from the pane and queues a note so the lead knows it may proceed. */
+async function approveGate($: EngineInterface, id: string) {
+  const step = (await read($, steps)).find(s => s.id === id)
+  if (!step || !step.gate || step.gateApproved) return
+  await editStep($, id, s => ({ ...s, gateApproved: true }))
+  await update($, notes, n => [...n, `Gate approved for step [${id}] ("${step.title}"): you may proceed.`])
+  await logEvent($, 'gate-approved', { id, via: 'pane' })
 }
 
 /** The pane's "cut short?": marks a finished delegated run cut short (it then says nothing about the model), or puts back the verdict it had. */
@@ -1649,6 +1709,18 @@ async function registerPlanTool($: EngineInterface) {
   const wheres = helpersOn ? ['agent', 'here', 'helper'] : ['agent', 'here']
   const hereOn = set.hereEffort.enabled
   const id = { type: 'string', description: 'Step id' }
+  const linksSchema = {
+    type: 'object',
+    description: 'Artifact links for a step: branch, worktree, helper terminal (e.g. t21), cluster job ids, report path, RESULTS/D/PR refs',
+    properties: {
+      branch: { type: 'string' },
+      worktree: { type: 'string' },
+      helper: { type: 'string' },
+      jobs: { type: 'array', items: { type: 'string' } },
+      report: { type: 'string' },
+      refs: { type: 'array', items: { type: 'string' } },
+    },
+  }
   // Offered only while here-step effort or helpers are on, so with both off the schema is as before.
   const start =
     hereOn || helpersOn
@@ -1667,6 +1739,7 @@ async function registerPlanTool($: EngineInterface) {
                         model: { type: 'string', description: 'The model the helper reports on its screen' },
                         effort: { type: 'string', description: 'The thinking level the helper reports on its screen, if it shows one (e.g. high)' },
                         fallback: { type: 'string', description: 'Instead of helper: the helper step runs as a subagent, for this short reason (e.g. "no Herdr terminal", "picker found nothing", "out of quota")' },
+                        links: linksSchema,
                       },
                       required: ['id'],
                     },
@@ -1693,6 +1766,7 @@ async function registerPlanTool($: EngineInterface) {
               description: 'For a delegated step: ok = result used as returned or with small edits; weak = it needed a rerun, you redid part of it, or review found a substantive error; overkill = plainly mechanical work (finding, listing, extracting, short output, no judgment) that ran above the light tier; cut-short = the run was stopped by something outside the model (lost connection, quota or rate limit, a crash, the person stopping it): it says nothing about the model',
             },
             why: { type: 'string', description: 'A few words on the verdict' },
+            links: linksSchema,
             ...(helpersOn
               ? {
                   usage: {
@@ -1710,6 +1784,22 @@ async function registerPlanTool($: EngineInterface) {
     },
     description: 'Step ids now done, with your verdict on each delegated step; a group id marks its unfinished parts done too',
   }
+  const updateSchema = {
+    type: 'array',
+    description: 'Patch existing steps (links, dependsOn, gate, gateApproved, title) without re-posting the plan',
+    items: {
+      type: 'object',
+      properties: {
+        id,
+        title: { type: 'string' },
+        links: linksSchema,
+        dependsOn: { type: 'array', items: { type: 'string' } },
+        gate: { anyOf: [{ type: 'boolean' }, { type: 'string' }] },
+        gateApproved: { type: 'boolean' },
+      },
+      required: ['id'],
+    },
+  }
   await $.tool.register({
     name: 'plan',
     description:
@@ -1720,6 +1810,7 @@ async function registerPlanTool($: EngineInterface) {
         steps: { type: 'array', items: stepSchema(wheres, PARTS_DEPTH) },
         done,
         ...start,
+        update: updateSchema,
         status: { type: 'boolean', description: 'Report what the router sees (version, rule delivery, counters) instead of the plan' },
         models: {
           type: 'object',
@@ -1792,6 +1883,20 @@ function stepSchema(wheres: string[], levels: number): Record<string, unknown> {
       where: { type: 'string', enum: wheres },
       kind: { type: 'string', description: 'Short label for the kind of work (e.g. code-review, summarize, search, write-code, figure); reuse a kind the rules list' },
       count: { type: 'integer', minimum: 2, description: 'N identical agents with this id, run in parallel (a step without parts)' },
+      dependsOn: { type: 'array', items: { type: 'string' }, description: 'Step or group ids this step waits on' },
+      gate: { anyOf: [{ type: 'boolean' }, { type: 'string' }], description: 'Human approval gate (true or short prompt); blocks start/delegation until approved' },
+      links: {
+        type: 'object',
+        description: 'Artifact links: branch, worktree, helper terminal, cluster jobs, report path, RESULTS/D/PR refs',
+        properties: {
+          branch: { type: 'string' },
+          worktree: { type: 'string' },
+          helper: { type: 'string' },
+          jobs: { type: 'array', items: { type: 'string' } },
+          report: { type: 'string' },
+          refs: { type: 'array', items: { type: 'string' } },
+        },
+      },
       ...(levels > 0
         ? {
             parts: {
@@ -2012,14 +2117,16 @@ const usageOf = (u: ModelUsage): Usage => ({
   output: u.output_tokens,
 })
 
-type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string; fallback?: string }
-type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown }
+type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string; fallback?: string; links?: unknown }
+type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown; links?: unknown }
+type UpdateRef = { id?: string; title?: string; links?: unknown; dependsOn?: unknown; gate?: unknown; gateApproved?: boolean }
 type PlanInput = {
   status?: boolean
   models?: unknown
   steps?: PlanNode[]
   done?: DoneRef[]
   start?: StartRef[]
+  update?: UpdateRef[]
 }
 
 const idOfRef = (r: StartRef | DoneRef) => (typeof r === 'string' ? r : r?.id)
@@ -2799,6 +2906,11 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {needs && <Text color="warning" size="footnote">{`⚠ rated for ${needs}`}</Text>}
           {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
           {changeNoted(s) && <Text key={`noted:${s.id}`} color="suggestion" size="footnote">change noted, applies from the next turn</Text>}
+          {isGated(s) && (
+            <Button key={`gate-approve:${s.id}`} variant="primary" onPress={() => void approveGate($, s.id)}>
+              Approve
+            </Button>
+          )}
           {up && (
             <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
               {`↑ Rerun on ${rungLabel(up)}`}
@@ -4362,8 +4474,10 @@ export const register: Register = on => {
     // Notes and proposals about models work on their own, or beside steps.
     if (input.models !== undefined) {
       modelsText = await acceptModels($, input.models)
-      if (!input.steps && !input.done && !input.start) return { result: modelsText }
+      if (!input.steps && !input.done && !input.start && !input.update) return { result: modelsText }
     }
+    const updates = Array.isArray(input.update) ? input.update : []
+    if (updates.length) await applyUpdates($, updates)
     const done = refs(input.done)
     if (done.length) await markDone($, done)
     const started = refs(input.start)
@@ -4385,16 +4499,31 @@ export const register: Register = on => {
       // Ids repeat across plans: steps opened one by one in the last plan close again.
       await update($, paneView, v => ({ ...v, toggled: {} }))
     }
-    await setSteps($, () =>
-      flat.steps.map(s => {
+    let depWarnings: string[] = []
+    await setSteps($, () => {
+      const built = flat.steps.map(s => {
         const was = isNewPlan ? undefined : old.find(o => o.id === s.id)
         // With Helpers off, a helper step is a normal subagent step.
         const where: Where = s.where === 'helper' && !helpersLive(set) ? 'agent' : s.where
-        const shape = { parent: s.parent, group: s.group || undefined, count: s.count, kind: s.kind }
+        const shape = {
+          parent: s.parent,
+          group: s.group || undefined,
+          count: s.count,
+          kind: s.kind,
+          dependsOn: s.dependsOn,
+          gate: s.gate,
+          gateApproved: s.gate && was?.gate === s.gate ? was.gateApproved : undefined,
+          links: s.links ?? was?.links,
+        }
 
         return { ...(was ? { ...was, title: s.title, tier: s.tier, where } : newStep(s.id, s.title, s.tier, where)), ...shape }
-      }),
-    )
+      })
+      const checked = validateDeps(built)
+      depWarnings = checked.warnings
+
+      return checked.steps
+    })
+    if (depWarnings.length) await update($, notes, n => [...n, ...depWarnings])
     await logEvent($, 'plan', { new: isNewPlan, steps: flat.steps.map(x => ({ id: x.id, tier: x.tier, where: x.where, ...(x.kind ? { kind: x.kind } : {}), ...(x.group ? { group: true } : {}) })) })
     if (flat.dropped.length) {
       await update($, notes, n => [...n, `These step ids came up twice in the plan and the repeats were ignored: ${flat.dropped.join(', ')}. Every id must be unique.`])
@@ -4486,11 +4615,19 @@ export const register: Register = on => {
     // other's tries one rung below. The lock alone is not enough: every read of one dispatch sees the moment it started, so
     // the try is decided inside the write itself, on the steps as they stand (update retries on a newer version).
     const routed = await locked('route', async () => {
-      let step = (await read($, steps)).find(s => s.id === tag)
+      const allSteps = await read($, steps)
+      let step = allSteps.find(s => s.id === tag)
       if (!step) return undefined
       if (step.group) {
-        const parts = (await read($, steps)).filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
+        const parts = allSteps.filter(s => s.parent === step!.id).map(s => `[${s.id}]`)
         return { deny: `model-router: step [${step.id}] has parts. Delegate each part under its own id (${parts.join(', ')}), not the group.` }
+      }
+      if (step.gate && !step.gateApproved) {
+        return { deny: `model-router: step [${step.id}] is gated (${gatePrompt(step.gate)}). Ask the person or have them click Approve in the pane before delegating.` }
+      }
+      const unmet = unmetDeps(allSteps, step)
+      if (unmet.length) {
+        await update($, notes, n => [...n, `Note: step [${step!.id}] delegated while waiting on ${unmet.join(', ')}.`])
       }
       // The router itself moved the step's rung (a try ended, or began): the agent's record of it follows, so no "the user changed" note.
       let moved = false

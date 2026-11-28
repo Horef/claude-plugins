@@ -4924,3 +4924,99 @@ test('after Show all on a short terminal ▲ ▼ page the pane a block at a time
   await pane.unmount()
   await $.tool.call({ tool: PLAN, done: ['s1', 's2', 's3'] } as never)
 })
+
+// --- O13: links, dependencies, gates, persistence, <hc> capture, job checks ---
+
+test('O13 links, dependsOn and update: steps carry artifact links and dependencies; unknown/cyclic deps warn', async ($, on) => {
+  await boot($, on, [])
+  const posted = (await $.tool.call({
+    tool: PLAN,
+    steps: [
+      {
+        id: 's1',
+        title: 'Run sweep',
+        tier: 'standard',
+        where: 'agent',
+        links: { branch: 'feat/sweep', worktree: '../sc-sweep', helper: 't21', jobs: ['482910'] },
+      },
+      {
+        id: 's2',
+        title: 'Analyze results',
+        tier: 'deep',
+        where: 'here',
+        dependsOn: ['s1', 'missing-id'],
+      },
+      {
+        id: 's3',
+        title: 'Cyclic A',
+        tier: 'light',
+        where: 'here',
+        dependsOn: ['s4'],
+      },
+      {
+        id: 's4',
+        title: 'Cyclic B',
+        tier: 'light',
+        where: 'here',
+        dependsOn: ['s3'],
+      },
+    ],
+  } as never)) as { result: string }
+  expect(posted.result).toContain('branch feat/sweep')
+  expect(posted.result).toContain('helper t21')
+  expect(posted.result).toContain('jobs 482910')
+  expect(posted.result).toContain('waits on s1')
+  expect(posted.result).toContain('missing-id')
+  expect(posted.result).toContain('cycle')
+
+  // Incremental update patches links without re-posting the plan
+  const updated = (await $.tool.call({
+    tool: PLAN,
+    update: [{ id: 's1', links: { report: '.scratch/REPORT.md', refs: ['R14', 'D22'] } }],
+  } as never)) as { result: string }
+  expect(updated.result).toContain('report .scratch/REPORT.md')
+  expect(updated.result).toContain('refs R14, D22')
+  expect(updated.result).toContain('branch feat/sweep') // preserved
+
+  // Links on done also attach
+  const finished = (await $.tool.call({
+    tool: PLAN,
+    done: [{ id: 's1', verdict: 'ok', why: 'clean', links: { refs: ['R14', 'D22', 'PR#112'] } }],
+  } as never)) as { result: string }
+  expect(finished.result).toContain('PR#112')
+  expect(finished.result).not.toContain('waits on s1') // s1 is done, s2 unblocked
+})
+
+test('O13 gates: unapproved gate hard-denies Agent and start; Approve button unblocks and queues note', async ($, on) => {
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { output: 'ran' } }))
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [
+      { id: 's1', title: 'Prep', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Merge PR', tier: 'standard', where: 'agent', dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+  } as never)
+
+  // Unapproved gate denies Agent delegation
+  const deniedAgent = (await $.tool.call({ tool: 'Agent', description: '[s2] Merge PR', prompt: 'do it' } as never)) as { deny?: string }
+  expect(deniedAgent.deny).toMatch(/gated/i)
+
+  // Unapproved gate also refuses start
+  const started = (await $.tool.call({ tool: PLAN, start: ['s2'] } as never)) as { result: string }
+  expect(started.result).toMatch(/gated/i)
+  expect(started.result).toContain('planned')
+
+  // Finish s1, then approve gate from the pane
+  await $.tool.call({ tool: PLAN, done: ['s1'] } as never)
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  const btn = await pane.find({ type: 'Button', key: 'gate-approve:s2' } as never)
+  expect(btn).toBeTruthy()
+  await pane.press({ key: 'gate-approve:s2' })
+  await pane.unmount()
+
+  // Now Agent delegation succeeds
+  const allowedAgent = (await $.tool.call({ tool: 'Agent', description: '[s2] Merge PR', prompt: 'do it' } as never)) as { deny?: string; result?: unknown }
+  expect(allowedAgent.deny).toBeUndefined()
+  expect(allowedAgent.result).toBeTruthy()
+})
