@@ -2,7 +2,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, ModelUsage, Register } from 'claude-code'
 
-import type { CostView, Effort, EffortSwitch, HelperChoice, HelperPick, HelperState, HelperTotals, HelperUsage, HistoryEntry, Lifetime, ModelNews, ModelNote, ModelsReport, PlanNode, Proposal, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
+import type { CostView, Effort, EffortSwitch, HelperChoice, HelperPick, HelperState, HelperTotals, HelperUsage, HistoryEntry, Lifetime, ModelNews, ModelNote, ModelsReport, PersistedPlan, PlanNode, PlanSummary, Proposal, Rung, Settings, Step, StepDraft, StepKnown, Tier, Totals, Usage, Verdict, Where } from '../types'
 import {
   EMPTY_HELPER,
   EMPTY_USAGE,
@@ -143,7 +143,7 @@ import {
 import { CHECK_TIMEOUT_MS, UPDATING_URL, afterCheck, changelogUrl, dueForCheck, guideUrl, isDevInstall, isNewer, manifestUrl, updateRequest, versionOfManifest } from './update'
 import type { UpdateState } from './update'
 import { TAGS, checkNote, findNote, mergeNotes, normId, parseNotesFile } from './notes'
-import { asDeps, asGate, cleanLinks, gatePrompt, isGated, mergeLinks, unmetDeps, validateDeps } from './plans'
+import { asDeps, asGate, cleanLinks, gatePrompt, isGated, mergeLinks, mergePersistedSteps, normPlanName, parsePersistedPlan, planSummaryOf, projectKeyOf, unmetDeps, validateDeps } from './plans'
 import { defaultKindTags, kindList, kindTagsEdited, noteMapLine, runsNow, runsNowText, tagsOfKind, tierOfKind, toggleTag, trySuggestions, withKindTags } from './strengths'
 import type { Try } from './strengths'
 import type { Check, HelperAdvice, HelperMode, Learned, Suggestion } from './logic'
@@ -208,6 +208,12 @@ const updates = atom({ plugin: 'model-router', key: 'updates' } as const, { dev:
 const updateNote = atom({ plugin: 'model-router', key: 'updateNote' } as const, '')
 // True until the remembered state says otherwise, so the welcome never flashes for someone who has used the router.
 const welcomeSeen = atom({ plugin: 'model-router', key: 'welcomeSeen' } as const, true)
+// Active named persistent plan ('' = ephemeral) and per-project plan switcher state (O13).
+const planName = atom({ plugin: 'model-router', key: 'planName' } as const, '')
+const planRevision = atom({ plugin: 'model-router', key: 'planRevision' } as const, 0)
+const openPlans = atom({ plugin: 'model-router', key: 'openPlans' } as const, [])
+const showPlans = atom({ plugin: 'model-router', key: 'showPlans' } as const, false)
+const projectInfo = { key: '', root: '' }
 
 const STORE = { auto: 'autoApprove', always: 'alwaysPlan', settings: 'settings', history: 'history', lifetime: 'lifetime', effortLog: 'effortLog', genome: 'genomeNoted', modelNews: 'modelNews', welcome: 'welcomeSeen', update: 'update' }
 const EFFORT_LOG_CAP = 200
@@ -803,7 +809,188 @@ async function clearPlan($: EngineInterface) {
   await update($, paneView, v => ({ ...v, toggled: {} }))
   await update($, draft, () => ({}))
   await update($, planStatus, () => 'none')
+  await update($, planName, () => '')
+  await update($, planRevision, () => 0)
   await refreshStatus($)
+}
+
+// --- Persistent named plans per project (O13) -------------------------------------
+
+async function resolveProject($: EngineInterface, cwd?: string) {
+  const dir = (cwd ?? state.cwd ?? '').replace(/[\\/]+$/, '')
+  let root = dir
+  if (dir) {
+    try {
+      const r = await $.process.run(['git', '-C', dir, 'rev-parse', '--git-common-dir'], { timeoutMs: 3000 })
+      const out = r.exitCode === 0 ? r.stdout.trim() : ''
+      if (out && out !== '.git') {
+        const abs = out.startsWith('/') ? out : `${dir}/${out}`
+        root = abs.replace(/[\\/]+\.git$/, '')
+      }
+    } catch {
+      // Fall back to cwd when git is unavailable or cwd is not a git repo.
+    }
+  }
+  projectInfo.root = root
+  projectInfo.key = projectKeyOf(root || 'default')
+}
+
+async function plansDir($: EngineInterface) {
+  try {
+    const base = await configBase($)
+    if (!base) return undefined
+    if (!projectInfo.key) await resolveProject($)
+
+    return `${base}/model-router/plans/${projectInfo.key}`
+  } catch {
+    return undefined
+  }
+}
+
+async function listProjectPlans($: EngineInterface): Promise<PersistedPlan[]> {
+  const dir = await plansDir($)
+  if (!dir) return []
+  let names: string[] = []
+  try {
+    names = (await $.fs.list(dir)).filter(x => x.kind === 'file' && x.name.endsWith('.json')).map(x => x.name)
+  } catch {
+    return []
+  }
+  const found: PersistedPlan[] = []
+  for (const file of names) {
+    const raw = await readText($, `${dir}/${file}`)
+    const parsed = raw ? parsePersistedPlan(raw) : undefined
+    if (parsed) found.push(parsed)
+  }
+
+  return found.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+}
+
+async function refreshOpenPlans($: EngineInterface) {
+  const all = await listProjectPlans($)
+  const open = all.filter(p => p.status === 'open').map(planSummaryOf)
+  await update($, openPlans, () => open)
+
+  return all
+}
+
+async function saveActivePlan($: EngineInterface, overrideStatus?: 'open' | 'closed') {
+  const name = await read($, planName)
+  if (!name) return
+  const dir = await plansDir($)
+  if (!dir) return
+  const path = `${dir}/${name}.json`
+  await locked(`plan:${name}`, async () => {
+    const raw = await readText($, path)
+    const disk = raw ? parsePersistedPlan(raw) : undefined
+    const localRev = await read($, planRevision)
+    let current = await read($, steps)
+    if (disk && disk.revision > localRev && overrideStatus !== 'closed') {
+      current = settleGroups(mergePersistedSteps(disk.steps, current))
+      await update($, steps, () => current)
+    }
+    const now = new Date().toISOString()
+    const nextRev = Math.max(disk?.revision ?? 0, localRev) + 1
+    const doc: PersistedPlan = {
+      version: 1,
+      name,
+      project: projectInfo.root || disk?.project || '',
+      status: overrideStatus ?? (disk?.status === 'closed' ? 'open' : 'open'),
+      createdAt: disk?.createdAt ?? now,
+      updatedAt: now,
+      revision: nextRev,
+      planStatus: await read($, planStatus),
+      steps: current,
+    }
+    await $.fs.write(path, `${JSON.stringify(doc, null, 2)}\n`)
+    await update($, planRevision, () => nextRev)
+  })
+  await refreshOpenPlans($)
+}
+
+async function syncActivePlan($: EngineInterface) {
+  const name = await read($, planName)
+  if (!name) return
+  const dir = await plansDir($)
+  if (!dir) return
+  const raw = await readText($, `${dir}/${name}.json`)
+  const disk = raw ? parsePersistedPlan(raw) : undefined
+  if (!disk) return
+  const localRev = await read($, planRevision)
+  if (disk.revision <= localRev) return
+  await update($, steps, () => settleGroups(disk.steps))
+  await update($, planStatus, () => disk.planStatus)
+  await update($, planRevision, () => disk.revision)
+  await refreshStatus($)
+}
+
+async function openNamedPlan($: EngineInterface, rawName: string): Promise<{ ok: boolean; text: string }> {
+  const name = normPlanName(rawName)
+  if (!name) return { ok: false, text: `Invalid plan name "${rawName}". Use lowercase letters, digits, dots, underscores or hyphens.` }
+  const dir = await plansDir($)
+  if (!dir) return { ok: false, text: 'Cannot resolve plans directory (HOME not set).' }
+  const raw = await readText($, `${dir}/${name}.json`)
+  const disk = raw ? parsePersistedPlan(raw) : undefined
+  if (!disk) return { ok: false, text: `No saved plan named "${name}" in this project.` }
+  await update($, steps, () => settleGroups(disk.steps))
+  await update($, planName, () => disk.name)
+  await update($, planRevision, () => disk.revision)
+  await update($, planStatus, () => 'approved')
+  await update($, draft, () => ({}))
+  await update($, showPlans, () => false)
+  if (disk.status === 'closed') await saveActivePlan($, 'open')
+  else await refreshOpenPlans($)
+  await refreshStatus($)
+  const s = planSummaryOf(disk)
+
+  return { ok: true, text: `Opened plan "${disk.name}" (${s.done}/${s.total} done).` }
+}
+
+async function closeNamedPlan($: EngineInterface, rawName?: string): Promise<{ ok: boolean; text: string }> {
+  const active = await read($, planName)
+  const target = rawName ? normPlanName(rawName) : active
+  if (!target) return { ok: false, text: 'No active named plan to close.' }
+  const dir = await plansDir($)
+  if (!dir) return { ok: false, text: 'Cannot resolve plans directory (HOME not set).' }
+  const path = `${dir}/${target}.json`
+  if (target === active) {
+    await saveActivePlan($, 'closed')
+    await clearPlan($)
+  } else {
+    const raw = await readText($, path)
+    const disk = raw ? parsePersistedPlan(raw) : undefined
+    if (!disk) return { ok: false, text: `No saved plan named "${target}" in this project.` }
+    const doc: PersistedPlan = { ...disk, status: 'closed', updatedAt: new Date().toISOString(), revision: disk.revision + 1 }
+    await $.fs.write(path, `${JSON.stringify(doc, null, 2)}\n`)
+    await refreshOpenPlans($)
+  }
+
+  return { ok: true, text: `Closed plan "${target}".` }
+}
+
+async function discoverProjectPlans($: EngineInterface) {
+  try {
+    const all = await refreshOpenPlans($)
+    const open = all.filter(p => p.status === 'open')
+    if (open.length === 0 || (await read($, steps)).length > 0) return
+    if (open.length === 1) {
+      const p = open[0]!
+      const s = planSummaryOf(p)
+      await update($, steps, () => settleGroups(p.steps))
+      await update($, planName, () => p.name)
+      await update($, planRevision, () => p.revision)
+      await update($, planStatus, () => 'approved')
+      await update($, notes, n => [...n, `Loaded open plan "${p.name}" (${s.done}/${s.total} done).`])
+      return
+    }
+    const summary = open.map(p => {
+      const s = planSummaryOf(p)
+      return `${s.name} (${s.done}/${s.total})`
+    })
+    await update($, notes, n => [...n, `Open plans in this project: ${summary.join(', ')}. Call ${PLAN_TOOL} with plan: {action: "open", name} to resume one.`])
+  } catch {
+    // Never abort session.start if fs or env is unavailable.
+  }
 }
 
 /**
@@ -1122,6 +1309,7 @@ async function approveGate($: EngineInterface, id: string) {
   const step = (await read($, steps)).find(s => s.id === id)
   if (!step || !step.gate || step.gateApproved) return
   await editStep($, id, s => ({ ...s, gateApproved: true }))
+  await saveActivePlan($)
   await update($, notes, n => [...n, `Gate approved for step [${id}] ("${step.title}"): you may proceed.`])
   await logEvent($, 'gate-approved', { id, via: 'pane' })
 }
@@ -1807,6 +1995,16 @@ async function registerPlanTool($: EngineInterface) {
     inputSchema: {
       type: 'object',
       properties: {
+        name: { type: 'string', description: 'Optional persistent plan name (slug, e.g. v1-sweep) to save across sessions for this project' },
+        plan: {
+          type: 'object',
+          description: 'Manage persistent named plans for this project: list, open, close, or save the current unnamed plan',
+          properties: {
+            action: { type: 'string', enum: ['list', 'open', 'close', 'save'] },
+            name: { type: 'string', description: 'Plan name (required for open and save; optional for close)' },
+          },
+          required: ['action'],
+        },
         steps: { type: 'array', items: stepSchema(wheres, PARTS_DEPTH) },
         done,
         ...start,
@@ -2120,9 +2318,12 @@ const usageOf = (u: ModelUsage): Usage => ({
 type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string; fallback?: string; links?: unknown }
 type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown; links?: unknown }
 type UpdateRef = { id?: string; title?: string; links?: unknown; dependsOn?: unknown; gate?: unknown; gateApproved?: boolean }
+type PlanAction = { action: 'list' | 'open' | 'close' | 'save'; name?: string }
 type PlanInput = {
   status?: boolean
   models?: unknown
+  name?: string
+  plan?: PlanAction
   steps?: PlanNode[]
   done?: DoneRef[]
   start?: StartRef[]
@@ -4379,6 +4580,10 @@ export const register: Register = on => {
     await logEvent($, 'start', { version: VERSION, surface: surfaceNow, model: (await read($, main)).model })
     await pruneLogs($)
     await startState($, e as { cwd?: string; sessionId?: unknown })
+    projectInfo.key = ''
+    projectInfo.root = ''
+    await resolveProject($, (e as { cwd?: string }).cwd)
+    await discoverProjectPlans($)
     // The kinds the rules list are those of the history now, so the rules stay the same all chat.
     const kinds = kindsOf(await read($, history))
     await update($, ruleKinds, () => kinds)
@@ -4424,6 +4629,15 @@ export const register: Register = on => {
 
       return { text: path ? `Model router report written: ${path}. Send this file.` : `Model router report not written: ${await read($, reportNote)}` }
     }
+    if (arg === 'plans') {
+      const all = await listProjectPlans($)
+      if (all.length === 0) return { text: 'No saved plans in this project.' }
+      const lines = all.map(p => {
+        const s = planSummaryOf(p)
+        return `- ${s.name} [${s.status}] ${s.done}/${s.total} done (updated ${s.updatedAt.slice(0, 10)})`
+      })
+      return { text: `Saved plans in this project:\n${lines.join('\n')}` }
+    }
     await $.ui.open({ id: PANE, title: 'Model router' })
 
     return { text: 'Model router pane opened.' }
@@ -4446,8 +4660,10 @@ export const register: Register = on => {
     }
     const shown = async () => {
       await resolveHelperPicks($)
+      const pName = await read($, planName)
+      const body = planText(await read($, steps), await read($, settings), (await read($, main)).model, await learnedOf($))
 
-      return planText(await read($, steps), await read($, settings), (await read($, main)).model, await learnedOf($))
+      return pName ? `Plan "${pName}":\n${body}` : body
     }
 
     if (input.status) {
@@ -4474,7 +4690,36 @@ export const register: Register = on => {
     // Notes and proposals about models work on their own, or beside steps.
     if (input.models !== undefined) {
       modelsText = await acceptModels($, input.models)
-      if (!input.steps && !input.done && !input.start && !input.update) return { result: modelsText }
+      if (!input.steps && !input.done && !input.start && !input.update && !input.plan) return { result: modelsText }
+    }
+    if (input.plan && typeof input.plan === 'object') {
+      const act = input.plan.action
+      if (act === 'list') {
+        const all = await listProjectPlans($)
+        if (all.length === 0) return withNotes('No saved plans in this project.')
+        const lines = all.map(p => {
+          const s = planSummaryOf(p)
+          return `- ${s.name} (${s.status}): ${s.done}/${s.total} done, updated ${s.updatedAt}`
+        })
+        return withNotes(`Saved plans:\n${lines.join('\n')}`)
+      }
+      if (act === 'open') {
+        const res = await openNamedPlan($, input.plan.name ?? '')
+        return withNotes(res.ok ? `${res.text}\n${await shown()}` : res.text)
+      }
+      if (act === 'close') {
+        const res = await closeNamedPlan($, input.plan.name)
+        return withNotes(res.text)
+      }
+      if (act === 'save') {
+        const slug = normPlanName(input.plan.name)
+        if (!slug) return withNotes('Invalid plan name for save.')
+        if ((await read($, steps)).length === 0) return withNotes('No active plan steps to save.')
+        await update($, planName, () => slug)
+        await update($, planRevision, () => 0)
+        await saveActivePlan($, 'open')
+        return withNotes(`Saved plan as "${slug}".\n${await shown()}`)
+      }
     }
     const updates = Array.isArray(input.update) ? input.update : []
     if (updates.length) await applyUpdates($, updates)
@@ -4482,6 +4727,7 @@ export const register: Register = on => {
     if (done.length) await markDone($, done)
     const started = refs(input.start)
     if (started.length) await markStarted($, started)
+    if (updates.length || done.length || started.length) await saveActivePlan($)
     ask = await verdictsMissing($, done.map(d => d.id))
     await refreshStatus($)
     if (!input.steps) return withNotes(await shown())
@@ -4524,6 +4770,14 @@ export const register: Register = on => {
       return checked.steps
     })
     if (depWarnings.length) await update($, notes, n => [...n, ...depWarnings])
+    const namedSlug = input.name !== undefined ? normPlanName(input.name) : undefined
+    if (namedSlug) {
+      if ((await read($, planName)) !== namedSlug) await update($, planRevision, () => 0)
+      await update($, planName, () => namedSlug)
+    } else if (isNewPlan && input.name === undefined) {
+      await update($, planName, () => '')
+      await update($, planRevision, () => 0)
+    }
     await logEvent($, 'plan', { new: isNewPlan, steps: flat.steps.map(x => ({ id: x.id, tier: x.tier, where: x.where, ...(x.kind ? { kind: x.kind } : {}), ...(x.group ? { group: true } : {}) })) })
     if (flat.dropped.length) {
       await update($, notes, n => [...n, `These step ids came up twice in the plan and the repeats were ignored: ${flat.dropped.join(', ')}. Every id must be unique.`])
@@ -4534,6 +4788,7 @@ export const register: Register = on => {
     if (await read($, autoApprove)) {
       if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
       await update($, planStatus, () => 'approved')
+      await saveActivePlan($, 'open')
       await refreshStatus($)
       return withNotes(`Plan auto-approved:\n${await shown()}`)
     }
@@ -4559,6 +4814,7 @@ export const register: Register = on => {
       if (answer === APPROVE_AUTO) await setAuto($, true)
       if (isNewPlan) await editLifetime($, l => ({ ...l, plans: l.plans + 1 }))
       await update($, planStatus, () => 'approved')
+      await saveActivePlan($, 'open')
       await refreshStatus($)
       return withNotes(
         `Plan approved by the user (follow these tiers and places; they may differ from what you proposed. A "here" step's tier is a rating: do it in this chat as usual):\n${await shown()}`,
@@ -4828,6 +5084,7 @@ export const register: Register = on => {
     diag.turns += 1
     // Settings another session changed since this one last looked.
     await refreshShared($)
+    await syncActivePlan($)
     const extra: string[] = []
     // Rules the chat no longer holds go out again. A compaction is told by session.compact, but on a Team or
     // Enterprise account Claude Code's sec-default sends that event past every person's mod: the row that

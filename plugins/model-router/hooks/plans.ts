@@ -1,5 +1,5 @@
 // Pure logic for O13: step artifact links, dependencies, approval gates, persistence, <hc> capture, and job health.
-import type { Step, StepLinks } from '../types'
+import type { PersistedPlan, PlanSummary, Step, StepLinks } from '../types'
 
 const trimStr = (v: unknown, max = 240): string | undefined => {
   if (typeof v !== 'string') return undefined
@@ -171,4 +171,135 @@ export const stepMetaText = (list: readonly Step[], s: Step): string => {
   if (l?.refs?.length) parts.push(`refs ${l.refs.join(', ')}`)
 
   return parts.length ? `, ${parts.join(', ')}` : ''
+}
+
+// --- Persistent named plans (O13) -------------------------------------------------
+
+/** Normalizes a persistent plan name to a safe lowercase slug, or undefined if invalid. */
+export const normPlanName = (raw: unknown): string | undefined => {
+  if (typeof raw !== 'string') return undefined
+  const slug = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(slug) ? slug : undefined
+}
+
+/** Deterministic 8-hex-char FNV-1a hash (no node:crypto dependency). */
+const fnv1a = (s: string): string => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/** Stable per-project folder key from a canonical repo root (or cwd): `<basename>-<8hex>`. */
+export const projectKeyOf = (root: string): string => {
+  const clean = root.replace(/[\\/]+$/, '') || 'default'
+  const base =
+    clean
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .at(-1)
+      ?.toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32) || 'project'
+
+  return `${base}-${fnv1a(clean)}`
+}
+
+export const parsePersistedPlan = (raw: string): PersistedPlan | undefined => {
+  try {
+    const p = JSON.parse(raw) as Partial<PersistedPlan>
+    if (!p || typeof p !== 'object' || p.version !== 1 || typeof p.name !== 'string' || !Array.isArray(p.steps)) return undefined
+    const status = p.status === 'closed' ? 'closed' : 'open'
+
+    return {
+      version: 1,
+      name: p.name,
+      project: typeof p.project === 'string' ? p.project : '',
+      status,
+      createdAt: typeof p.createdAt === 'string' ? p.createdAt : new Date().toISOString(),
+      updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
+      revision: typeof p.revision === 'number' && Number.isFinite(p.revision) ? p.revision : 1,
+      planStatus: p.planStatus === 'pending' || p.planStatus === 'approved' ? p.planStatus : 'approved',
+      steps: p.steps,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+export const planSummaryOf = (p: PersistedPlan): PlanSummary => {
+  const leaves = p.steps.filter(s => !s.group)
+
+  return {
+    name: p.name,
+    status: p.status,
+    done: leaves.filter(s => s.status === 'done').length,
+    total: leaves.length,
+    updatedAt: p.updatedAt,
+  }
+}
+
+const STATUS_RANK: Record<Step['status'], number> = { planned: 0, running: 1, done: 2 }
+
+const unionArr = (a?: string[], b?: string[]): string[] | undefined => {
+  const out = [...(a ?? [])]
+  for (const x of b ?? []) if (!out.includes(x)) out.push(x)
+
+  return out.length ? out : undefined
+}
+
+const mergeConcurrentLinks = (disk?: StepLinks, local?: StepLinks): StepLinks | undefined => {
+  if (!disk && !local) return undefined
+  const out: StepLinks = {
+    ...(disk?.branch || local?.branch ? { branch: local?.branch ?? disk?.branch } : {}),
+    ...(disk?.worktree || local?.worktree ? { worktree: local?.worktree ?? disk?.worktree } : {}),
+    ...(disk?.helper || local?.helper ? { helper: local?.helper ?? disk?.helper } : {}),
+    ...(disk?.report || local?.report ? { report: local?.report ?? disk?.report } : {}),
+  }
+  const jobs = unionArr(disk?.jobs, local?.jobs)
+  const refs = unionArr(disk?.refs, local?.refs)
+  if (jobs) out.jobs = jobs
+  if (refs) out.refs = refs
+
+  return Object.keys(out).length ? out : undefined
+}
+
+/**
+ * Step-level merge when another session bumped `revision` on disk before this session wrote.
+ * Keeps higher status progression (planned < running < done), union of links, and any gate approval.
+ */
+export const mergePersistedSteps = (disk: readonly Step[], local: readonly Step[]): Step[] => {
+  const diskById = new Map(disk.map(s => [s.id, s]))
+  const localIds = new Set(local.map(s => s.id))
+  const merged = local.map(l => {
+    const d = diskById.get(l.id)
+    if (!d) return l
+    const dWins = STATUS_RANK[d.status] > STATUS_RANK[l.status]
+    const base = dWins ? d : l
+    const other = dWins ? l : d
+
+    return {
+      ...base,
+      gateApproved: base.gateApproved || other.gateApproved || undefined,
+      links: mergeConcurrentLinks(d.links, l.links),
+      verdict: base.verdict ?? other.verdict,
+      why: base.why ?? other.why,
+    }
+  })
+  // Preserve steps added on disk by another session
+  for (const d of disk) {
+    if (!localIds.has(d.id)) merged.push(d)
+  }
+
+  return merged
 }

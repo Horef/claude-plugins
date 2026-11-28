@@ -2,6 +2,9 @@
 
 Newest first. Entries up to 0.9.1 are reconstructed from the commit messages (git log); later entries cite observations (O-ids in LEARNINGS.md) or evals.
 
+## 0.32.0 (2026-11-28)
+- persistent named plans per project with revision merge (O13)
+
 ## 0.31.0 (2026-11-28)
 - step artifact links, dependsOn, and human approval gates (O13)
 

@@ -7,6 +7,7 @@ import { helperList, helperOrder, helpersAvailable, helpersOff, noHelperCli, set
 import { asVerdict, healthChecks, healthLine, helperModeOf, historyLine, learnedRungs as learned2, logFileName, oldLogFiles, reportFileName, reportMarkdown, verdictLine } from '../hooks/logic'
 import { asModelNews, cardModelLine, checkProposals, dayOf, hasModelsJson, modelsAskNote, newModelsCard, notedNew, parseModelsReport, staleProviders, toAsk } from '../hooks/logic'
 import { SEED_NOTES, checkNote, findNote, mergeNotes, parseNotesFile } from '../hooks/notes'
+import { projectKeyOf } from '../hooks/plans'
 import { buildSnapshot, chatKeyOf, newsLines, oldStateFiles, snapshotKey } from '../hooks/snapshot'
 import { DEFAULT_SETTINGS, KIND_TAGS, LADDER } from '../hooks/tiers'
 import { EXPLORE, VERSION, exploreRungs } from '../hooks/logic'
@@ -5019,4 +5020,132 @@ test('O13 gates: unapproved gate hard-denies Agent and start; Approve button unb
   const allowedAgent = (await $.tool.call({ tool: 'Agent', description: '[s2] Merge PR', prompt: 'do it' } as never)) as { deny?: string; result?: unknown }
   expect(allowedAgent.deny).toBeUndefined()
   expect(allowedAgent.result).toBeTruthy()
+})
+
+test('O13 persistence: named plans save, list, open, close per project and auto-load single open plan on session start', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+
+  // Create a named plan
+  const created = (await $.tool.call({
+    tool: PLAN,
+    name: 'v1-sweep',
+    steps: [
+      { id: 's1', title: 'Run sweep', tier: 'standard', where: 'agent', links: { branch: 'feat/v1', jobs: ['100001'] } },
+      { id: 's2', title: 'Merge', tier: 'deep', where: 'here', dependsOn: ['s1'], gate: 'OK to merge?' },
+    ],
+  } as never)) as { result: string }
+  expect(created.result).toContain('v1-sweep')
+
+  // Verify persisted file exists under ~/.config/model-router/plans/<projectKey>/v1-sweep.json
+  const planPath = [...files.keys()].find(k => k.includes('/.config/model-router/plans/') && k.endsWith('/v1-sweep.json'))
+  expect(planPath).toBeTruthy()
+
+  // Update step s1 done and verify list
+  await $.tool.call({ tool: PLAN, done: [{ id: 's1', verdict: 'ok' }] } as never)
+  const listed = (await $.tool.call({ tool: PLAN, plan: { action: 'list' } } as never)) as { result: string }
+  expect(listed.result).toContain('v1-sweep')
+  expect(listed.result).toContain('open')
+
+  // Close the plan clears active steps, then reopen brings them back
+  const closed = (await $.tool.call({ tool: PLAN, plan: { action: 'close' } } as never)) as { result: string }
+  expect(closed.result).toMatch(/closed/i)
+  const reopened = (await $.tool.call({ tool: PLAN, plan: { action: 'open', name: 'v1-sweep' } } as never)) as { result: string }
+  expect(reopened.result).toContain('Run sweep')
+  expect(reopened.result).toContain('branch feat/v1')
+  expect(reopened.result).toContain('done')
+})
+
+test('O13 persistence: concurrent revision merge preserves edits from another session without clobbering', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+  await $.tool.call({
+    tool: PLAN,
+    name: 'multi-session',
+    steps: [
+      { id: 's1', title: 'Step one', tier: 'light', where: 'here' },
+      { id: 's2', title: 'Step two', tier: 'light', where: 'here' },
+    ],
+  } as never)
+
+  // Simulate another session marking s1 done and bumping revision on disk
+  const planPath = [...files.keys()].find(k => k.endsWith('/multi-session.json'))!
+  const disk = JSON.parse(files.get(planPath)!)
+  disk.revision += 1
+  disk.steps[0].status = 'done'
+  disk.steps[0].links = { report: '.scratch/OTHER.md' }
+  files.set(planPath, JSON.stringify(disk))
+
+  // This session marks s2 done: merge must keep s1 done + its report AND s2 done
+  const res = (await $.tool.call({ tool: PLAN, done: ['s2'] } as never)) as { result: string }
+  expect(res.result).toContain('report .scratch/OTHER.md')
+  const merged = JSON.parse(files.get(planPath)!)
+  expect(merged.steps.find((s: { id: string }) => s.id === 's1').status).toBe('done')
+  expect(merged.steps.find((s: { id: string }) => s.id === 's2').status).toBe('done')
+  expect(merged.revision).toBeGreaterThan(disk.revision)
+})
+
+test('O13 persistence: session start auto-loads a single open plan with a one-line note', async ($, on) => {
+  const files = new Map<string, string>()
+  const listDir = (dir: string) => {
+    const prefix = dir.endsWith('/') ? dir : `${dir}/`
+    const out: { name: string; kind: 'file' }[] = []
+    for (const k of files.keys()) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      if (!rest.includes('/')) out.push({ name: rest, kind: 'file' })
+    }
+    return out
+  }
+  // Seed one open plan before session starts
+  const saved = {
+    version: 1,
+    name: 'workstream-a',
+    project: 'default',
+    status: 'open',
+    createdAt: '2026-11-28T08:00:00Z',
+    updatedAt: '2026-11-28T09:00:00Z',
+    revision: 2,
+    planStatus: 'approved',
+    steps: [
+      { id: 's1', title: 'Already done', tier: 'light', where: 'here', status: 'done', usage: EMPTY_USAGE, cost: 0, mainCost: 0, reruns: 0 },
+      { id: 's2', title: 'Next step', tier: 'standard', where: 'agent', status: 'planned', usage: EMPTY_USAGE, cost: 0, mainCost: 0, reruns: 0 },
+    ],
+  }
+  files.set(`${HOME}/.config/model-router/plans/${projectKeyOf('default')}/workstream-a.json`, JSON.stringify(saved))
+  const { rows } = await boot($, on, [], [], files, () => {
+    on('fs.list', (_, e) => ({ value: listDir((e as { path: string }).path) }))
+  })
+  await $.turn.start({ text: 'continue', turnId: 't1' })
+  const noteText = lastRow(rows)
+  expect(noteText).toContain('Loaded open plan')
+  expect(noteText).toContain('workstream-a')
+  expect(noteText).toContain('(1/2 done)')
+  const current = (await $.tool.call({ tool: PLAN } as never)) as { result: string }
+  expect(current.result).toContain('workstream-a')
+  expect(current.result).toContain('Next step')
 })

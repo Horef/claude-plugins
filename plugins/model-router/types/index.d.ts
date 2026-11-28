@@ -309,6 +309,28 @@ export type StepLinks = {
   refs?: string[]
 }
 
+/** A named plan persisted per project under ~/.config/model-router/plans/<projectKey>/<name>.json (O13). */
+export type PersistedPlan = {
+  version: 1
+  name: string
+  project: string
+  status: 'open' | 'closed'
+  createdAt: string
+  updatedAt: string
+  revision: number
+  planStatus: PlanStatus
+  steps: Step[]
+}
+
+/** Summary of a persisted plan for the pane switcher and list action (O13). */
+export type PlanSummary = {
+  name: string
+  status: 'open' | 'closed'
+  done: number
+  total: number
+  updatedAt: string
+}
+
 /** Pane edits to a step of a running plan, held back until sent: only the fields changed. model/effort null = the tier's own. */
 export type StepDraft = { where?: Where; tier?: Tier; model?: Model | null; effort?: Effort | null }
 
@@ -472,6 +494,13 @@ declare module 'claude-code' {
       updateNote: string
       /** The first-use welcome was dismissed or a plan was posted (true until the remembered state is loaded, so it never flashes for an existing user). */
       welcomeSeen: boolean
+      /** Active named persistent plan in this session ('' for an ephemeral plan) and its last-known revision (O13). */
+      planName: string
+      planRevision: number
+      /** Persisted plans known for this project, for the Plans ▾ switcher (O13). */
+      openPlans: PlanSummary[]
+      /** The Plans ▾ drawer under the plan header is open (O13). */
+      showPlans: boolean
     }
   }
 }
