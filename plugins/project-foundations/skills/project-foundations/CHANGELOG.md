@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.23.0 (2026-11-28)
+- Add workflow-card (docs/workflows/) and START_HERE templates linked from AGENTS.md; docmap check verifies workflow card file paths, line ranges within EOF, and churn since card date (workflows_dir, workflow_churn_lines). Evals: 6 new O40 checks (5 failed before), all pass. (O40)
+
 ## 5.22.0 (2026-11-28)
 - docmap check verifies configured typed id prefixes (id_resolve: O-, R-, RULE-...) resolve to a definition in docs without double-reporting D-ids from indexes, and checks that RESULTS.md Run references exist in docs/RUNS.md. Evals: 5 new O26 checks (3 failed before), all pass. (O26)
 

@@ -1405,6 +1405,45 @@ def main() -> int:
         expect("cites R99" not in p.stdout and "cites O99" in p.stdout,
                "O26: id_cite_exempt silences an exempted typed id without hiding others", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O40: workflow cards checked by docmap + START_HERE template
+        root = Path(tmp)
+        card = (
+            "# Workflow: update core\n"
+            "Status: current (verified 2026-11-01)\n\n"
+            "## Files to read\n"
+            "- `demo/core.py:1-4` — add helper\n"
+            "- `demo/core.py:L1-L999` — past EOF\n"
+            "- `demo/gone.py:1-10` — deleted file\n"
+        )
+        fixture(root, {
+            "docmap.toml": "workflow_churn_lines = 5\n",
+            "docs/workflows/update-core.md": card,
+        }, env={"GIT_AUTHOR_DATE": "2026-10-15T12:00:00Z", "GIT_COMMITTER_DATE": "2026-10-15T12:00:00Z"})
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect(p.returncode == 0 and "missing file `demo/gone.py`" in p.stdout,
+               "O40: workflow card warns on missing file path (warning, not error)", p)
+        expect("1-999" in p.stdout and "past EOF" in p.stdout,
+               "O40: workflow card warns when a line range points past EOF", p)
+        expect("1-4" not in p.stdout,
+               "O40: valid in-range line reference produces no warning", p)
+        # Now commit a large change to demo/core.py after the card's verified date (2026-11-01)
+        (root / "demo/core.py").write_text('"""Core."""\n' + "\n".join(f"X{i} = {i}" for i in range(20)) + "\n", encoding="utf-8")
+        sh(root, "git", "add", "demo/core.py")
+        subprocess.run(["git", "commit", "-q", "-m", "grow core"], cwd=root, capture_output=True,
+                       env={**os.environ, "GIT_AUTHOR_DATE": "2026-11-20T12:00:00Z", "GIT_COMMITTER_DATE": "2026-11-20T12:00:00Z"})
+        p = docmap(root, "check")
+        expect("`demo/core.py` changed by" in p.stdout and "since 2026-11-01" in p.stdout,
+               "O40: workflow card warns when a referenced file changed significantly since the card's date", p)
+        wf_tpl = SKILL_DIR / "templates/workflow-card.md"
+        sh_tpl = SKILL_DIR / "templates/start-here.md"
+        ag_tpl = (SKILL_DIR / "templates/agents.md").read_text(encoding="utf-8")
+        expect(wf_tpl.exists() and all(s in wf_tpl.read_text(encoding="utf-8") for s in ("Files to read", "Commands", "Expected outputs", "Rough cost", "Failure signs")),
+               "O40: templates/workflow-card.md exists with all required sections")
+        expect(sh_tpl.exists() and "What breaks" in sh_tpl.read_text(encoding="utf-8") and "How to tell" in sh_tpl.read_text(encoding="utf-8")
+               and "How to fix" in sh_tpl.read_text(encoding="utf-8") and "START_HERE.md" in ag_tpl and "docs/workflows/" in ag_tpl,
+               "O40: templates/start-here.md has the troubleshooting table and templates/agents.md links START_HERE and docs/workflows/")
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")
