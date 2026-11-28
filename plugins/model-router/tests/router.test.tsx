@@ -5318,3 +5318,37 @@ test('O13 pane, 48-col glance and Herdr snapshot: renders plan name, Plans drawe
   expect(snap.steps[0]!.notes.join(' ')).toContain('t21')
   expect(snap.steps[1]!.notes.join(' ')).toContain('gate')
 })
+
+test('O13 gates: tool gateApproved requires approvedBy quote, shows it in details and queues a note', async ($, on) => {
+  on('tool.call', { tool: 'Agent' }, () => ({ result: { output: 'ran' } }))
+  await boot($, on, [])
+  await $.tool.call({
+    tool: PLAN,
+    steps: [{ id: 's1', title: 'Deploy', tier: 'standard', where: 'agent', gate: 'OK to deploy?' }],
+  } as never)
+
+  // Setting gateApproved without approvedBy is refused and gate stays unapproved
+  const refused = (await $.tool.call({
+    tool: PLAN,
+    update: [{ id: 's1', gateApproved: true }],
+  } as never)) as { result: string }
+  expect(refused.result).toMatch(/approvedBy/i)
+  const stillDenied = (await $.tool.call({ tool: 'Agent', description: '[s1] Deploy', prompt: 'go' } as never)) as { deny?: string }
+  expect(stillDenied.deny).toMatch(/gated/i)
+
+  // Setting gateApproved with approvedBy succeeds, queues note, and shows quote in step details
+  const ok = (await $.tool.call({
+    tool: PLAN,
+    update: [{ id: 's1', gateApproved: true, approvedBy: 'yes, go ahead and deploy' }],
+  } as never)) as { result: string }
+  expect(ok.result).toContain('Gate [s1] approved from chat: yes, go ahead and deploy')
+
+  const desk = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  await desk.press({ key: 'open:s1' })
+  expect(await desk.find({ type: 'Text', text: /yes, go ahead and deploy/ } as never)).toBeTruthy()
+  await desk.unmount()
+
+  const allowed = (await $.tool.call({ tool: 'Agent', description: '[s1] Deploy', prompt: 'go' } as never)) as { deny?: string; result?: unknown }
+  expect(allowed.deny).toBeUndefined()
+  expect(allowed.result).toBeTruthy()
+})

@@ -783,7 +783,7 @@ async function summary($: EngineInterface) {
   const running = work.find(s => s.status === 'running')
   const cost = list.reduce((n, s) => n + s.cost, 0)
   const saved = list.reduce((n, s) => n + Math.max(0, s.mainCost - s.cost), 0)
-  const dots = work.map(s => STATUS_GLYPH[s.status]).join('')
+  const dots = work.map(s => (isGated(s) ? '◇' : isBlocked(list, s) ? '◌' : STATUS_GLYPH[s.status])).join('')
   const head = status === 'pending' ? 'plan awaiting approval' : `${done}/${work.length} done`
   const now = running ? ` · ${running.id} on ${rungLabel(runsOn(running, set, await learnedOf($)))}` : ''
   const money = cost > 0 ? ` · plan agents ≈${fmtUsd(cost)}${saved > 0 ? `, saved ≈${fmtUsd(saved)}` : ''}` : ''
@@ -1327,6 +1327,8 @@ async function applyUpdates($: EngineInterface, items: UpdateRef[]) {
   const byId = new Map(items.filter(x => x && typeof x.id === 'string' && x.id).map(x => [x.id!, x]))
   if (byId.size === 0) return
   let warnings: string[] = []
+  const extraNotes: string[] = []
+  const approvedLog: string[] = []
   await setSteps($, list => {
     const patched = list.map(s => {
       const u = byId.get(s.id)
@@ -1337,9 +1339,27 @@ async function applyUpdates($: EngineInterface, items: UpdateRef[]) {
       if (u.dependsOn !== undefined) next.dependsOn = asDeps(u.dependsOn)
       if (u.gate !== undefined) {
         next.gate = asGate(u.gate)
-        if (!next.gate) next.gateApproved = undefined
+        if (!next.gate) {
+          next.gateApproved = undefined
+          next.gateApprovedBy = undefined
+        }
       }
-      if (typeof u.gateApproved === 'boolean') next.gateApproved = u.gateApproved || undefined
+      if (u.gateApproved === true) {
+        const quote = typeof u.approvedBy === 'string' ? u.approvedBy.trim().slice(0, 120) : ''
+        if (!quote) {
+          extraNotes.push(
+            `Refused gateApproved for [${s.id}]: gates are the person's — pass approvedBy with a short quote of their approval in this chat, or have them click Approve in the pane.`,
+          )
+        } else {
+          next.gateApproved = true
+          next.gateApprovedBy = quote
+          extraNotes.push(`Gate [${s.id}] approved from chat: ${quote}`)
+          approvedLog.push(s.id)
+        }
+      } else if (u.gateApproved === false) {
+        next.gateApproved = undefined
+        next.gateApprovedBy = undefined
+      }
 
       return next
     })
@@ -1348,7 +1368,8 @@ async function applyUpdates($: EngineInterface, items: UpdateRef[]) {
 
     return checked.steps
   })
-  if (warnings.length) await update($, notes, n => [...n, ...warnings])
+  if (warnings.length || extraNotes.length) await update($, notes, n => [...n, ...warnings, ...extraNotes])
+  for (const id of approvedLog) await logEvent($, 'gate-approved', { id, via: 'chat' })
 }
 
 /** Approves a gated step from the pane and queues a note so the lead knows it may proceed. */
@@ -2030,7 +2051,14 @@ async function registerPlanTool($: EngineInterface) {
         links: linksSchema,
         dependsOn: { type: 'array', items: { type: 'string' } },
         gate: { anyOf: [{ type: 'boolean' }, { type: 'string' }] },
-        gateApproved: { type: 'boolean' },
+        gateApproved: {
+          type: 'boolean',
+          description: 'Set to true ONLY when the person explicitly approved the gate in this chat; requires approvedBy quoting their words (refused without it)',
+        },
+        approvedBy: {
+          type: 'string',
+          description: 'Short quote of the person\'s approval in this chat (required when setting gateApproved: true)',
+        },
       },
       required: ['id'],
     },
@@ -2365,7 +2393,7 @@ const usageOf = (u: ModelUsage): Usage => ({
 
 type StartRef = string | { id?: string; helper?: string; model?: string; effort?: string; fallback?: string; links?: unknown }
 type DoneRef = string | { id?: string; usage?: unknown; verdict?: unknown; why?: unknown; links?: unknown }
-type UpdateRef = { id?: string; title?: string; links?: unknown; dependsOn?: unknown; gate?: unknown; gateApproved?: boolean }
+type UpdateRef = { id?: string; title?: string; links?: unknown; dependsOn?: unknown; gate?: unknown; gateApproved?: boolean; approvedBy?: unknown }
 type PlanAction = { action: 'list' | 'open' | 'close' | 'save'; name?: string }
 type PlanInput = {
   status?: boolean
@@ -3169,25 +3197,25 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
           {needs && <Text color="warning" size="footnote">{`⚠ rated for ${needs}`}</Text>}
           {s.setupHeavy && <Text color="warning" size="footnote">⚠ start-up heavy</Text>}
           {changeNoted(s) && <Text key={`noted:${s.id}`} color="suggestion" size="footnote">change noted, applies from the next turn</Text>}
-          {isBlocked(list, s) && <Text key={`waits:${s.id}`} dimColor size="footnote">{`waits: ${unmetDeps(list, s).join(', ')}`}</Text>}
-          {isGated(s) && <Text key={`gate:${s.id}`} color="warning" size="footnote">{`gate: ${gatePrompt(s.gate)}`}</Text>}
+          {isBlocked(list, s) && <Text key={`waits:${s.id}`} dimColor size="footnote">{`· waits: ${unmetDeps(list, s).join(', ')}`}</Text>}
+          {isGated(s) && <Text key={`gate:${s.id}`} color="warning" size="footnote">{`· gate: ${gatePrompt(s.gate)}`}</Text>}
           {isGated(s) && (
             <Button key={`gate-approve:${s.id}`} variant="primary" onPress={() => void approveGate($, s.id)}>
               Approve
             </Button>
           )}
-          {s.links?.helper && <Text key={`lhelp:${s.id}`} dimColor size="footnote">{s.links.helper}</Text>}
+          {s.links?.helper && <Text key={`lhelp:${s.id}`} dimColor size="footnote">{`· ${s.links.helper}`}</Text>}
           {s.links?.jobs?.[0] && (() => {
             const jid = s.links!.jobs![0]!
             const jst = jobsState.jobs[jid]
             const extra = s.links!.jobs!.length > 1 ? ` +${s.links!.jobs!.length - 1}` : ''
             return (
               <Text key={`ljob:${s.id}`} color={jst?.bad ? 'error' : jst?.badge === 'R' ? 'success' : undefined} dimColor={!jst || (!jst.bad && jst.badge !== 'R')} size="footnote">
-                {`job ${jid}${jst ? ` ${jst.badge}` : ''}${extra}`}
+                {`· job ${jid}${jst ? ` ${jst.badge}` : ''}${extra}`}
               </Text>
             )
           })()}
-          {s.links?.refs?.[0] && <Text key={`lref:${s.id}`} dimColor size="footnote">{s.links.refs[0]}</Text>}
+          {s.links?.refs?.[0] && <Text key={`lref:${s.id}`} dimColor size="footnote">{`· ${s.links.refs[0]}`}</Text>}
           {up && (
             <Button key={`rerun:${s.id}`} plain onPress={() => void rerun($, s.id)}>
               {`↑ Rerun on ${rungLabel(up)}`}
@@ -3241,7 +3269,7 @@ export async function renderPane($: RenderArgs[0], e: RenderArgs[1]) {
             ) : null}
             {s.gate ? (
               <Text key={`gate-detail:${s.id}`} color={s.gateApproved ? undefined : 'warning'} dimColor={!!s.gateApproved} size="footnote" wrap="wrap">
-                {`Gate: ${gatePrompt(s.gate)} (${s.gateApproved ? 'approved' : 'waiting'})`}
+                {`Gate: ${gatePrompt(s.gate)} (${s.gateApproved ? (s.gateApprovedBy ? `approved from chat: "${s.gateApprovedBy}"` : 'approved') : 'waiting'})`}
               </Text>
             ) : null}
             {(s.links?.branch || s.links?.worktree) && (
@@ -4910,6 +4938,7 @@ export const register: Register = on => {
           dependsOn: s.dependsOn,
           gate: s.gate,
           gateApproved: s.gate && was?.gate === s.gate ? was.gateApproved : undefined,
+          gateApprovedBy: s.gate && was?.gate === s.gate ? was.gateApprovedBy : undefined,
           links: s.links ?? was?.links,
         }
 

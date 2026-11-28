@@ -161,7 +161,10 @@ export const stepMetaText = (list: readonly Step[], s: Step): string => {
   const parts: string[] = []
   const unmet = s.status === 'done' ? [] : unmetDeps(list, s)
   if (unmet.length) parts.push(`waits on ${unmet.join(', ')}`)
-  if (s.gate) parts.push(`gate: ${gatePrompt(s.gate)} (${s.gateApproved ? 'approved' : 'waiting'})`)
+  if (s.gate) {
+    const gState = s.gateApproved ? (s.gateApprovedBy ? `approved from chat: "${s.gateApprovedBy}"` : 'approved') : 'waiting'
+    parts.push(`gate: ${gatePrompt(s.gate)} (${gState})`)
+  }
   const l = s.links
   if (l?.branch) parts.push(`branch ${l.branch}`)
   if (l?.worktree) parts.push(`worktree ${l.worktree}`)
@@ -291,6 +294,7 @@ export const mergePersistedSteps = (disk: readonly Step[], local: readonly Step[
     return {
       ...base,
       gateApproved: base.gateApproved || other.gateApproved || undefined,
+      gateApprovedBy: base.gateApprovedBy ?? other.gateApprovedBy,
       links: mergeConcurrentLinks(d.links, l.links),
       verdict: base.verdict ?? other.verdict,
       why: base.why ?? other.why,

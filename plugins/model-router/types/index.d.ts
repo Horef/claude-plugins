@@ -324,6 +324,8 @@ export type Step = {
   /** Human approval gate: true or a short prompt; step cannot be delegated/started until gateApproved is true (O13). */
   gate?: boolean | string
   gateApproved?: boolean
+  /** Short quote of the person's approval in chat when approved via the plan tool (O13). */
+  gateApprovedBy?: string
   /** Artifact links attached to this step: branch, worktree, helper terminal, cluster jobs, report path, RESULTS/D/PR refs (O13). */
   links?: StepLinks
 }
