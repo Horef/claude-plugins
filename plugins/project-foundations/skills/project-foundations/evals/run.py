@@ -1333,6 +1333,117 @@ def main() -> int:
         expect("docs/MAP.md: about" in p.stdout and "map_depth" in p.stdout,
                "O39: token-budget warning on MAP.md suggests map_depth", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O25: result provenance warnings and config gates
+        root = Path(tmp)
+        results_md = (
+            "# Results\n\n"
+            "## 1. Complete run (2026-11-16)\n"
+            "- **Run:** `r01` | **Commit:** `abc1234` | **Config:** `configs/base.yaml` | **Date:** 2026-11-16\n"
+            "- **Command:** `python run.py --cfg configs/base.yaml`\n"
+            "- **Output:** `outputs/r01/metrics.json`\n\n"
+            "Accuracy: 92.1%.\n\n"
+            "## 2. Incomplete new run (2026-11-16)\n"
+            "- **Commit:** `def5678`\n\n"
+            "Accuracy: 93.0%.\n\n"
+            "## 3. Legacy run (2026-11-01)\n"
+            "Old result before provenance was tracked.\n"
+        )
+        fixture(root, {"docs/RESULTS.md": results_md})
+        docmap(root, "update")
+        p = docmap(root, "check")
+        prov_lines = [ln for ln in p.stdout.splitlines() if "provenance" in ln]
+        expect(p.returncode == 0 and len(prov_lines) == 1 and "2 result entries lack provenance" in prov_lines[0]
+               and "results_provenance_since =" in prov_lines[0] and 'results_provenance = "off"' in prov_lines[0],
+               "O25: when results_provenance_since is unset, check prints one summary warning (no per-entry flood)", p)
+        (root / "docmap.toml").write_text('results_provenance_since = "2026-11-15"\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect(p.returncode == 0 and "result entry 1" not in p.stdout,
+               "O25: complete provenance block produces no warning (and check stays exit 0)", p)
+        expect("result entry 2 missing provenance" in p.stdout and "config" in p.stdout and "command" in p.stdout and "output" in p.stdout,
+               "O25: incomplete entry on/after results_provenance_since warns per entry and names missing fields", p)
+        expect("result entry 3" not in p.stdout,
+               "O25: results_provenance_since skips older entries", p)
+        (root / "docmap.toml").write_text('results_provenance = "off"\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("provenance" not in p.stdout,
+               "O25: results_provenance = 'off' disables provenance warnings", p)
+        tpl = (SKILL_DIR / "templates/other-docs.md").read_text(encoding="utf-8")
+        expect(all(k in tpl for k in ("**Run:**", "**Commit:**", "**Config:**", "**Command:**", "**Output:**")),
+               "O25: templates/other-docs.md includes the provenance block fields")
+
+    with tempfile.TemporaryDirectory() as tmp:  # O26: typed ids resolve + result run references exist
+        root = Path(tmp)
+        fixture(root, {
+            "docmap.toml": 'id_resolve = ["D", "O", "R", "RULE"]\nresults_provenance = "off"\n',
+            "docs/LEARNINGS.md": "# Learnings\nStatus: current (verified 2999-01-01)\n\n- O1 2026-11-15 [wish] First observation.\n",
+            "docs/rules.md": "# Rules\nStatus: current (verified 2999-01-01)\n\n## RULE-1: Keep units\nAlways state units.\n",
+            "docs/RUNS.md": "# Run index\n\n| run | created | path |\n|---|---|---|\n| r01 | 2026-11-15 | outputs/r01 |\n",
+            "docs/RESULTS.md": (
+                "# Results\n\n"
+                "## 1. Good run (2026-11-15)\n- **Run:** `r01`\n\n"
+                "## 2. Bad run (2026-11-15)\n- **Run:** `r_missing`\n"
+            ),
+            "docs/notes.md": (
+                "# Notes\nStatus: current (verified 2999-01-01)\n\n"
+                "Valid: D1, O1, R1, RULE-1.\n"
+                "Missing: D99, O99, R99, RULE-9.\n"
+            ),
+        })
+        docmap(root, "update")
+        p = docmap(root, "check")
+        d99_lines = [ln for ln in p.stdout.splitlines() if "docs/notes.md" in ln and "D99" in ln]
+        expect(len(d99_lines) == 1, "O26: D99 is reported once, not double-reported when D is in id_resolve", p)
+        expect(all(f"cites {x}" not in p.stdout for x in ("O1", "R1", "RULE-1")),
+               "O26: defined O1, R1 (from RESULTS.md) and RULE-1 resolve without warnings", p)
+        expect(all(f"docs/notes.md: cites {x}, which has no definition" in p.stdout for x in ("O99", "R99", "RULE-9")),
+               "O26: undefined O99, R99 and RULE-9 warn", p)
+        expect("result entry 2 references run 'r_missing', which is not in docs/RUNS.md" in p.stdout
+               and "r01" not in p.stdout,
+               "O26: result entry referencing a missing run in docs/RUNS.md warns; existing r01 does not", p)
+        (root / "docmap.toml").write_text('id_resolve = ["O", "R", "RULE"]\nid_cite_exempt = ["R99"]\nresults_provenance = "off"\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("cites R99" not in p.stdout and "cites O99" in p.stdout,
+               "O26: id_cite_exempt silences an exempted typed id without hiding others", p)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O40: workflow cards checked by docmap + START_HERE template
+        root = Path(tmp)
+        card = (
+            "# Workflow: update core\n"
+            "Status: current (verified 2026-11-01)\n\n"
+            "## Files to read\n"
+            "- `demo/core.py:1-4` — add helper\n"
+            "- `demo/core.py:L1-L999` — past EOF\n"
+            "- `demo/gone.py:1-10` — deleted file\n"
+        )
+        fixture(root, {
+            "docmap.toml": "workflow_churn_lines = 5\n",
+            "docs/workflows/update-core.md": card,
+        }, env={"GIT_AUTHOR_DATE": "2026-10-15T12:00:00Z", "GIT_COMMITTER_DATE": "2026-10-15T12:00:00Z"})
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect(p.returncode == 0 and "missing file `demo/gone.py`" in p.stdout,
+               "O40: workflow card warns on missing file path (warning, not error)", p)
+        expect("1-999" in p.stdout and "past EOF" in p.stdout,
+               "O40: workflow card warns when a line range points past EOF", p)
+        expect("1-4" not in p.stdout,
+               "O40: valid in-range line reference produces no warning", p)
+        # Now commit a large change to demo/core.py after the card's verified date (2026-11-01)
+        (root / "demo/core.py").write_text('"""Core."""\n' + "\n".join(f"X{i} = {i}" for i in range(20)) + "\n", encoding="utf-8")
+        sh(root, "git", "add", "demo/core.py")
+        subprocess.run(["git", "commit", "-q", "-m", "grow core"], cwd=root, capture_output=True,
+                       env={**os.environ, "GIT_AUTHOR_DATE": "2026-11-20T12:00:00Z", "GIT_COMMITTER_DATE": "2026-11-20T12:00:00Z"})
+        p = docmap(root, "check")
+        expect("`demo/core.py` changed by" in p.stdout and "since 2026-11-01" in p.stdout,
+               "O40: workflow card warns when a referenced file changed significantly since the card's date", p)
+        wf_tpl = SKILL_DIR / "templates/workflow-card.md"
+        sh_tpl = SKILL_DIR / "templates/start-here.md"
+        ag_tpl = (SKILL_DIR / "templates/agents.md").read_text(encoding="utf-8")
+        expect(wf_tpl.exists() and all(s in wf_tpl.read_text(encoding="utf-8") for s in ("Files to read", "Commands", "Expected outputs", "Rough cost", "Failure signs")),
+               "O40: templates/workflow-card.md exists with all required sections")
+        expect(sh_tpl.exists() and "What breaks" in sh_tpl.read_text(encoding="utf-8") and "How to tell" in sh_tpl.read_text(encoding="utf-8")
+               and "How to fix" in sh_tpl.read_text(encoding="utf-8") and "START_HERE.md" in ag_tpl and "docs/workflows/" in ag_tpl,
+               "O40: templates/start-here.md has the troubleshooting table and templates/agents.md links START_HERE and docs/workflows/")
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")
