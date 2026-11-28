@@ -21,7 +21,7 @@ Files this skill names (`templates/`, `references/`, `scripts/`) sit next to thi
 An agent should be able to go from "nothing loaded" to "the right lines of the right file" by reading a few short things in order, each pointing to the next - the same progressive disclosure that makes skills cheap. Each file and folder describes itself, like a small skill: a one-line description that is read first, and the body only when needed.
 
 1. `AGENTS.md` - rules and commands, loaded automatically every session (short).
-2. `docs/MAP.md` - **generated**: every folder and code file with its one-line summary, the most-imported modules, the enforced boundaries.
+2. `docs/MAP.md` - **generated**: every folder and code file with its one-line summary (or `map_depth` counts), the most-imported modules, the enforced boundaries.
 3. `<folder>/README.md` - **hand-written** purpose paragraph and folder-specific rules, plus a **generated** table of its files and subfolders with their summaries and who imports them.
 4. The file's header docstring/comment - **hand-written**: what it is for, how to use it, its contracts.
 5. `python tools/docmap.py show PATH | where NAME | uses PATH | find WORDS | get D12 | depends WORDS` - **computed on demand**: symbols with signatures and line numbers, definitions, importers and every reference.
@@ -67,7 +67,7 @@ Use these unless the project's own rules or the user's defaults file say otherwi
 - Research projects (experiments module): label claims *established* (cited source or code you read), *plausible* (reasoned, untested) or *unresolved*; append-only results; external code and published models are read-only; units and species/conditions with every number.
 - Compute (compute module): ask before compute-heavy work; local runs stay within the `memory_budget` in `AGENTS.local.md`.
 - Environments: the exact interpreter or toolchain is the `python` key in `AGENTS.local.md` (for a Python project the interpreter; otherwise whatever runs the project's tests and tools); never the base interpreter. Give commands that work on macOS, Linux and Windows (`python tools/docmap.py ...` does).
-- Parallel agents: only once the user runs several at the same time - then one branch (or git worktree) per agent, a WORKLOG handoff note before merging, and the worktree removed right after (`docmap.py worktrees --remove`). Each branch may run `docmap.py update`; after a merge, `update` resolves conflicts inside generated content (map, README tables, indexes) by regenerating it and names any conflict in hand-written text.
+- Parallel agents: only once the user runs several at the same time - then one branch (or git worktree) per agent; branch helpers put their STATUS/WORKLOG entry in their report (lead writes them at merge), reserve script numbers with `docmap.py next <dir>`, and remove the worktree right after (`docmap.py worktrees --remove`). `docmap.py merge-fix` resolves and stages generated-file merge conflicts (`merge-driver --install` avoids them).
 
 ## Step 0 - Detect the mode and gather facts
 

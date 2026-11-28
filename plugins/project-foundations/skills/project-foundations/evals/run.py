@@ -1216,6 +1216,123 @@ def main() -> int:
         expect("See ../OLD.md." in (root / "docs/plans/p.md").read_text(encoding="utf-8") and "docs/plans/p.md:3:" in p.stdout,
                "P1: with --no-rewrite-paths a relative path mention is listed, not rewritten", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O42: numbered scripts: duplicate prefixes warn, `next` reserves a number
+        root = Path(tmp)
+        hdr = lambda s: f'"""{s}."""\n'
+        fixture(root, {
+            "cluster/README.md": "# cluster/\n\nCluster jobs.\n",
+            "cluster/44_foo.py": hdr("Foo"), "cluster/44_bar.sh": "# Bar.\n", "cluster/45_baz.py": hdr("Baz"),
+            "cluster/46_same.py": hdr("Same"), "cluster/46_same.sh": "# Same job, batch wrapper.\n",
+            "cluster/2026-11-01_a.py": hdr("A"), "cluster/2026-11-02_b.py": hdr("B"),
+            "other/README.md": "# other/\n\nOther.\n", "other/044_x.py": hdr("X"), "other/7_y.py": hdr("Y"),
+        })
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("cluster: 44_foo.py and 44_bar.sh share the number 44" in p.stdout or ("cluster" in p.stdout and "share the number 44" in p.stdout),
+               "O42: check warns when two files of a folder share a numeric prefix", p)
+        expect("number 45" not in p.stdout and "number 46" not in p.stdout and "number 2026" not in p.stdout,
+               "O42: distinct numbers, a script with its wrapper (same stem) and ISO dates are not collisions", p)
+        p = docmap(root, "next", "cluster")
+        expect(p.returncode == 0 and p.stdout.strip() == "47", "O42: next prints the next free number of a folder", p)
+        p = docmap(root, "next", "other/")
+        expect(p.returncode == 0 and p.stdout.strip() == "045", "O42: next keeps the folder's zero-padding (044 -> 045)", p)
+        (root / "docmap.toml").write_text("number_prefix_exempt = [\"cluster\"]\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("share the number" not in p.stdout, "O42: number_prefix_exempt silences a folder", p)
+        (root / "docmap.toml").write_text("number_prefix_check = false\n", encoding="utf-8")
+        p = docmap(root, "check")
+        expect("share the number" not in p.stdout, "O42: number_prefix_check = false switches the warning off", p)
+        (root / "docmap.toml").unlink()
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "numbered")
+        sh(root, "git", "branch", "helper")
+        sh(root, "git", "checkout", "-q", "helper")
+        (root / "cluster/47_helper.py").write_text(hdr("Helper"), encoding="utf-8")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "helper job")
+        sh(root, "git", "checkout", "-q", "main")
+        p = docmap(root, "next", "cluster")
+        expect(p.returncode == 0 and p.stdout.strip() == "48", "O42: next also counts files on other local branches (parallel helpers)", p)
+        sh(root, "git", "worktree", "add", "-q", str(root.parent / (root.name + "_wt")), "-b", "wtbranch")
+        (root.parent / (root.name + "_wt") / "cluster/48_wt.py").write_text(hdr("Wt"), encoding="utf-8")
+        p = docmap(root, "next", "cluster")
+        expect(p.returncode == 0 and p.stdout.strip() == "49", "O42: next also counts uncommitted files in other worktrees", p)
+        sh(root, "git", "worktree", "remove", "--force", str(root.parent / (root.name + "_wt")))
+
+    with tempfile.TemporaryDirectory() as tmp:  # O41: merge-fix and merge-driver --install
+        root = Path(tmp)
+        fixture(root, {})
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "base")
+        sh(root, "git", "checkout", "-q", "-b", "b1")
+        (root / "demo/b1.py").write_text('"""From b1."""\n', encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo\n\nBranch b1 line.\n", encoding="utf-8")
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "b1")
+        sh(root, "git", "checkout", "-q", "main")
+        (root / "demo/m1.py").write_text('"""From main."""\n', encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Demo\n\nMain line.\n", encoding="utf-8")
+        docmap(root, "update")
+        sh(root, "git", "add", "-A")
+        sh(root, "git", "commit", "-q", "-m", "main")
+        sh(root, "git", "merge", "b1")  # conflicts on AGENTS.md, docs/MAP.md, demo/README.md
+        p = docmap(root, "merge-fix")
+        unmerged = sh(root, "git", "diff", "--name-only", "--diff-filter=U").stdout.splitlines()
+        map_text = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect(p.returncode == 0 and "docs/MAP.md" not in unmerged and "demo/README.md" not in unmerged
+               and "b1.py" in map_text and "m1.py" in map_text,
+               "O41: merge-fix resolves, regenerates and stages generated files", p)
+        expect("AGENTS.md" in unmerged and "AGENTS.md" in p.stdout and "<<<<<<< " in (root / "AGENTS.md").read_text(encoding="utf-8"),
+               "O41: merge-fix leaves hand-written conflicts untouched and names them", p)
+        sh(root, "git", "merge", "--abort")
+        p = docmap(root, "merge-driver", "--install")
+        attrs = (root / ".gitattributes").read_text(encoding="utf-8") if (root / ".gitattributes").exists() else ""
+        drv = sh(root, "git", "config", "--get", "merge.docmap.driver").stdout.strip()
+        expect(p.returncode == 0 and "docs/MAP.md merge=docmap" in attrs and "docs/FACTS.md merge=docmap" in attrs and drv == "true",
+               "O41: merge-driver --install configures .gitattributes and git config", p)
+        sh(root, "git", "add", ".gitattributes")
+        sh(root, "git", "commit", "-q", "-m", "driver")
+        (root / "AGENTS.md").write_text("# Demo\n\nA demo project.\n", encoding="utf-8")
+        sh(root, "git", "add", "AGENTS.md")
+        sh(root, "git", "commit", "-q", "-m", "clean agents")
+        sh(root, "git", "checkout", "-q", "b1")
+        sh(root, "git", "checkout", "main", "--", "AGENTS.md")
+        sh(root, "git", "commit", "-q", "-m", "align agents")
+        sh(root, "git", "checkout", "-q", "main")
+        m = sh(root, "git", "merge", "--no-edit", "b1")
+        expect(m.returncode == 0, "O41: merge-driver prevents conflict on docs/MAP.md", m)
+
+    with tempfile.TemporaryDirectory() as tmp:  # O39: map_depth collapses deeper folders into parent counts and check suggests it
+        root = Path(tmp)
+        hdr = lambda s: f'"""{s}."""\n'
+        fixture(root, {
+            "analysis/README.md": "# analysis/\n\nAnalyses.\n",
+            "analysis/top.py": hdr("Top"),
+            "analysis/sub1/README.md": "# sub1/\n\nSub 1.\n",
+            "analysis/sub1/a.py": hdr("A"),
+            "analysis/sub1/deep/README.md": "# deep/\n\nDeep.\n",
+            "analysis/sub1/deep/b.py": hdr("B"),
+            "analysis/sub2/README.md": "# sub2/\n\nSub 2.\n",
+            "analysis/sub2/c.py": hdr("C"),
+            "docmap.toml": "map_depth = 1\n",
+        })
+        docmap(root, "update")
+        m1 = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect("analysis/`** (3 folders, 4 files)" in m1 and "analysis/sub1" not in m1 and "analysis/sub1/deep" not in m1,
+               "O39: map_depth = 1 collapses deeper folders into their parent's count")
+        (root / "docmap.toml").write_text("map_depth = 2\n", encoding="utf-8")
+        docmap(root, "update")
+        m2 = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect("analysis/sub1/`** (1 folder, 2 files)" in m2 and "analysis/sub2/" in m2 and "analysis/sub1/deep" not in m2,
+               "O39: map_depth = 2 lists two levels and collapses deeper folders")
+        (root / "docmap.toml").write_text("read_max_tokens = 10\n", encoding="utf-8")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("docs/MAP.md: about" in p.stdout and "map_depth" in p.stdout,
+               "O39: token-budget warning on MAP.md suggests map_depth", p)
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")
