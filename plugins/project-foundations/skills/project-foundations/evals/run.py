@@ -1304,6 +1304,35 @@ def main() -> int:
         m = sh(root, "git", "merge", "--no-edit", "b1")
         expect(m.returncode == 0, "O41: merge-driver prevents conflict on docs/MAP.md", m)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O39: map_depth collapses deeper folders into parent counts and check suggests it
+        root = Path(tmp)
+        hdr = lambda s: f'"""{s}."""\n'
+        fixture(root, {
+            "analysis/README.md": "# analysis/\n\nAnalyses.\n",
+            "analysis/top.py": hdr("Top"),
+            "analysis/sub1/README.md": "# sub1/\n\nSub 1.\n",
+            "analysis/sub1/a.py": hdr("A"),
+            "analysis/sub1/deep/README.md": "# deep/\n\nDeep.\n",
+            "analysis/sub1/deep/b.py": hdr("B"),
+            "analysis/sub2/README.md": "# sub2/\n\nSub 2.\n",
+            "analysis/sub2/c.py": hdr("C"),
+            "docmap.toml": "map_depth = 1\n",
+        })
+        docmap(root, "update")
+        m1 = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect("analysis/`** (3 folders, 4 files)" in m1 and "analysis/sub1" not in m1 and "analysis/sub1/deep" not in m1,
+               "O39: map_depth = 1 collapses deeper folders into their parent's count")
+        (root / "docmap.toml").write_text("map_depth = 2\n", encoding="utf-8")
+        docmap(root, "update")
+        m2 = (root / "docs/MAP.md").read_text(encoding="utf-8")
+        expect("analysis/sub1/`** (1 folder, 2 files)" in m2 and "analysis/sub2/" in m2 and "analysis/sub1/deep" not in m2,
+               "O39: map_depth = 2 lists two levels and collapses deeper folders")
+        (root / "docmap.toml").write_text("read_max_tokens = 10\n", encoding="utf-8")
+        docmap(root, "update")
+        p = docmap(root, "check")
+        expect("docs/MAP.md: about" in p.stdout and "map_depth" in p.stdout,
+               "O39: token-budget warning on MAP.md suggests map_depth", p)
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")

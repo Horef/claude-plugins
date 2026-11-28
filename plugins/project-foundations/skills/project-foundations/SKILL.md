@@ -21,7 +21,7 @@ Files this skill names (`templates/`, `references/`, `scripts/`) sit next to thi
 An agent should be able to go from "nothing loaded" to "the right lines of the right file" by reading a few short things in order, each pointing to the next - the same progressive disclosure that makes skills cheap. Each file and folder describes itself, like a small skill: a one-line description that is read first, and the body only when needed.
 
 1. `AGENTS.md` - rules and commands, loaded automatically every session (short).
-2. `docs/MAP.md` - **generated**: every folder and code file with its one-line summary, the most-imported modules, the enforced boundaries.
+2. `docs/MAP.md` - **generated**: every folder and code file with its one-line summary (or `map_depth` counts), the most-imported modules, the enforced boundaries.
 3. `<folder>/README.md` - **hand-written** purpose paragraph and folder-specific rules, plus a **generated** table of its files and subfolders with their summaries and who imports them.
 4. The file's header docstring/comment - **hand-written**: what it is for, how to use it, its contracts.
 5. `python tools/docmap.py show PATH | where NAME | uses PATH | find WORDS | get D12 | depends WORDS` - **computed on demand**: symbols with signatures and line numbers, definitions, importers and every reference.

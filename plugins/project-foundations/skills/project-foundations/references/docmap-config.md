@@ -20,6 +20,7 @@ archive_keep = ["docs/writeups/*/review/**", "docs/research/**", "docs/literatur
 archive_grace_days = 7                # lifecycle_strict: retired docs left in live folders fail check this long after retiring
                                       # (dated from git history: CI needs `fetch-depth: 0`; a shallow clone makes every doc look recent)
 map_files_max = 150                   # MAP.md lists files up to this many code files; beyond, folders only
+# map_depth = 2                       # optional: max folder depth in MAP.md (default unlimited); deeper folders collapse into parent counts
 read_max_tokens = 8000                # warn when a file agents read whole (AGENTS, STATUS, WORKLOG, MAP) is bigger
 read_total_max_tokens = 12000         # warn when those files together are bigger (the cost of a session start)
 worklog_max_tokens = 6000             # `worklog` rotates the oldest entries above this (default: min(read_max_tokens, read_total_max_tokens // 2))
