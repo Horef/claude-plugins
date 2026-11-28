@@ -1371,6 +1371,40 @@ def main() -> int:
         expect(all(k in tpl for k in ("**Run:**", "**Commit:**", "**Config:**", "**Command:**", "**Output:**")),
                "O25: templates/other-docs.md includes the provenance block fields")
 
+    with tempfile.TemporaryDirectory() as tmp:  # O26: typed ids resolve + result run references exist
+        root = Path(tmp)
+        fixture(root, {
+            "docmap.toml": 'id_resolve = ["D", "O", "R", "RULE"]\nresults_provenance = "off"\n',
+            "docs/LEARNINGS.md": "# Learnings\nStatus: current (verified 2999-01-01)\n\n- O1 2026-11-15 [wish] First observation.\n",
+            "docs/rules.md": "# Rules\nStatus: current (verified 2999-01-01)\n\n## RULE-1: Keep units\nAlways state units.\n",
+            "docs/RUNS.md": "# Run index\n\n| run | created | path |\n|---|---|---|\n| r01 | 2026-11-15 | outputs/r01 |\n",
+            "docs/RESULTS.md": (
+                "# Results\n\n"
+                "## 1. Good run (2026-11-15)\n- **Run:** `r01`\n\n"
+                "## 2. Bad run (2026-11-15)\n- **Run:** `r_missing`\n"
+            ),
+            "docs/notes.md": (
+                "# Notes\nStatus: current (verified 2999-01-01)\n\n"
+                "Valid: D1, O1, R1, RULE-1.\n"
+                "Missing: D99, O99, R99, RULE-9.\n"
+            ),
+        })
+        docmap(root, "update")
+        p = docmap(root, "check")
+        d99_lines = [ln for ln in p.stdout.splitlines() if "docs/notes.md" in ln and "D99" in ln]
+        expect(len(d99_lines) == 1, "O26: D99 is reported once, not double-reported when D is in id_resolve", p)
+        expect(all(f"cites {x}" not in p.stdout for x in ("O1", "R1", "RULE-1")),
+               "O26: defined O1, R1 (from RESULTS.md) and RULE-1 resolve without warnings", p)
+        expect(all(f"docs/notes.md: cites {x}, which has no definition" in p.stdout for x in ("O99", "R99", "RULE-9")),
+               "O26: undefined O99, R99 and RULE-9 warn", p)
+        expect("result entry 2 references run 'r_missing', which is not in docs/RUNS.md" in p.stdout
+               and "r01" not in p.stdout,
+               "O26: result entry referencing a missing run in docs/RUNS.md warns; existing r01 does not", p)
+        (root / "docmap.toml").write_text('id_resolve = ["O", "R", "RULE"]\nid_cite_exempt = ["R99"]\nresults_provenance = "off"\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("cites R99" not in p.stdout and "cites O99" in p.stdout,
+               "O26: id_cite_exempt silences an exempted typed id without hiding others", p)
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")

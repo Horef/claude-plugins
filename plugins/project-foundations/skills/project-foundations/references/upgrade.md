@@ -21,5 +21,6 @@ Templates: `agents.md` (steps 3 and 6b), `agents-local.md` (3a), `folder-readme.
    - Maintenance table: the finish-a-line-of-work row, the long-job row (`[compute]`) and the archive step in the milestone row (`templates/agents.md`).
    Since 5.18+: add the helper-branch rules under Git in `templates/agents.md` (helpers on a branch reserve numbered prefixes with `docmap.py next <dir>`, never edit STATUS/WORKLOG on a branch, and use `docmap.py merge-fix` on generated-file merge conflicts); optionally run `docmap.py merge-driver --install`.
    Since 5.21: `check` checks `docs/RESULTS.md` entries for provenance fields (run/commit, config, command, date, output); Upgrade sets `results_provenance_since` to the upgrade date (YYYY-MM-DD) so only new entries warn per entry (when unset, `check` prints one summary warning; `results_provenance = "off"` disables it).
+   Since 5.22: `check` verifies `id_resolve` typed id prefixes resolve to a definition in docs (no double-report with `indexes`) and checks that `RESULTS.md` `Run:` references exist in `docs/RUNS.md`.
 7. Fix what `check` finds in old docs (broken links: fix the link or exempt truly historical folders via `link_exempt`; never delete history to silence a check).
 8. WORKLOG entry with the before/after `check` summary; commit; push.

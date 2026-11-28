@@ -2,6 +2,9 @@
 
 Newest first. Each entry cites the observations (O-ids in LEARNINGS.md) or evals that justified it.
 
+## 5.22.0 (2026-11-28)
+- docmap check verifies configured typed id prefixes (id_resolve: O-, R-, RULE-...) resolve to a definition in docs without double-reporting D-ids from indexes, and checks that RESULTS.md Run references exist in docs/RUNS.md. Evals: 5 new O26 checks (3 failed before), all pass. (O26)
+
 ## 5.21.0 (2026-11-28)
 - RESULTS template gains a provenance block (run/commit, config, command, date, output); docmap check warns on entries missing provenance fields: one summary warning when results_provenance_since is unset (avoiding legacy-log floods), per-entry warnings for entries on/after results_provenance_since, or disabled via results_provenance = "off". Evals: 6 new O25 checks (including summary-line check, failing first), all pass. (O25)
 
