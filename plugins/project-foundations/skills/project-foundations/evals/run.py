@@ -1333,6 +1333,44 @@ def main() -> int:
         expect("docs/MAP.md: about" in p.stdout and "map_depth" in p.stdout,
                "O39: token-budget warning on MAP.md suggests map_depth", p)
 
+    with tempfile.TemporaryDirectory() as tmp:  # O25: result provenance warnings and config gates
+        root = Path(tmp)
+        results_md = (
+            "# Results\n\n"
+            "## 1. Complete run (2026-11-16)\n"
+            "- **Run:** `r01` | **Commit:** `abc1234` | **Config:** `configs/base.yaml` | **Date:** 2026-11-16\n"
+            "- **Command:** `python run.py --cfg configs/base.yaml`\n"
+            "- **Output:** `outputs/r01/metrics.json`\n\n"
+            "Accuracy: 92.1%.\n\n"
+            "## 2. Incomplete new run (2026-11-16)\n"
+            "- **Commit:** `def5678`\n\n"
+            "Accuracy: 93.0%.\n\n"
+            "## 3. Legacy run (2026-11-01)\n"
+            "Old result before provenance was tracked.\n"
+        )
+        fixture(root, {"docs/RESULTS.md": results_md})
+        docmap(root, "update")
+        p = docmap(root, "check")
+        prov_lines = [ln for ln in p.stdout.splitlines() if "provenance" in ln]
+        expect(p.returncode == 0 and len(prov_lines) == 1 and "2 result entries lack provenance" in prov_lines[0]
+               and "results_provenance_since =" in prov_lines[0] and 'results_provenance = "off"' in prov_lines[0],
+               "O25: when results_provenance_since is unset, check prints one summary warning (no per-entry flood)", p)
+        (root / "docmap.toml").write_text('results_provenance_since = "2026-11-15"\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect(p.returncode == 0 and "result entry 1" not in p.stdout,
+               "O25: complete provenance block produces no warning (and check stays exit 0)", p)
+        expect("result entry 2 missing provenance" in p.stdout and "config" in p.stdout and "command" in p.stdout and "output" in p.stdout,
+               "O25: incomplete entry on/after results_provenance_since warns per entry and names missing fields", p)
+        expect("result entry 3" not in p.stdout,
+               "O25: results_provenance_since skips older entries", p)
+        (root / "docmap.toml").write_text('results_provenance = "off"\n', encoding="utf-8")
+        p = docmap(root, "check")
+        expect("provenance" not in p.stdout,
+               "O25: results_provenance = 'off' disables provenance warnings", p)
+        tpl = (SKILL_DIR / "templates/other-docs.md").read_text(encoding="utf-8")
+        expect(all(k in tpl for k in ("**Run:**", "**Commit:**", "**Config:**", "**Command:**", "**Output:**")),
+               "O25: templates/other-docs.md includes the provenance block fields")
+
     dv = re.search(r'^DOCMAP_VERSION = "([\d.]+)"', DOCMAP.read_text(encoding="utf-8"), re.M).group(1)
     pv = json.loads((SKILL_DIR.parents[1] / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     expect(dv == pv, f"DOCMAP_VERSION {dv} equals plugin.json's version {pv} (O35: bump both in every release)")
